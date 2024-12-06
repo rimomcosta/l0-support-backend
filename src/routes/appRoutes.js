@@ -6,8 +6,8 @@ import * as sshCommands from '../api/app/sshCommands.js';
 
 const router = express.Router();
 
-router.get('/environments/:projectId', requireAuth, environment.getEnvironments);
+router.get('/:projectId/environments', requireAuth, environment.getEnvironments);
 router.get('/:projectId/:environment/nodes', requireAuth, nodes.getNodes);
-router.post('/:projectId/:environment/sshcommand',  sshCommands.runCommands);
+router.post('/:projectId/:environment/sshcommand', sshCommands.runCommands);
 
 export default router;
