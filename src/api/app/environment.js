@@ -1,4 +1,4 @@
-import { logger } from '../services/logger.js';
+import { logger } from '../../services/logger.js';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { access, constants } from 'fs/promises';
@@ -12,7 +12,7 @@ export async function getEnvironments(req, res) {
     const { projectId } = req.params;
 
     try {
-        const magentoCloudPath = join(__dirname, '..', '..', 'resources', 'magento-cloud');
+        const magentoCloudPath = join(__dirname, '..', '..', '..', 'resources', 'magento-cloud');
 
         try {
             await access(magentoCloudPath, constants.X_OK);

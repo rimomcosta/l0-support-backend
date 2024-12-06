@@ -1,6 +1,6 @@
-import { oidcClient } from '../services/oidcService.js';
+import { oidcClient } from '../../services/oidcService.js';
 import { generators } from 'openid-client';
-import { logger } from '../services/logger.js';
+import { logger } from '../../services/logger.js';
 
 export async function login(req, res) {
     try {

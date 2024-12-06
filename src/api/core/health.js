@@ -1,5 +1,5 @@
-import { redisClient } from '../services/redisService.js';
-import { oidcClient } from '../services/oidcService.js';
+import { redisClient } from '../../services/redisService.js';
+import { oidcClient } from '../../services/oidcService.js';
 
 export function checkHealth(req, res) {
     const healthData = {
