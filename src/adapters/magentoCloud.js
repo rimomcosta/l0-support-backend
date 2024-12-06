@@ -42,6 +42,17 @@ class MagentoCloudAdapter {
             throw error;
         }
     }
+
+    executeCommandStream(command) {
+        const tunnelProcess = exec(`${this.executablePath} ${command}`, {
+            env: {
+                ...process.env,
+                PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin`
+            }
+        });
+
+        return { tunnelProcess };
+    }
 }
 
 export default MagentoCloudAdapter;
