@@ -2,10 +2,12 @@ import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import * as environment from '../api/app/environment.js';
 import * as nodes from '../api/app/nodes.js';
+import * as sshCommands from '../api/app/sshCommands.js';
 
 const router = express.Router();
 
 router.get('/environments/:projectId', requireAuth, environment.getEnvironments);
-router.get('/nodes/:projectId/:environment', requireAuth, nodes.getNodes);
+router.get('/:projectId/:environment/nodes', requireAuth, nodes.getNodes);
+router.post('/:projectId/:environment/sshcommand',  sshCommands.runCommands);
 
 export default router;

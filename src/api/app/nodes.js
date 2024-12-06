@@ -2,7 +2,14 @@
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 
-async function execute(projectId, environment) {
+/**
+ * Fetches all nodes for a given project and environment.
+ * 
+ * @param {string} projectId - Magento Cloud project identifier
+ * @param {string} environment - Environment name (e.g., 'production', 'staging')
+ * @returns {Promise<Array<Object>>} Array of node objects with id, sshUrl, and status
+ */
+export async function execute(projectId, environment) {
     const magentoCloud = new MagentoCloudAdapter();
     await magentoCloud.validateExecutable();
     
@@ -19,6 +26,12 @@ async function execute(projectId, environment) {
         }));
 }
 
+/**
+ * API handler for getting nodes information.
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
 export async function getNodes(req, res) {
     const { projectId, environment } = req.params;
 
