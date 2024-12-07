@@ -21,3 +21,13 @@ export function sessionDebug(req, res, next) {
     });
     next();
 }
+
+export function conditionalAuth(req, res, next) {
+    // Skip authentication if not in production
+    if (process.env.NODE_ENV !== 'production') {
+        return next();
+    }
+    
+    // Apply authentication in production
+    return requireAuth(req, res, next);
+}
