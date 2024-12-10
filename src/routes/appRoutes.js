@@ -7,6 +7,7 @@ import * as sqlCommands from '../api/app/sqlCommands.js';
 import * as redisCommands from '../api/app/redisCommands.js';
 import * as openSearchCommands from '../api/app/openSearchCommands.js';
 import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
+import * as commands from '../api/app/commands.js';
 
 const router = express.Router();
 
@@ -16,7 +17,12 @@ router.post('/:projectId/:environment/sshcommand', conditionalAuth, sshCommands.
 router.post('/:projectId/:environment/sqlquery', conditionalAuth, sqlCommands.runQueries);
 router.post('/:projectId/:environment/redisquery', conditionalAuth, redisCommands.runQueries);
 router.post('/:projectId/:environment/searchquery', conditionalAuth, openSearchCommands.runQueries);
-router.post('/:projectId/:environment/magentocloud/:instance?', conditionalAuth, magentoCloudDirectAccess.executeCommand);
+router.post('/:projectId/:environment/magentocloud/:instance?', conditionalAuth, magentoCloudDirectAccess.executeCommands);
+router.post('/commands', conditionalAuth, commands.createCommand);
+router.put('/commands/:id', conditionalAuth, commands.updateCommand);
+router.delete('/commands/:id', conditionalAuth, commands.deleteCommand);
+router.get('/commands', conditionalAuth, commands.getCommands);
+router.post('/commands/:commandId/execute', conditionalAuth, commands.executeCommand);
 
 
 export default router;

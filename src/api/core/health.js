@@ -6,7 +6,8 @@ export function checkHealth(req, res) {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         redis: redisClient.isReady ? 'connected' : 'disconnected',
-        oidc: !!oidcClient ? 'initialized' : 'not initialized'
+        oidc: !!oidcClient ? 'initialized' : 'not initialized',
+        websocket: req.app.locals.wss ? 'initialized' : 'not initialized'
     };
     res.json(healthData);
 }

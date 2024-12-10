@@ -15,6 +15,8 @@ import { corsConfig } from './config/cors.js';
 import { sessionConfig } from './config/session.js';
 import routes from './routes.js';
 
+import { initializeTables } from './config/initDatabase.js';
+
 dotenv.config();
 
 export async function initializeApp() {
@@ -26,6 +28,7 @@ export async function initializeApp() {
         // Initialize core services - These must complete before proceeding with middleware setup
         await initializeRedis();
         await initializeOIDCClient(); // For Okta authentication
+        await initializeTables();    // Initialize database tables
 
         // Middlewares and configurations
         app.set('trust proxy', 1);  // Required for secure cookies behind a proxy
