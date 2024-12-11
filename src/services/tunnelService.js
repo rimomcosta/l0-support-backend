@@ -1,18 +1,87 @@
-// src/services/tunnelService.js
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { logger } from './logger.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
+import { redisClient } from './redisService.js';
 
 const execAsync = promisify(exec);
-const TUNNEL_READY_TIMEOUT = 120000; // 2 minutes
+const TUNNEL_READY_TIMEOUT = 10000; // 10 seconds
 const IDLE_TIMEOUT = 120000; // 2 minutes
+const LOCK_TIMEOUT = 10000; // 10 seconds for lock acquisition
+const LOCK_RETRY_DELAY = 500; // 500ms between retries
+const STATUS_CHECK_INTERVAL = 1000; // 1 second between status checks
 
 class TunnelManager {
     constructor() {
         this.timers = new Map();
-        this.tunnelPromises = new Map(); // Track ongoing tunnel creation attempts
         this.magentoCloud = new MagentoCloudAdapter();
+    }
+
+    async checkTunnelHealth(tunnelInfo) {
+        if (!tunnelInfo) return false;
+    
+        try {
+            // Check the most critical services
+            if (tunnelInfo?.redis?.[0]) {
+                const { host, port } = tunnelInfo.redis[0];
+                const command = `redis-cli -h ${host} -p ${port} ping`;
+                const { stdout } = await execAsync(command);
+                if (stdout.trim() !== 'PONG') {
+                    return false;
+                }
+            }
+    
+            // Add more health checks if needed for other services
+            return true;
+        } catch (error) {
+            logger.debug('Tunnel health check failed:', {
+                error: error.message
+            });
+            return false;
+        }
+    }
+
+    async acquireLock(lockKey) {
+        const startTime = Date.now();
+        
+        while (Date.now() - startTime < LOCK_TIMEOUT) {
+            const acquired = await redisClient.set(
+                `tunnel_lock:${lockKey}`,
+                'locked',
+                {
+                    NX: true,
+                    EX: Math.ceil(LOCK_TIMEOUT / 1000) + 10 // Add 10 seconds buffer
+                }
+            );
+
+            if (acquired) {
+                logger.debug('Lock acquired', { lockKey });
+                return true;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, LOCK_RETRY_DELAY));
+        }
+
+        logger.warn('Failed to acquire lock after timeout', { lockKey });
+        return false;
+    }
+
+    async releaseLock(lockKey) {
+        await redisClient.del(`tunnel_lock:${lockKey}`);
+        logger.debug('Lock released', { lockKey });
+    }
+
+    async getTunnelStatus(projectId, environment) {
+        const key = `tunnel_status:${projectId}-${environment}`;
+        const status = await redisClient.get(key);
+        return status ? JSON.parse(status) : null;
+    }
+
+    async setTunnelStatus(projectId, environment, status) {
+        const key = `tunnel_status:${projectId}-${environment}`;
+        await redisClient.set(key, JSON.stringify(status));
+        await redisClient.expire(key, Math.ceil(IDLE_TIMEOUT / 1000));
+        logger.debug('Tunnel status updated', { projectId, environment });
     }
 
     parseExistingTunnelOutput(output) {
@@ -51,57 +120,101 @@ class TunnelManager {
         return new Promise((resolve, reject) => {
             const command = `tunnel:open -p ${projectId} -e ${environment} -y`;
             const { tunnelProcess } = this.magentoCloud.executeCommandStream(command);
-            let output = '';
-
+            let servicesFound = {};
+            let allServicesReady = false;
+            let tunnelCreationStarted = false;
+    
             const timeout = setTimeout(() => {
                 tunnelProcess.kill();
                 reject(new Error('Tunnel setup timeout'));
             }, TUNNEL_READY_TIMEOUT);
-
+    
             tunnelProcess.stdout.on('data', (data) => {
-                output += data;
-                logger.debug('Tunnel setup progress:', { data: data.toString() });
-
-                if (data.includes('A tunnel is already opened')) {
-                    const services = this.parseExistingTunnelOutput(output);
-                    if (Object.keys(services).length > 0) {
-                        clearTimeout(timeout);
-                        resolve(services);
-                        return;
-                    }
-                }
-
-                if (data.includes('MAGENTO_CLOUD_RELATIONSHIPS')) {
-                    clearTimeout(timeout);
-                    resolve(this.parseExistingTunnelOutput(output));
-                }
+                const newServices = this.parseExistingTunnelOutput(data.toString());
+                servicesFound = { ...servicesFound, ...newServices };
             });
-
+    
             tunnelProcess.stderr.on('data', (data) => {
-                output += data;
-                logger.debug('Tunnel stderr:', { data: data.toString() });
+                // Log tunnel creation start only once
+                if (!tunnelCreationStarted && data.includes('SSH tunnel opened to')) {
+                    tunnelCreationStarted = true;
+                    logger.info('Creating tunnels for all services...', {
+                        projectId,
+                        environment
+                    });
+                }
+    
+                const newServices = this.parseExistingTunnelOutput(data.toString());
+                servicesFound = { ...servicesFound, ...newServices };
+    
+                if (data.includes('Logs are written to:')) {
+                    allServicesReady = true;
+                    logger.info('All tunnels created successfully', {
+                        projectId,
+                        environment,
+                        services: Object.keys(servicesFound)
+                    });
+                }
             });
-
-            tunnelProcess.on('close', (code) => {
+    
+            tunnelProcess.on('close', async (code) => {
                 clearTimeout(timeout);
-                const services = this.parseExistingTunnelOutput(output);
-                if (Object.keys(services).length > 0) {
-                    resolve(services);
+                
+                if (allServicesReady && Object.keys(servicesFound).length > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    try {
+                        const { stdout } = await this.magentoCloud.executeCommand(
+                            `tunnel:info -p ${projectId} -e ${environment} -y`
+                        );
+                        const tunnelInfo = this.parseTunnelInfo(stdout);
+                        resolve(tunnelInfo);
+                    } catch (error) {
+                        // If tunnel info isn't ready yet, use the parsed services
+                        if (error.message.includes('No tunnels found')) {
+                            logger.debug('Using parsed services while tunnel info stabilizes');
+                            resolve(servicesFound);
+                        } else {
+                            throw error;
+                        }
+                    }
                 } else {
-                    reject(new Error('Tunnel setup failed: ' + output));
+                    reject(new Error('Tunnel setup incomplete'));
                 }
             });
         });
     }
-
+    
     async getTunnelInfo(projectId, environment) {
         try {
             const { stdout } = await this.magentoCloud.executeCommand(
                 `tunnel:info -p ${projectId} -e ${environment} -y`
             );
-            return this.parseTunnelInfo(stdout);
+            const tunnelInfo = this.parseTunnelInfo(stdout);
+            
+            if (Object.keys(tunnelInfo).length > 0) {
+                const isHealthy = await this.checkTunnelHealth(tunnelInfo);
+                if (!isHealthy) {
+                    logger.debug('Tunnel exists but is unhealthy, will be recreated', {
+                        projectId,
+                        environment
+                    });
+                    
+                    try {
+                        await this.magentoCloud.executeCommand('tunnel:close -y');
+                    } catch (closeError) {
+                        logger.debug('Error closing unhealthy tunnel', { 
+                            error: closeError.message 
+                        });
+                    }
+                    return null;
+                }
+                return tunnelInfo;
+            }
+            return null;
         } catch (error) {
             if (error.message.includes('No tunnels found')) {
+                // Don't log as error, just return null
                 return null;
             }
             throw error;
@@ -110,49 +223,89 @@ class TunnelManager {
 
     async openTunnel(projectId, environment) {
         const tunnelKey = `${projectId}-${environment}`;
-
-        try {
-            // First, check if we already have a tunnel being created
-            const existingPromise = this.tunnelPromises.get(tunnelKey);
-            if (existingPromise) {
-                return existingPromise;
-            }
-
-            // Check for existing tunnel info
-            let tunnelInfo = await this.getTunnelInfo(projectId, environment);
-            if (tunnelInfo) {
-                this.resetIdleTimer(projectId, environment);
-                return tunnelInfo;
-            }
-
-            // Create new tunnel promise
-            const tunnelPromise = (async () => {
-                logger.info('Opening new tunnel...', { projectId, environment });
-                try {
-                    const info = await this.waitForTunnelOpen(projectId, environment);
-                    logger.info('Tunnel successfully established', {
+        const maxRetries = 3;
+        let retryCount = 0;
+        const LOCK_WAIT_TIMEOUT = 30000; // 30 seconds to wait for lock
+    
+        while (retryCount < maxRetries) {
+            try {
+                // First quick check for existing tunnel
+                let tunnelInfo = await this.getTunnelInfo(projectId, environment);
+                if (tunnelInfo) {
+                    this.resetIdleTimer(projectId, environment);
+                    return tunnelInfo;
+                }
+    
+                // Try to acquire lock with longer timeout
+                const lockAcquired = await this.acquireLock(tunnelKey);
+                
+                if (!lockAcquired) {
+                    logger.debug('Waiting for tunnel creation by another process', {
                         projectId,
                         environment
                     });
-                    this.resetIdleTimer(projectId, environment);
-                    return info;
-                } finally {
-                    // Clean up promise reference when done
-                    this.tunnelPromises.delete(tunnelKey);
+                    
+                    // Wait for tunnel creation with increased timeout
+                    const startTime = Date.now();
+                    while (Date.now() - startTime < LOCK_WAIT_TIMEOUT) {
+                        tunnelInfo = await this.getTunnelInfo(projectId, environment);
+                        if (tunnelInfo) {
+                            this.resetIdleTimer(projectId, environment);
+                            return tunnelInfo;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 2000)); // Reduced polling frequency
+                    }
+                    
+                    // If we reach here, the wait timed out
+                    retryCount++;
+                    continue;
                 }
-            })();
-
-            // Store the promise before starting the operation
-            this.tunnelPromises.set(tunnelKey, tunnelPromise);
-            return tunnelPromise;
-
-        } catch (error) {
-            logger.error('Failed to open tunnel:', {
-                error: error.message,
-                projectId,
-                environment
-            });
-            throw error;
+    
+                try {
+                    logger.info('Starting tunnel creation...', { 
+                        projectId, 
+                        environment,
+                        attempt: retryCount + 1
+                    });
+                    
+                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment);
+                    
+                    // Give services time to initialize
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    
+                    // Verify tunnel is working
+                    const isHealthy = await this.checkTunnelHealth(newTunnelInfo);
+                    if (isHealthy) {
+                        this.resetIdleTimer(projectId, environment);
+                        logger.info('Tunnel successfully created and verified', {
+                            projectId,
+                            environment
+                        });
+                        return newTunnelInfo;
+                    }
+                    
+                    throw new Error('New tunnel failed health check');
+                } finally {
+                    await this.releaseLock(tunnelKey);
+                }
+            } catch (error) {
+                retryCount++;
+                if (retryCount < maxRetries) {
+                    logger.warn(`Retrying tunnel creation (attempt ${retryCount + 1}/${maxRetries})`, {
+                        error: error.message,
+                        projectId,
+                        environment
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 2000 * retryCount)); // Exponential backoff
+                } else {
+                    logger.error('Failed to open tunnel after all retries:', {
+                        error: error.message,
+                        projectId,
+                        environment
+                    });
+                    throw error;
+                }
+            }
         }
     }
 
@@ -161,22 +314,47 @@ class TunnelManager {
         if (this.timers.has(key)) {
             clearTimeout(this.timers.get(key));
         }
+        
         const timer = setTimeout(async () => {
             await this.closeTunnel(projectId, environment);
         }, IDLE_TIMEOUT);
+        
         this.timers.set(key, timer);
+
+        redisClient.set(
+            `tunnel_last_activity:${key}`,
+            Date.now().toString(),
+            { EX: Math.ceil(IDLE_TIMEOUT / 1000) }
+        );
     }
 
     async closeTunnel(projectId, environment) {
+        const tunnelKey = `${projectId}-${environment}`;
+        const lockAcquired = await this.acquireLock(tunnelKey);
+
+        if (!lockAcquired) {
+            logger.debug('Skipping tunnel close - another process is handling it');
+            return;
+        }
+
         try {
             await this.magentoCloud.executeCommand('tunnel:close -y');
-            const key = `${projectId}-${environment}`;
-            if (this.timers.has(key)) {
-                clearTimeout(this.timers.get(key));
-                this.timers.delete(key);
+            
+            const keys = [
+                `tunnel_status:${tunnelKey}`,
+                `tunnel_last_activity:${tunnelKey}`
+            ];
+            await redisClient.del(keys);
+
+            if (this.timers.has(tunnelKey)) {
+                clearTimeout(this.timers.get(tunnelKey));
+                this.timers.delete(tunnelKey);
             }
-            // Also clean up any lingering promise
-            this.tunnelPromises.delete(key);
+
+            logger.info('Tunnel closed successfully', {
+                projectId,
+                environment
+            });
         } catch (error) {
             logger.error('Failed to close tunnel:', {
                 error: error.message,
@@ -184,6 +362,8 @@ class TunnelManager {
                 environment
             });
             throw error;
+        } finally {
+            await this.releaseLock(tunnelKey);
         }
     }
 
@@ -219,6 +399,47 @@ class TunnelManager {
         });
 
         return services;
+    }
+
+    async getServiceTunnelInfo(projectId, environment, serviceName) {
+        try {
+            const tunnelInfo = await this.getTunnelInfo(projectId, environment);
+            
+            // Check if tunnel info exists and has the requested service
+            if (!tunnelInfo || !tunnelInfo[serviceName] || !tunnelInfo[serviceName].length) {
+                // If tunnel exists but doesn't have the service, try to recreate it
+                if (tunnelInfo) {
+                    logger.debug(`Tunnel exists but missing ${serviceName} service, recreating...`, {
+                        projectId,
+                        environment
+                    });
+                    await this.closeTunnel(projectId, environment);
+                    return await this.getServiceTunnelInfo(projectId, environment, serviceName);
+                }
+                
+                // If no tunnel exists, create a new one
+                logger.debug(`Creating new tunnel for ${serviceName} service`, {
+                    projectId,
+                    environment
+                });
+                const newTunnelInfo = await this.openTunnel(projectId, environment);
+                
+                if (!newTunnelInfo || !newTunnelInfo[serviceName] || !newTunnelInfo[serviceName].length) {
+                    throw new Error(`Service ${serviceName} not available in tunnel configuration`);
+                }
+                
+                return { [serviceName]: newTunnelInfo[serviceName] };
+            }
+            
+            return { [serviceName]: tunnelInfo[serviceName] };
+        } catch (error) {
+            logger.error(`Failed to get tunnel info for ${serviceName}:`, {
+                error: error.message,
+                projectId,
+                environment
+            });
+            throw error;
+        }
     }
 }
 

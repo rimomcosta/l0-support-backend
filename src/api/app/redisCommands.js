@@ -15,13 +15,12 @@ export async function runQueries(req, res) {
     }
 
     try {
-        // Open tunnel and get connection info
-        const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
+        // Get Redis-specific tunnel info
+        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'redis');
         const redisService = new RedisCliService(tunnelInfo);
 
         const results = [];
 
-        // Execute each query
         for (const query of queries) {
             const queryResult = {
                 id: query.id,
