@@ -25,10 +25,17 @@ export class OpenSearchService {
 
     async executeCommand(command) {
         try {
-            // Added -s flag to make curl silent and -S to still show errors if they occur
+            // Check if path starts with _cat as these endpoints return text
+            const isTextResponse = command.path.startsWith('/_cat/');
+            
+            // Use -H "Accept: application/json" only for JSON responses
+            const headers = isTextResponse ? 
+                '-H "Content-Type: application/json"' : 
+                '-H "Content-Type: application/json" -H "Accept: application/json"';
+
             const curlCommand = `curl -s -S -X ${command.method || 'GET'} ` +
                 `-u "${this.username}:${this.password}" ` +
-                `-H "Content-Type: application/json" ` +
+                `${headers} ` +
                 `${command.data ? `-d '${JSON.stringify(command.data)}' ` : ''}` +
                 `"http://${this.host}:${this.port}${command.path}"`;
 
@@ -36,7 +43,8 @@ export class OpenSearchService {
                 method: command.method,
                 path: command.path,
                 host: this.host,
-                port: this.port 
+                port: this.port,
+                responseType: isTextResponse ? 'text' : 'json'
             });
 
             const { stdout, stderr } = await execAsync(curlCommand);
@@ -46,7 +54,12 @@ export class OpenSearchService {
                 throw new Error(stderr);
             }
 
-            // Verify that the output is valid JSON
+            // For _cat endpoints, return the text output directly
+            if (isTextResponse) {
+                return stdout.trim();
+            }
+
+            // For other endpoints, parse as JSON
             try {
                 return JSON.parse(stdout.trim());
             } catch (parseError) {
@@ -54,7 +67,8 @@ export class OpenSearchService {
                     output: stdout,
                     error: parseError.message 
                 });
-                throw new Error('Invalid JSON response from OpenSearch');
+                // If JSON parsing fails, return the raw output
+                return stdout.trim();
             }
         } catch (error) {
             logger.error('OpenSearch command execution failed:', {

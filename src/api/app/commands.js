@@ -1,6 +1,8 @@
+// src/api/app/commands.js
 import { CommandService } from '../../services/commandsManagerService.js';
 import { WebSocketService } from '../../services/webSocketService.js';
 import { logger } from '../../services/logger.js';
+import { tunnelManager } from '../../services/tunnelService.js';
 import * as sshCommands from './sshCommands.js';
 import * as sqlCommands from './sqlCommands.js';
 import * as redisCommands from './redisCommands.js';
@@ -8,23 +10,6 @@ import * as openSearchCommands from './openSearchCommands.js';
 import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
 
 const commandService = new CommandService();
-
-class ServiceResponseHandler {
-    constructor() {
-        this.statusCode = 200;
-        this.data = null;
-    }
-
-    status(code) {
-        this.statusCode = code;
-        return this;
-    }
-
-    json(data) {
-        this.data = data;
-        return this;
-    }
-}
 
 // Service type handlers configuration
 const SERVICE_HANDLERS = {
@@ -34,8 +19,8 @@ const SERVICE_HANDLERS = {
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                command: cmd.command_config?.command || cmd.command_config,
-                executeOnAllNodes: cmd.execute_on_all_nodes
+                command: cmd.command.replace(/^"|"$/g, ''),
+                executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
             }))
         })
     },
@@ -45,8 +30,8 @@ const SERVICE_HANDLERS = {
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                query: cmd.command_config?.query || cmd.command_config,
-                executeOnAllNodes: cmd.execute_on_all_nodes
+                query: cmd.command.replace(/^"|"$/g, ''),
+                executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
             }))
         })
     },
@@ -56,8 +41,7 @@ const SERVICE_HANDLERS = {
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                query: cmd.command_config?.command || cmd.command_config,
-                executeOnAllNodes: cmd.execute_on_all_nodes
+                query: cmd.command.replace(/^"|"$/g, '')
             }))
         })
     },
@@ -65,30 +49,36 @@ const SERVICE_HANDLERS = {
         handler: openSearchCommands.runQueries,
         preparePayload: (commands) => ({
             queries: commands.map(cmd => {
-                const config = typeof cmd.command_config === 'string' 
-                    ? JSON.parse(cmd.command_config) 
-                    : cmd.command_config;
+                const config = typeof cmd.command === 'string' 
+                    ? JSON.parse(cmd.command)
+                    : cmd.command;
                 return {
                     id: cmd.id,
                     title: cmd.title,
-                    command: {
-                        method: config.method || 'GET',
-                        path: config.path,
-                        data: config.data || null
-                    }
+                    command: config
                 };
             })
         })
     },
     magento_cloud: {
         handler: magentoCloudDirectAccess.executeCommands,
-        preparePayload: (commands) => ({
-            commands: commands.map(cmd => ({
-                id: cmd.id,
-                title: cmd.title,
-                command: cmd.command_config?.command || cmd.command_config,
-                executeOnAllNodes: cmd.execute_on_all_nodes
-            }))
+        preparePayload: (commands, projectId, environment) => ({
+            commands: commands.map(cmd => {
+                let command = cmd.command.replace(/^"|"$/g, '');
+                // Replace placeholders in the command during payload preparation
+                command = command
+                    .replace(/:projectid/g, projectId)
+                    .replace(/:environment/g, environment || '')
+                    // Note: instanceid will be handled by the magentoCloudDirectAccess handler
+                    .replace(/--p\s+/g, '--project ') // Normalize project flag
+                    .replace(/-project\s+/g, '-p '); // Normalize project flag
+                
+                return {
+                    id: cmd.id,
+                    title: cmd.title,
+                    command: command
+                };
+            })
         })
     }
 };
@@ -101,13 +91,56 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         throw new Error(`Unsupported service type: ${serviceType}`);
     }
 
+    logger.info(`Executing ${serviceType} commands:`, {
+        count: commands.length,
+        commands: commands.map(cmd => ({
+            id: cmd.id,
+            title: cmd.title
+        }))
+    });
+
     const { handler, preparePayload } = serviceHandler;
+
+    // Group commands that require tunnels
+    let tunnelNeeded = ['redis', 'sql', 'opensearch'].includes(serviceType);
+    let tunnelInfo = null;
+
+    if (tunnelNeeded) {
+        try {
+            tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
+            logger.debug(`Tunnel established for ${serviceType}`, {
+                projectId,
+                environment
+            });
+        } catch (error) {
+            logger.error(`Failed to establish tunnel for ${serviceType}`, {
+                error: error.message,
+                projectId,
+                environment
+            });
+            throw error;
+        }
+    }
+
     const request = {
-        params: { projectId, environment },
-        body: preparePayload(commands)
+        params: { 
+            projectId, 
+            environment,
+            tunnelInfo // Pass tunnel info to service handlers
+        },
+        body: preparePayload(commands, projectId, environment)
     };
 
-    const responseHandler = new ServiceResponseHandler();
+    const responseHandler = {
+        status: function(code) {
+            this.statusCode = code;
+            return this;
+        },
+        json: function(data) {
+            this.data = data;
+            return this;
+        }
+    };
 
     try {
         await handler(request, responseHandler);
@@ -122,17 +155,41 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     }
 }
 
+// Execute all commands
 export async function executeAllCommands(req, res) {
     const { projectId, environment } = req.params;
 
     try {
+        // Fetch all commands from the database
         const allCommands = await commandService.getAll();
+        logger.info('Fetched commands from DB:', {
+            total: allCommands.length,
+            commands: allCommands.map(cmd => ({
+                id: cmd.id,
+                title: cmd.title,
+                service_type: cmd.service_type
+            }))
+        });
         
+        // Group commands by service type
         const commandsByService = allCommands.reduce((acc, cmd) => {
-            acc[cmd.service_type] = acc[cmd.service_type] || [];
-            acc[cmd.service_type].push(cmd);
+            const serviceType = cmd.service_type;
+            acc[serviceType] = acc[serviceType] || [];
+            acc[serviceType].push({
+                ...cmd,
+                command: cmd.command,
+                execute_on_all_nodes: Boolean(cmd.execute_on_all_nodes)
+            });
             return acc;
         }, {});
+
+        logger.info('Grouped commands by service:', {
+            services: Object.keys(commandsByService),
+            counts: Object.entries(commandsByService).reduce((acc, [service, cmds]) => {
+                acc[service] = cmds.length;
+                return acc;
+            }, {})
+        });
 
         const results = {
             projectId,
@@ -176,6 +233,8 @@ export async function executeAllCommands(req, res) {
 
         await Promise.all(serviceExecutions);
 
+        await Promise.all(serviceExecutions);
+
         WebSocketService.broadcast({
             type: 'execution_complete',
             timestamp: new Date().toISOString(),
@@ -207,7 +266,7 @@ export async function executeAllCommands(req, res) {
     }
 }
 
-// CRUD operations remain the same
+// CRUD Operations
 export async function getCommand(req, res) {
     try {
         const command = await commandService.getById(req.params.id);
@@ -216,17 +275,23 @@ export async function getCommand(req, res) {
         logger.error('Failed to get command:', error);
         res.status(500).json({ error: error.message });
     }
-} // Review done
+}
 
 export async function getCommands(req, res) {
     try {
         const commands = await commandService.getAll();
-        res.json(commands);
+        // Group commands by service type for the response
+        const groupedCommands = commands.reduce((acc, cmd) => {
+            acc[cmd.service_type] = acc[cmd.service_type] || [];
+            acc[cmd.service_type].push(cmd);
+            return acc;
+        }, {});
+        res.json(groupedCommands);
     } catch (error) {
         logger.error('Failed to get commands:', error);
         res.status(500).json({ error: error.message });
     }
-} // Review done
+}
 
 export async function createCommand(req, res) {
     try {
@@ -236,7 +301,7 @@ export async function createCommand(req, res) {
         logger.error('Failed to create command:', error);
         res.status(500).json({ error: error.message });
     }
-} // Review done 
+}
 
 export async function updateCommand(req, res) {
     try {
@@ -246,15 +311,14 @@ export async function updateCommand(req, res) {
         logger.error('Failed to update command:', error);
         res.status(500).json({ error: error.message });
     }
-} // Review done
+}
 
 export async function deleteCommand(req, res) {
     try {
-        console.log(req.params.id);
         await commandService.delete(req.params.id);
         res.status(200).json({ success: true });
     } catch (error) {
         logger.error('Failed to delete command:', error);
         res.status(500).json({ error: error.message });
     }
-} // Review done
+}

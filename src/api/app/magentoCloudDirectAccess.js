@@ -2,35 +2,56 @@
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 
-function replacePlaceholders(command, context) {
-    // First, remove any 'magento-cloud' prefix if it exists in the command
-    let processedCommand = command.replace(/^magento-cloud\s+/, '');
-    
-    // Replace all placeholders
-    processedCommand = processedCommand.replace(/:projectid/g, context.projectId);
-    
-    if (context.environment) {
-        processedCommand = processedCommand.replace(/:environment/g, context.environment);
-    } else {
-        processedCommand = processedCommand
-            .replace(/\s+--environment\s+:environment/g, '')
-            .replace(/\s+-e\s+:environment/g, '');
-    }
-    
-    if (context.instance) {
-        processedCommand = processedCommand.replace(/:instance/g, context.instance);
-    } else {
-        processedCommand = processedCommand
-            .replace(/\s+--instance\s+:instance/g, '')
-            .replace(/\s+-i\s+:instance/g, '');
-    }
+function normalizeProjectFlag(command) {
+    // Replace --p with proper --project
+    command = command.replace(/\s+--p\s+/, ' --project ');
+    // Replace -project with proper -p
+    command = command.replace(/\s+-project\s+/, ' -p ');
+    return command;
+}
 
-    // Handle quoted commands (like "nproc")
-    if (processedCommand.endsWith(' "nproc"')) {
-        // Ensure proper quoting for SSH commands
-        processedCommand = processedCommand.replace(/ "nproc"$/, ' \\"nproc\\"');
-    }
+function replacePlaceholders(command, context) {
+    // First normalize any project flags
+    let processedCommand = normalizeProjectFlag(command);
     
+    // Remove any 'magento-cloud' prefix if it exists
+    processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
+    
+    // Create a map of placeholders and their values
+    const placeholders = {
+        ':projectid': {
+            value: context.projectId,
+            flags: ['-p', '--project']
+        },
+        ':environment': {
+            value: context.environment,
+            flags: ['-e', '--environment']
+        },
+        ':instanceid': {
+            value: context.instance,
+            flags: ['--instance']
+        }
+    };
+
+    // Process each placeholder
+    Object.entries(placeholders).forEach(([placeholder, config]) => {
+        if (config.value) {
+            // Replace the placeholder itself
+            processedCommand = processedCommand.replace(
+                new RegExp(placeholder, 'g'), 
+                config.value
+            );
+        } else {
+            // If no value provided, remove the flag and placeholder
+            config.flags.forEach(flag => {
+                processedCommand = processedCommand.replace(
+                    new RegExp(`\\s+${flag}\\s+${placeholder}`, 'g'),
+                    ''
+                );
+            });
+        }
+    });
+
     return processedCommand.trim();
 }
 
@@ -43,6 +64,10 @@ async function executeCommand(magentoCloud, command, context) {
             processedCommand,
             context
         });
+
+        if (!processedCommand) {
+            throw new Error('Invalid command after processing placeholders');
+        }
 
         const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand);
 
@@ -86,7 +111,11 @@ export async function executeCommands(req, res) {
         };
 
         const results = await Promise.all(commands.map(async (cmd) => {
-            const { output, error } = await executeCommand(magentoCloud, cmd.command, context);
+            const { output, error } = await executeCommand(
+                magentoCloud, 
+                cmd.command.replace(/^"|"$/g, ''), // Remove surrounding quotes if present
+                context
+            );
             
             return {
                 id: cmd.id,

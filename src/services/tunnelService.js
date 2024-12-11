@@ -5,14 +5,48 @@ import { logger } from './logger.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
 
 const execAsync = promisify(exec);
-const TUNNEL_READY_TIMEOUT = 30000; // 30 seconds timeout
+const TUNNEL_READY_TIMEOUT = 120000; // 2 minutes
+const IDLE_TIMEOUT = 120000; // 2 minutes
 
 class TunnelManager {
     constructor() {
         this.timers = new Map();
-        this.idleTimeout = 60000;
         this.activeTunnels = new Map();
         this.magentoCloud = new MagentoCloudAdapter();
+    }
+
+    parseExistingTunnelOutput(output) {
+        const services = {};
+        const lines = output.split('\n');
+        
+        lines.forEach(line => {
+            // Match lines like "A tunnel is already opened to the relationship database, at: mysql://..."
+            const alreadyOpenMatch = line.match(/relationship\s+(\w+(?:-\w+)?),\s+at:\s+(\S+)/);
+            // Match lines like "SSH tunnel opened to redis at: redis://..."
+            const newOpenMatch = line.match(/SSH tunnel opened to\s+(\w+(?:-\w+)?)\s+at:\s+(\S+)/);
+            
+            const match = alreadyOpenMatch || newOpenMatch;
+            if (match) {
+                const [, service, url] = match;
+                if (!services[service]) {
+                    services[service] = [];
+                }
+                
+                const urlObj = new URL(url);
+                const serviceInfo = {
+                    username: urlObj.username || null,
+                    password: urlObj.password || null,
+                    host: urlObj.hostname,
+                    port: urlObj.port,
+                    path: urlObj.pathname?.slice(1) || null, // Remove leading slash
+                    url: url
+                };
+                
+                services[service].push(serviceInfo);
+            }
+        });
+
+        return services;
     }
 
     async waitForTunnelOpen(projectId, environment) {
@@ -20,47 +54,62 @@ class TunnelManager {
             const command = `tunnel:open -p ${projectId} -e ${environment} -y`;
             const { tunnelProcess } = this.magentoCloud.executeCommandStream(command);
             let output = '';
-            let isReady = false;
 
             const timeout = setTimeout(() => {
                 tunnelProcess.kill();
                 reject(new Error('Tunnel setup timeout'));
             }, TUNNEL_READY_TIMEOUT);
 
-            // Handler for both stdout and stderr
-            const handleOutput = (data) => {
+            tunnelProcess.stdout.on('data', (data) => {
                 output += data;
                 logger.debug('Tunnel setup progress:', { data: data.toString() });
 
-                // Check if MySQL tunnel is ready
-                if (data.includes('mysql://') && data.includes('database at:')) {
-                    isReady = true;
-                    // Don't resolve yet, wait for all services to be ready
+                // If we see this message, tunnels are already open and working
+                if (data.includes('A tunnel is already opened')) {
+                    const services = this.parseExistingTunnelOutput(output);
+                    if (Object.keys(services).length > 0) {
+                        clearTimeout(timeout);
+                        resolve(services);
+                        return;
+                    }
                 }
 
-                // Check if all services are ready (when we see the final message)
-                if (data.includes('MAGENTO_CLOUD_RELATIONSHIPS') && isReady) {
+                // Check if we see MAGENTO_CLOUD_RELATIONSHIPS mention (completion message)
+                if (data.includes('MAGENTO_CLOUD_RELATIONSHIPS')) {
                     clearTimeout(timeout);
-                    resolve(true);
+                    resolve(this.parseExistingTunnelOutput(output));
                 }
-            };
+            });
 
-            tunnelProcess.stdout.on('data', handleOutput);
-            tunnelProcess.stderr.on('data', handleOutput);
+            tunnelProcess.stderr.on('data', (data) => {
+                output += data;
+                logger.debug('Tunnel stderr:', { data: data.toString() });
+            });
 
             tunnelProcess.on('close', (code) => {
                 clearTimeout(timeout);
-                if (!isReady) {
-                    logger.error('Tunnel process closed before ready:', {
-                        code,
-                        output,
-                        projectId,
-                        environment
-                    });
+                const services = this.parseExistingTunnelOutput(output);
+                if (Object.keys(services).length > 0) {
+                    resolve(services);
+                } else {
                     reject(new Error('Tunnel setup failed: ' + output));
                 }
             });
         });
+    }
+
+    async getTunnelInfo(projectId, environment) {
+        try {
+            const { stdout } = await this.magentoCloud.executeCommand(
+                `tunnel:info -p ${projectId} -e ${environment} -y`
+            );
+            return this.parseTunnelInfo(stdout);
+        } catch (error) {
+            if (error.message.includes('No tunnels found')) {
+                return null; // Not an error case, just means we need to open a tunnel
+            }
+            throw error;
+        }
     }
 
     async openTunnel(projectId, environment) {
@@ -72,23 +121,12 @@ class TunnelManager {
         }
 
         try {
-            // Try to get existing tunnel info first, but don't log error if tunnel doesn't exist
-            let existingTunnel;
-            try {
-                existingTunnel = await this.getTunnelInfo(projectId, environment);
-                if (existingTunnel?.database?.[0]?.url) {
-                    this.resetIdleTimer(projectId, environment);
-                    return existingTunnel;
-                }
-            } catch (error) {
-                // Only close existing tunnels if there was a different error
-                if (!error.message.includes('No tunnels found')) {
-                    try {
-                        await execAsync('magento-cloud tunnel:close -y');
-                    } catch (closeError) {
-                        // Ignore close errors
-                    }
-                }
+            // Try to get existing tunnel info first
+            let tunnelInfo = await this.getTunnelInfo(projectId, environment);
+            
+            if (tunnelInfo) {
+                this.resetIdleTimer(projectId, environment);
+                return tunnelInfo;
             }
 
             // Create promise for tunnel setup
@@ -96,16 +134,7 @@ class TunnelManager {
                 logger.info('Opening new tunnel...', { projectId, environment });
 
                 // Wait for tunnel to open and be ready
-                await this.waitForTunnelOpen(projectId, environment);
-
-                // Small delay to ensure tunnel is fully established
-                await new Promise(resolve => setTimeout(resolve, 2000));
-
-                // Get tunnel info
-                const tunnelInfo = await this.getTunnelInfo(projectId, environment);
-                if (!tunnelInfo?.database?.[0]?.url) {
-                    throw new Error('Failed to get tunnel connection info');
-                }
+                const tunnelInfo = await this.waitForTunnelOpen(projectId, environment);
 
                 logger.info('Tunnel successfully established', {
                     projectId,
@@ -126,6 +155,7 @@ class TunnelManager {
             this.activeTunnels.delete(tunnelKey);
 
             return result;
+
         } catch (error) {
             this.activeTunnels.delete(tunnelKey);
             logger.error('Failed to open tunnel:', {
@@ -135,65 +165,6 @@ class TunnelManager {
             });
             throw error;
         }
-    }
-
-    async getTunnelInfo(projectId, environment) {
-        try {
-            const { stdout } = await this.magentoCloud.executeCommand(
-                `tunnel:info -p ${projectId} -e ${environment} -y`
-            );
-            return this.parseTunnelInfo(stdout);
-        } catch (error) {
-            if (!error.message.includes('No tunnels found')) {
-                logger.error('Failed to get tunnel info:', {
-                    error: error.message,
-                    projectId,
-                    environment
-                });
-            }
-            throw error;
-        }
-    }
-
-    parseTunnelInfo(output) {
-        const services = {};
-        let currentService = null;
-        let currentObject = null;
-
-        output.split('\n').forEach(line => {
-            // Remove excessive whitespace
-            line = line.trim();
-
-            // Check for service name (ends with colon)
-            const serviceMatch = line.match(/^(\w+[-]?\w*):$/);
-            if (serviceMatch) {
-                currentService = serviceMatch[1];
-                services[currentService] = [];
-                return;
-            }
-
-            // Check for new array item
-            if (line === '-') {
-                currentObject = {};
-                if (currentService) {
-                    services[currentService].push(currentObject);
-                }
-                return;
-            }
-
-            // Parse key-value pairs
-            const kvMatch = line.match(/^(\w+):\s*(.+)$/);
-            if (kvMatch && currentObject) {
-                const [, key, value] = kvMatch;
-
-                // Remove quotes if present
-                const cleanValue = value.replace(/^['"]|['"]$/g, '');
-
-                currentObject[key] = cleanValue;
-            }
-        });
-
-        return services;
     }
 
     resetIdleTimer(projectId, environment) {
@@ -207,7 +178,7 @@ class TunnelManager {
         // Set new timer
         const timer = setTimeout(async () => {
             await this.closeTunnel(projectId, environment);
-        }, this.idleTimeout);
+        }, IDLE_TIMEOUT);
 
         this.timers.set(key, timer);
     }
@@ -228,6 +199,41 @@ class TunnelManager {
             });
             throw error;
         }
+    }
+
+    // Helper method to parse tunnel:info output
+    parseTunnelInfo(output) {
+        const services = {};
+        let currentService = null;
+        let currentObject = null;
+
+        output.split('\n').forEach(line => {
+            line = line.trim();
+            
+            const serviceMatch = line.match(/^(\w+[-]?\w*):$/);
+            if (serviceMatch) {
+                currentService = serviceMatch[1];
+                services[currentService] = [];
+                return;
+            }
+
+            if (line === '-') {
+                currentObject = {};
+                if (currentService) {
+                    services[currentService].push(currentObject);
+                }
+                return;
+            }
+
+            const kvMatch = line.match(/^(\w+):\s*(.+)$/);
+            if (kvMatch && currentObject) {
+                const [, key, value] = kvMatch;
+                const cleanValue = value.replace(/^['"]|['"]$/g, '');
+                currentObject[key] = cleanValue;
+            }
+        });
+
+        return services;
     }
 }
 
