@@ -1,88 +1,200 @@
+// src/api/app/sqlCommands.js
+'use strict';
+
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 import { execute as getNodes } from './nodes.js';
 import { tunnelManager } from '../../services/tunnelService.js';
 import { SQLService } from '../../services/sqlService.js';
 
-// Create MySQL command for SSH access with port 3307
-function createMySQLCommand(queries) {
-    if (!process.env.LOCAL_MARIADB_PORT) {
-        throw new Error('LOCAL_MARIADB_PORT not configured in environment');
+// Bundle multiple queries into a single MySQL command
+function bundleQueries(queries) {
+    return queries.map(q => {
+        const escapedQuery = q.query.replace(/'/g, "'\\''");
+        return `echo 'id: ${q.id}' && echo 'title: ${q.title}' && echo '${escapedQuery}' | mysql`;
+    }).join(' && ');
+}
+
+// Parse output from bundled queries back into individual results
+function parseQueryOutput(output, queries) {
+    const results = [];
+    const lines = output.split('\n');
+    let currentQuery = null;
+    let currentOutput = [];
+
+    for (let line of lines) {
+        if (line.startsWith('id: ')) {
+            // Save previous query's output if exists
+            if (currentQuery) {
+                results.push({
+                    queryId: currentQuery.id,
+                    output: currentOutput.join('\n').trim(),
+                    error: null
+                });
+                currentOutput = [];
+            }
+            // Start new query
+            const id = parseInt(line.substring(4));
+            currentQuery = queries.find(q => q.id === id);
+            continue;
+        }
+        if (line.startsWith('title: ')) {
+            continue;
+        }
+        if (currentQuery) {
+            currentOutput.push(line);
+        }
     }
 
-    // When escaping queries, preserve all quotes
-    // Just escape any double quotes that would break the outer command
-    const escapedQueries = Array.isArray(queries) 
-        ? queries.map(q => q.replace(/"/g, '\\"')).join('; ')
-        : queries.replace(/"/g, '\\"');
+    // Don't forget the last query
+    if (currentQuery) {
+        results.push({
+            queryId: currentQuery.id,
+            output: currentOutput.join('\n').trim(),
+            error: null
+        });
+    }
 
-    return `"mysql -u\\$(echo \\$MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].username') \\
--p\\$(echo \\$MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].password') \\
--D\\$(echo \\$MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].path') \\
--h\\$(echo \\$MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].host') \\
--P${process.env.LOCAL_MARIADB_PORT} \\
--e \\"${escapedQueries}\\""`;
+    return results;
 }
 
-// Format query to handle LIKE clauses consistently
-function formatQuery(query) {
-    return query.replace(/LIKE\s+(\w+)/gi, "LIKE '$1'");
+// Create MySQL command for SSH execution
+function createMySQLCommand(queries) {
+    // First create a script to extract credentials and run MySQL
+    const mysqlScript = `
+username=$(echo $MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].username')
+password=$(echo $MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].password')
+database=$(echo $MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].path')
+host=$(echo $MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r '.database[0].host')
+
+# Try to connect to MySQL and execute queries
+if ! mysqladmin ping -h"$host" -P3307 -u"$username" -p"$password" --connect_timeout=10 >/dev/null 2>&1; then
+    echo "MySQL is not running on this node"
+    exit 1
+fi
+
+${bundleQueries(queries)} | mysql -u"$username" -p"$password" -D"$database" -h"$host" -P3307
+`.trim();
+
+    // Escape the script for SSH command
+    const escapedScript = mysqlScript
+        .replace(/"/g, '\\"')
+        .replace(/\$/g, '\\$');
+
+    return `"bash -c \\"${escapedScript}\\""`;
 }
 
-async function executeQueryOnNode(magentoCloud, projectId, environment, nodeId, query) {
+// Execute queries on a specific node via SSH
+async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId, queries) {
     try {
-        // Format the query before creating the MySQL command
-        const formattedQuery = formatQuery(query);
-        const mysqlCommand = createMySQLCommand(formattedQuery);
+        const mysqlCommand = createMySQLCommand(queries);
         const sshCommand = `ssh -p ${projectId} -e ${environment} --instance ${nodeId} ${mysqlCommand}`;
 
         logger.debug('Executing SSH command:', {
-            command: sshCommand,
             nodeId,
-            query: formattedQuery
+            queries: queries.map(q => q.title)
         });
 
         const { stdout, stderr } = await magentoCloud.executeCommand(sshCommand);
-        return {
-            output: stdout ? stdout.trim() : null,
-            error: null
-        };
-    } catch (error) {
-        // Check for common expected errors
-        if (error.message.includes("ERROR 2002") && error.message.includes("Can't connect to MySQL server")) {
-            return {
+
+        // Check if MySQL is not running
+        if (stderr.includes('MySQL is not running on this node')) {
+            return queries.map(query => ({
+                queryId: query.id,
+                nodeId,
                 output: null,
-                error: "Database service not running on this node",
-                status: "NOT_RUNNING"
-            };
+                error: 'MySQL is not running on this node',
+                status: 'NOT_RUNNING'
+            }));
         }
+
+        const results = parseQueryOutput(stdout + stderr, queries);
+        return results.map(result => ({
+            ...result,
+            nodeId,
+            status: result.error ? 'ERROR' : 'SUCCESS'
+        }));
+    } catch (error) {
+        const errorMessage = error.message.includes('ERROR 2002') ?
+            'MySQL is not running on this node' : error.message;
+        const status = error.message.includes('ERROR 2002') ?
+            'NOT_RUNNING' : 'ERROR';
 
         logger.error('Node query execution failed:', {
             nodeId,
-            error: error.message,
-            query
+            error: errorMessage
         });
-        return {
+
+        return queries.map(query => ({
+            queryId: query.id,
+            nodeId,
             output: null,
-            error: error.message,
-            status: "ERROR"
-        };
+            error: errorMessage,
+            status
+        }));
     }
 }
 
+// Validate query structure and uniqueness
+function validateQueries(queries) {
+    if (!Array.isArray(queries) || queries.length === 0) {
+        return {
+            valid: false,
+            errors: ['Queries must be a non-empty array']
+        };
+    }
+
+    const validationErrors = [];
+    const seenIds = new Set();
+
+    queries.forEach((query, index) => {
+        if (!query.id) validationErrors.push(`Query at index ${index} is missing 'id'`);
+        if (!query.title) validationErrors.push(`Query at index ${index} is missing 'title'`);
+        if (!query.query) validationErrors.push(`Query at index ${index} is missing 'query'`);
+        if (typeof query.executeOnAllNodes !== 'boolean') {
+            validationErrors.push(`Query at index ${index} is missing 'executeOnAllNodes' or it's not a boolean`);
+        }
+
+        if (query.id) {
+            if (seenIds.has(query.id)) {
+                validationErrors.push(`Duplicate query ID found: ${query.id}`);
+            } else {
+                seenIds.add(query.id);
+            }
+        }
+
+        if (query.query && typeof query.query === 'string') {
+            if (query.query.trim().length === 0) {
+                validationErrors.push(`Query at index ${index} has empty query string`);
+            }
+        }
+    });
+
+    return {
+        valid: validationErrors.length === 0,
+        errors: validationErrors
+    };
+}
+
+// Main function to execute queries with different strategies
 async function executeQueriesWithStrategy(projectId, environment, queries) {
     try {
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
-        // Split queries based on execution strategy
+        // Get all nodes first
+        const nodes = await getNodes(projectId, environment);
+        if (!nodes || nodes.length === 0) {
+            throw new Error('No nodes found in the environment');
+        }
+
+        const results = [];
         const multiNodeQueries = queries.filter(q => q.executeOnAllNodes);
         const singleNodeQueries = queries.filter(q => !q.executeOnAllNodes);
 
-        const results = [];
-
-        // Handle single node queries using tunnel
+        // Handle queries that should run through tunnel
         if (singleNodeQueries.length > 0) {
+            // Ensure tunnel is open and get connection info
             const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
             const sqlService = new SQLService(tunnelInfo);
 
@@ -95,14 +207,13 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                 };
 
                 try {
-                    logger.debug('Executing cluster query through tunnel');
-                    // Format query consistently
-                    const formattedQuery = formatQuery(query.query);
-                    const result = await sqlService.executeQuery(formattedQuery, false);
+                    logger.debug('Executing query through tunnel');
+                    const result = await sqlService.executeQuery(query.query, false);
                     queryResult.results.push({
-                        nodeId: 1,
+                        nodeId: nodes[0].id, // Use first node ID for reference
                         output: result,
-                        error: null
+                        error: null,
+                        status: 'SUCCESS'
                     });
                 } catch (error) {
                     logger.error('Tunnel query execution failed:', {
@@ -110,9 +221,10 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                         query: query.title
                     });
                     queryResult.results.push({
-                        nodeId: 1,
+                        nodeId: nodes[0].id,
                         output: null,
-                        error: error.message
+                        error: error.message,
+                        status: 'ERROR'
                     });
                 }
 
@@ -120,50 +232,37 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
             }
         }
 
-        // Handle multi-node queries using SSH
+        // Handle queries that should run on all nodes via SSH
         if (multiNodeQueries.length > 0) {
-            const nodes = await getNodes(projectId, environment);
-            
-            for (const query of multiNodeQueries) {
-                const queryResult = {
+            // Execute queries on all nodes in parallel
+            const nodePromises = nodes.map(node =>
+                executeQueriesOnNode(
+                    magentoCloud,
+                    projectId,
+                    environment,
+                    node.id,
+                    multiNodeQueries
+                )
+            );
+
+            const nodeResults = await Promise.all(nodePromises);
+            const flattenedResults = nodeResults.flat();
+
+            // Group results by query
+            multiNodeQueries.forEach(query => {
+                results.push({
                     id: query.id,
                     title: query.title,
                     query: query.query,
-                    results: []
-                };
-    
-                const nodeResults = await Promise.all(
-                    nodes.map(node => 
-                        executeQueryOnNode(
-                            magentoCloud, 
-                            projectId, 
-                            environment, 
-                            node.id, 
-                            query.query
-                        ).then(result => ({
-                            nodeId: node.id,
-                            output: result.output,
-                            error: result.error,
-                            status: result.status || (result.output ? "SUCCESS" : "ERROR"),
-                            nodeType: node.type || "unknown"
-                        }))
-                    )
-                );
-
-                queryResult.results = nodeResults.sort((a, b) => a.nodeId - b.nodeId);
-
-                const summary = {
-                    total: queryResult.results.length,
-                    successful: queryResult.results.filter(r => r.status === "SUCCESS").length,
-                    notRunning: queryResult.results.filter(r => r.status === "NOT_RUNNING").length,
-                    failed: queryResult.results.filter(r => r.status === "ERROR").length
-                };
-
-                results.push({
-                    ...queryResult,
-                    summary
+                    results: flattenedResults.filter(r => r.queryId === query.id),
+                    summary: {
+                        total: nodes.length,
+                        successful: flattenedResults.filter(r => r.queryId === query.id && r.status === 'SUCCESS').length,
+                        notRunning: flattenedResults.filter(r => r.queryId === query.id && r.status === 'NOT_RUNNING').length,
+                        failed: flattenedResults.filter(r => r.queryId === query.id && r.status === 'ERROR').length
+                    }
                 });
-            }
+            });
         }
 
         return results;
@@ -177,14 +276,17 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
     }
 }
 
-export async function runQueries(req, res) {
+// Main API handler for executing SQL queries
+async function runQueries(req, res) {
     const { projectId, environment } = req.params;
     const { queries } = req.body;
 
-    if (!Array.isArray(queries)) {
+    // Validate queries
+    const validation = validateQueries(queries);
+    if (!validation.valid) {
         return res.status(400).json({
-            error: 'Invalid request format',
-            details: 'Queries must be an array'
+            error: 'Invalid query format',
+            details: validation.errors
         });
     }
 
@@ -204,10 +306,16 @@ export async function runQueries(req, res) {
             environment
         });
 
-        const statusCode = error.message.includes('access denied') ? 401 : 500;
+        const statusCode = error.message.includes('authentication') ? 401
+            : error.message.includes('No nodes found') ? 404
+                : 500;
+
         res.status(statusCode).json({
             error: 'Query execution failed',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 }
+
+export { runQueries };

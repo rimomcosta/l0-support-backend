@@ -1,3 +1,4 @@
+// src/routes/appRoutes.js
 import express from 'express';
 import { conditionalAuth } from '../middleware/auth.js';
 import * as environment from '../api/app/environment.js';
@@ -18,11 +19,11 @@ router.post('/:projectId/:environment/sqlquery', conditionalAuth, sqlCommands.ru
 router.post('/:projectId/:environment/redisquery', conditionalAuth, redisCommands.runQueries);
 router.post('/:projectId/:environment/searchquery', conditionalAuth, openSearchCommands.runQueries);
 router.post('/:projectId/:environment/magentocloud/:instance?', conditionalAuth, magentoCloudDirectAccess.executeCommands);
+router.get('/command/:id', conditionalAuth, commands.getCommand);
+router.get('/commands', conditionalAuth, commands.getCommands);
 router.post('/commands', conditionalAuth, commands.createCommand);
 router.put('/commands/:id', conditionalAuth, commands.updateCommand);
-router.delete('/commands/:id', conditionalAuth, commands.deleteCommand);
-router.get('/commands', conditionalAuth, commands.getCommands);
-router.post('/commands/:commandId/execute', conditionalAuth, commands.executeCommand);
-
+router.delete('/command/:id', conditionalAuth, commands.deleteCommand);
+router.get('/:projectId/:environment/commands', conditionalAuth, commands.executeAllCommands);
 
 export default router;
