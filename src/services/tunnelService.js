@@ -11,37 +11,35 @@ const IDLE_TIMEOUT = 120000; // 2 minutes
 class TunnelManager {
     constructor() {
         this.timers = new Map();
-        this.activeTunnels = new Map();
+        this.tunnelPromises = new Map(); // Track ongoing tunnel creation attempts
         this.magentoCloud = new MagentoCloudAdapter();
     }
 
     parseExistingTunnelOutput(output) {
         const services = {};
         const lines = output.split('\n');
-        
+
         lines.forEach(line => {
-            // Match lines like "A tunnel is already opened to the relationship database, at: mysql://..."
             const alreadyOpenMatch = line.match(/relationship\s+(\w+(?:-\w+)?),\s+at:\s+(\S+)/);
-            // Match lines like "SSH tunnel opened to redis at: redis://..."
             const newOpenMatch = line.match(/SSH tunnel opened to\s+(\w+(?:-\w+)?)\s+at:\s+(\S+)/);
-            
+
             const match = alreadyOpenMatch || newOpenMatch;
             if (match) {
                 const [, service, url] = match;
                 if (!services[service]) {
                     services[service] = [];
                 }
-                
+
                 const urlObj = new URL(url);
                 const serviceInfo = {
                     username: urlObj.username || null,
                     password: urlObj.password || null,
                     host: urlObj.hostname,
                     port: urlObj.port,
-                    path: urlObj.pathname?.slice(1) || null, // Remove leading slash
+                    path: urlObj.pathname?.slice(1) || null,
                     url: url
                 };
-                
+
                 services[service].push(serviceInfo);
             }
         });
@@ -64,7 +62,6 @@ class TunnelManager {
                 output += data;
                 logger.debug('Tunnel setup progress:', { data: data.toString() });
 
-                // If we see this message, tunnels are already open and working
                 if (data.includes('A tunnel is already opened')) {
                     const services = this.parseExistingTunnelOutput(output);
                     if (Object.keys(services).length > 0) {
@@ -74,7 +71,6 @@ class TunnelManager {
                     }
                 }
 
-                // Check if we see MAGENTO_CLOUD_RELATIONSHIPS mention (completion message)
                 if (data.includes('MAGENTO_CLOUD_RELATIONSHIPS')) {
                     clearTimeout(timeout);
                     resolve(this.parseExistingTunnelOutput(output));
@@ -106,7 +102,7 @@ class TunnelManager {
             return this.parseTunnelInfo(stdout);
         } catch (error) {
             if (error.message.includes('No tunnels found')) {
-                return null; // Not an error case, just means we need to open a tunnel
+                return null;
             }
             throw error;
         }
@@ -115,49 +111,42 @@ class TunnelManager {
     async openTunnel(projectId, environment) {
         const tunnelKey = `${projectId}-${environment}`;
 
-        // Check if tunnel is already being opened
-        if (this.activeTunnels.get(tunnelKey)) {
-            return this.activeTunnels.get(tunnelKey);
-        }
-
         try {
-            // Try to get existing tunnel info first
+            // First, check if we already have a tunnel being created
+            const existingPromise = this.tunnelPromises.get(tunnelKey);
+            if (existingPromise) {
+                return existingPromise;
+            }
+
+            // Check for existing tunnel info
             let tunnelInfo = await this.getTunnelInfo(projectId, environment);
-            
             if (tunnelInfo) {
                 this.resetIdleTimer(projectId, environment);
                 return tunnelInfo;
             }
 
-            // Create promise for tunnel setup
+            // Create new tunnel promise
             const tunnelPromise = (async () => {
                 logger.info('Opening new tunnel...', { projectId, environment });
-
-                // Wait for tunnel to open and be ready
-                const tunnelInfo = await this.waitForTunnelOpen(projectId, environment);
-
-                logger.info('Tunnel successfully established', {
-                    projectId,
-                    environment
-                });
-
-                this.resetIdleTimer(projectId, environment);
-                return tunnelInfo;
+                try {
+                    const info = await this.waitForTunnelOpen(projectId, environment);
+                    logger.info('Tunnel successfully established', {
+                        projectId,
+                        environment
+                    });
+                    this.resetIdleTimer(projectId, environment);
+                    return info;
+                } finally {
+                    // Clean up promise reference when done
+                    this.tunnelPromises.delete(tunnelKey);
+                }
             })();
 
-            // Store the promise
-            this.activeTunnels.set(tunnelKey, tunnelPromise);
-
-            // Wait for tunnel setup to complete
-            const result = await tunnelPromise;
-
-            // Clear the stored promise
-            this.activeTunnels.delete(tunnelKey);
-
-            return result;
+            // Store the promise before starting the operation
+            this.tunnelPromises.set(tunnelKey, tunnelPromise);
+            return tunnelPromise;
 
         } catch (error) {
-            this.activeTunnels.delete(tunnelKey);
             logger.error('Failed to open tunnel:', {
                 error: error.message,
                 projectId,
@@ -169,17 +158,12 @@ class TunnelManager {
 
     resetIdleTimer(projectId, environment) {
         const key = `${projectId}-${environment}`;
-
-        // Clear existing timer if any
         if (this.timers.has(key)) {
             clearTimeout(this.timers.get(key));
         }
-
-        // Set new timer
         const timer = setTimeout(async () => {
             await this.closeTunnel(projectId, environment);
         }, IDLE_TIMEOUT);
-
         this.timers.set(key, timer);
     }
 
@@ -191,6 +175,8 @@ class TunnelManager {
                 clearTimeout(this.timers.get(key));
                 this.timers.delete(key);
             }
+            // Also clean up any lingering promise
+            this.tunnelPromises.delete(key);
         } catch (error) {
             logger.error('Failed to close tunnel:', {
                 error: error.message,
@@ -201,7 +187,6 @@ class TunnelManager {
         }
     }
 
-    // Helper method to parse tunnel:info output
     parseTunnelInfo(output) {
         const services = {};
         let currentService = null;
@@ -209,7 +194,7 @@ class TunnelManager {
 
         output.split('\n').forEach(line => {
             line = line.trim();
-            
+
             const serviceMatch = line.match(/^(\w+[-]?\w*):$/);
             if (serviceMatch) {
                 currentService = serviceMatch[1];
