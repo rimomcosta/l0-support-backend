@@ -1,8 +1,59 @@
+// src/api/app/sshCommands.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 import { execute as getNodes } from './nodes.js';
 
-// Executes an SSH command with retry mechanism
+// Bundles multiple commands into a single shell script
+function bundleCommands(commands) {
+    return commands.map(cmd => {
+        const escapedCommand = cmd.command.replace(/"/g, '\\"').replace(/'/g, "\\'");
+        return `echo 'id: ${cmd.id}'; echo 'title: ${cmd.title}'; ${escapedCommand};`;
+    }).join(' ');
+}
+
+// Parses the output from bundled commands into individual results
+function parseCommandOutput(output, commands) {
+    const results = [];
+    const lines = output.split('\n');
+    let currentCommand = null;
+    let currentOutput = [];
+
+    for (let line of lines) {
+        if (line.startsWith('id: ')) {
+            // Save previous command's output if exists
+            if (currentCommand) {
+                results.push({
+                    commandId: currentCommand.id,
+                    output: currentOutput.join('\n').trim(),
+                    error: null
+                });
+                currentOutput = [];
+            }
+            // Start new command
+            const id = parseInt(line.substring(4));
+            currentCommand = commands.find(cmd => cmd.id === id);
+            continue;
+        }
+        if (line.startsWith('title: ')) {
+            continue;
+        }
+        if (currentCommand) {
+            currentOutput.push(line);
+        }
+    }
+
+    // Don't forget the last command
+    if (currentCommand) {
+        results.push({
+            commandId: currentCommand.id,
+            output: currentOutput.join('\n').trim(),
+            error: null
+        });
+    }
+
+    return results;
+}
+
 async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3, delay: 1000 }) {
     let lastError;
 
@@ -19,16 +70,11 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
             return result;
         } catch (error) {
             lastError = error;
-
-            // Check if it's an authentication error
             const isAuthError = error.message.includes('SSH certificate authentication is required') ||
                 error.message.includes('Access denied') ||
                 error.message.includes('authentication failures');
 
-            if (!isAuthError) {
-                // If it's not an auth error, don't retry
-                throw error;
-            }
+            if (!isAuthError) throw error;
 
             if (attempt < options.maxRetries) {
                 logger.warn('Retrying SSH command due to authentication failure', {
@@ -37,14 +83,11 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
                     error: error.message,
                     timestamp: new Date().toISOString()
                 });
-
-                // Wait before retrying
                 await new Promise(resolve => setTimeout(resolve, options.delay));
             }
         }
     }
 
-    // If we get here, all retries failed
     logger.error('SSH command failed after all retry attempts', {
         maxRetries: options.maxRetries,
         command,
@@ -57,30 +100,17 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
 
 async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands) {
     try {
-        // Execute each command separately to maintain clear separation
-        const results = await Promise.all(commands.map(async (cmd) => {
-            try {
-                const escapedCommand = cmd.command.replace(/"/g, '\\"');
-                const { stdout, stderr } = await executeWithRetry(
-                    magentoCloud,
-                    `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${escapedCommand}"`,
-                    { maxRetries: 3, delay: 1000 }
-                );
+        const bundledCommand = bundleCommands(commands);
+        const { stdout, stderr } = await executeWithRetry(
+            magentoCloud,
+            `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${bundledCommand}"`,
+            { maxRetries: 3, delay: 1000 }
+        );
 
-                return {
-                    commandId: cmd.id,
-                    nodeId,
-                    output: (stdout + stderr).trim(),
-                    error: null
-                };
-            } catch (error) {
-                return {
-                    commandId: cmd.id,
-                    nodeId,
-                    output: null,
-                    error: error.message
-                };
-            }
+        const output = stdout + stderr;
+        const results = parseCommandOutput(output, commands).map(result => ({
+            ...result,
+            nodeId
         }));
 
         return results;
@@ -100,39 +130,56 @@ async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, no
     }
 }
 
-// Executes commands across multiple nodes in parallel.
-async function executeCommandsAcrossNodes(magentoCloud, projectId, environment, commands, nodeIds) {
-    // Create a promise for each node's execution
-    const executionPromises = nodeIds.map(nodeId =>
-        executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands)
-            .catch(error => {
-                logger.error(`Failed to execute commands on node ${nodeId}`, {
-                    error: error.message,
-                    timestamp: new Date().toISOString()
-                });
-                return commands.map(cmd => ({
-                    commandId: cmd.id,
-                    nodeId,
-                    output: null,
-                    error: error.message
-                }));
-            })
-    );
-
-    // Wait for all executions to complete and flatten the results
-    const results = await Promise.all(executionPromises);
-    return results.flat();
-}
-
-// Main API handler for executing SSH commands.
 export async function runCommands(req, res) {
     const { projectId, environment } = req.params;
     const { commands } = req.body;
 
-    if (!Array.isArray(commands)) {
+    if (!Array.isArray(commands) || commands.length === 0) {
         return res.status(400).json({
             error: 'Invalid request format',
-            details: 'Commands must be an array'
+            details: 'Commands must be a non-empty array'
+        });
+    }
+
+    // Validate command structure and uniqueness of IDs
+    const seenIds = new Set();
+    const validationErrors = [];
+
+    commands.forEach((cmd, index) => {
+        // Check required fields
+        if (!cmd.id) validationErrors.push(`Command at index ${index} is missing 'id'`);
+        if (!cmd.title) validationErrors.push(`Command at index ${index} is missing 'title'`);
+        if (!cmd.command) validationErrors.push(`Command at index ${index} is missing 'command'`);
+        if (typeof cmd.executeOnAllNodes !== 'boolean') {
+            validationErrors.push(`Command at index ${index} is missing 'executeOnAllNodes' or it's not a boolean`);
+        }
+
+        // Check for duplicate IDs
+        if (cmd.id) {
+            if (seenIds.has(cmd.id)) {
+                validationErrors.push(`Duplicate command ID found: ${cmd.id}`);
+            } else {
+                seenIds.add(cmd.id);
+            }
+        }
+
+        // Validate command string is not empty and doesn't contain dangerous characters
+        if (cmd.command && typeof cmd.command === 'string') {
+            if (cmd.command.trim().length === 0) {
+                validationErrors.push(`Command at index ${index} has empty command string`);
+            }
+            // Check for command injection attempts
+            if (cmd.command.includes('&&') || cmd.command.includes('||') ||
+                cmd.command.includes(';') || cmd.command.includes('|')) {
+                validationErrors.push(`Command at index ${index} contains invalid characters`);
+            }
+        }
+    });
+
+    if (validationErrors.length > 0) {
+        return res.status(400).json({
+            error: 'Invalid command format',
+            details: validationErrors
         });
     }
 
@@ -140,43 +187,57 @@ export async function runCommands(req, res) {
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
-        // Get nodes
         const nodes = await getNodes(projectId, environment);
         if (!nodes || nodes.length === 0) {
             throw new Error('No nodes found in the environment');
         }
 
-        const nodeIds = nodes.map(node => node.id);
+        // Prepare commands for each node
+        const results = [];
+        const allNodesCommands = commands.filter(cmd => cmd.executeOnAllNodes);
 
-        // Process each command according to its execution strategy
-        const results = await Promise.all(commands.map(async (command) => {
-            const commandResult = {
+        // For node 1, execute all commands (both single-node and all-nodes commands)
+        const node1Results = await executeSSHCommandsOnNode(
+            magentoCloud,
+            projectId,
+            environment,
+            nodes[0].id,
+            commands  // Execute all commands on node 1
+        );
+
+        // Initialize results for all commands
+        commands.forEach(command => {
+            results.push({
                 id: command.id,
                 title: command.title,
                 command: command.command,
-                results: []
-            };
+                results: node1Results.filter(r => r.commandId === command.id)
+            });
+        });
 
-            if (command.executeOnAllNodes) {
-                // Execute on all nodes
-                const nodeResults = await Promise.all(nodeIds.map(nodeId =>
-                    executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, [command])
-                ));
-                commandResult.results = nodeResults.flat();
-            } else {
-                // Execute only on first node
-                const singleNodeResult = await executeSSHCommandsOnNode(
-                    magentoCloud, 
-                    projectId, 
-                    environment, 
-                    nodeIds[0], 
-                    [command]
-                );
-                commandResult.results = singleNodeResult;
-            }
+        // For remaining nodes, only execute commands that should run on all nodes
+        if (allNodesCommands.length > 0 && nodes.length > 1) {
+            const remainingNodePromises = nodes.slice(1).map(node =>
+                executeSSHCommandsOnNode(
+                    magentoCloud,
+                    projectId,
+                    environment,
+                    node.id,
+                    allNodesCommands
+                )
+            );
 
-            return commandResult;
-        }));
+            const remainingNodesResults = await Promise.all(remainingNodePromises);
+            const flattenedResults = remainingNodesResults.flat();
+
+            // Add results from remaining nodes to the appropriate commands
+            allNodesCommands.forEach(command => {
+                const resultEntry = results.find(r => r.id === command.id);
+                if (resultEntry) {
+                    resultEntry.results.push(...flattenedResults.filter(r => r.commandId === command.id));
+                }
+            });
+        }
 
         res.json({
             projectId,
