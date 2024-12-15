@@ -98,32 +98,36 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
     throw lastError;
 }
 
-async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands) {
+async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode) {
     try {
         const bundledCommand = bundleCommands(commands);
+        const sshCommand = isSingleNode
+            ? `ssh -p ${projectId} -e ${environment} "${bundledCommand}"`
+            : `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${bundledCommand}"`;
+
         const { stdout, stderr } = await executeWithRetry(
             magentoCloud,
-            `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${bundledCommand}"`,
+            sshCommand,
             { maxRetries: 3, delay: 1000 }
         );
 
         const output = stdout + stderr;
         const results = parseCommandOutput(output, commands).map(result => ({
             ...result,
-            nodeId
+            nodeId: isSingleNode ? 'single-node' : nodeId
         }));
 
         return results;
     } catch (error) {
         logger.error('Command execution failed', {
-            nodeId,
+            nodeId: isSingleNode ? 'single-node' : nodeId,
             error: error.message,
             timestamp: new Date().toISOString()
         });
 
         return commands.map(cmd => ({
             commandId: cmd.id,
-            nodeId,
+            nodeId: isSingleNode ? 'single-node' : nodeId,
             output: null,
             error: error.message
         }));
@@ -188,6 +192,8 @@ export async function runCommands(req, res) {
         await magentoCloud.validateExecutable();
 
         const nodes = await getNodes(projectId, environment);
+        const isSingleNode = !nodes || nodes.length <= 1;
+
         if (!nodes || nodes.length === 0) {
             throw new Error('No nodes found in the environment');
         }
@@ -196,13 +202,14 @@ export async function runCommands(req, res) {
         const results = [];
         const allNodesCommands = commands.filter(cmd => cmd.executeOnAllNodes);
 
-        // For node 1, execute all commands (both single-node and all-nodes commands)
+        // For node 1 (or single-node), execute all commands (both single-node and all-nodes commands)
         const node1Results = await executeSSHCommandsOnNode(
             magentoCloud,
             projectId,
             environment,
-            nodes[0].id,
-            commands  // Execute all commands on node 1
+            isSingleNode ? null : nodes[0].id,
+            commands,  // Execute all commands on node 1 or single-node
+            isSingleNode
         );
 
         // Initialize results for all commands
@@ -216,14 +223,15 @@ export async function runCommands(req, res) {
         });
 
         // For remaining nodes, only execute commands that should run on all nodes
-        if (allNodesCommands.length > 0 && nodes.length > 1) {
+        if (!isSingleNode && allNodesCommands.length > 0 && nodes.length > 1) {
             const remainingNodePromises = nodes.slice(1).map(node =>
                 executeSSHCommandsOnNode(
                     magentoCloud,
                     projectId,
                     environment,
                     node.id,
-                    allNodesCommands
+                    allNodesCommands,
+                    false
                 )
             );
 
