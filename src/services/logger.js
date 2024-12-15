@@ -4,8 +4,11 @@ export const logger = winston.createLogger({
     level: 'debug',
     format: winston.format.combine(
         winston.format.timestamp(),
-        winston.format.printf(({ level, message, timestamp, ...metadata }) => {
-            let msg = `${timestamp} [${level}]: ${message}`;
+        winston.format.printf(({ level, message, timestamp, userId, sessionId, ...metadata }) => {
+            let msg = `${timestamp} [${level}]`;
+            if (userId) msg += ` [User: ${userId}]`;
+            if (sessionId) msg += ` [Session: ${sessionId}]`;
+            msg += `: ${message}`;
             if (Object.keys(metadata).length > 0) msg += ` ${JSON.stringify(metadata)}`;
             return msg;
         })

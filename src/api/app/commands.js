@@ -49,7 +49,7 @@ const SERVICE_HANDLERS = {
         handler: openSearchCommands.runQueries,
         preparePayload: (commands) => ({
             queries: commands.map(cmd => {
-                const config = typeof cmd.command === 'string' 
+                const config = typeof cmd.command === 'string'
                     ? JSON.parse(cmd.command)
                     : cmd.command;
                 return {
@@ -72,7 +72,7 @@ const SERVICE_HANDLERS = {
                     // Note: instanceid will be handled by the magentoCloudDirectAccess handler
                     .replace(/--p\s+/g, '--project ') // Normalize project flag
                     .replace(/-project\s+/g, '-p '); // Normalize project flag
-                
+
                 return {
                     id: cmd.id,
                     title: cmd.title,
@@ -123,8 +123,8 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     }
 
     const request = {
-        params: { 
-            projectId, 
+        params: {
+            projectId,
             environment,
             tunnelInfo // Pass tunnel info to service handlers
         },
@@ -132,11 +132,11 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     };
 
     const responseHandler = {
-        status: function(code) {
+        status: function (code) {
             this.statusCode = code;
             return this;
         },
-        json: function(data) {
+        json: function (data) {
             this.data = data;
             return this;
         }
@@ -160,7 +160,6 @@ export async function executeAllCommands(req, res) {
     const { projectId, environment } = req.params;
 
     try {
-        // Fetch all commands from the database
         const allCommands = await commandService.getAll();
         logger.info('Fetched commands from DB:', {
             total: allCommands.length,
@@ -170,8 +169,7 @@ export async function executeAllCommands(req, res) {
                 service_type: cmd.service_type
             }))
         });
-        
-        // Group commands by service type
+
         const commandsByService = allCommands.reduce((acc, cmd) => {
             const serviceType = cmd.service_type;
             acc[serviceType] = acc[serviceType] || [];
@@ -183,21 +181,13 @@ export async function executeAllCommands(req, res) {
             return acc;
         }, {});
 
-        logger.info('Grouped commands by service:', {
-            services: Object.keys(commandsByService),
-            counts: Object.entries(commandsByService).reduce((acc, [service, cmds]) => {
-                acc[service] = cmds.length;
-                return acc;
-            }, {})
-        });
-
         const results = {
             projectId,
             environment,
             timestamp: new Date().toISOString(),
             services: {}
         };
-        
+
         const serviceExecutions = Object.entries(commandsByService).map(async ([serviceType, commands]) => {
             try {
                 const serviceResults = await executeServiceCommands(
@@ -209,12 +199,13 @@ export async function executeAllCommands(req, res) {
 
                 results.services[serviceType] = serviceResults;
 
-                WebSocketService.broadcast({
+                // Update this to use broadcastToUser instead of broadcast
+                WebSocketService.broadcastToUser({
                     type: 'service_complete',
                     serviceType,
                     timestamp: new Date().toISOString(),
                     results: serviceResults
-                });
+                }, req.session.user.id);  // Pass the user ID
 
             } catch (error) {
                 results.services[serviceType] = {
@@ -222,24 +213,24 @@ export async function executeAllCommands(req, res) {
                     timestamp: new Date().toISOString()
                 };
 
-                WebSocketService.broadcast({
+                // Update this to use broadcastToUser
+                WebSocketService.broadcastToUser({
                     type: 'service_error',
                     serviceType,
                     timestamp: new Date().toISOString(),
                     error: error.message
-                });
+                }, req.session.user.id);  // Pass the user ID
             }
         });
 
         await Promise.all(serviceExecutions);
 
-        await Promise.all(serviceExecutions);
-
-        WebSocketService.broadcast({
+        // Update final broadcast
+        WebSocketService.broadcastToUser({
             type: 'execution_complete',
             timestamp: new Date().toISOString(),
             results
-        });
+        }, req.session.user.id);  // Pass the user ID
 
         res.json(results);
 
@@ -256,11 +247,12 @@ export async function executeAllCommands(req, res) {
             timestamp: new Date().toISOString()
         };
 
-        WebSocketService.broadcast({
+        // Update error broadcast
+        WebSocketService.broadcastToUser({
             type: 'execution_error',
             timestamp: new Date().toISOString(),
             error: errorResponse
-        });
+        }, req.session.user.id);  // Pass the user ID
 
         res.status(500).json(errorResponse);
     }

@@ -1,84 +1,73 @@
 // src/services/webSocketService.js
-import { WebSocketServer } from 'ws';  // Change this line
+import { WebSocketServer } from 'ws';
 import { logger } from './logger.js';
+import url from 'url';
 
 export class WebSocketService {
     static initialize(server) {
-        try {
-            const wss = new WebSocketServer({ 
-                server,
-                path: '/ws'
-            });
-            
-            wss.on('connection', (ws, req) => {
-                logger.info('New WebSocket connection established', {
-                    ip: req.socket.remoteAddress,
-                    timestamp: new Date().toISOString()
-                });
-                
-                // Handle incoming messages
-                ws.on('message', (message) => {
-                    try {
-                        const data = JSON.parse(message);
-                        logger.debug('WebSocket message received:', data);
-                    } catch (error) {
-                        logger.error('Failed to parse WebSocket message:', error);
-                    }
-                });
+        const wss = new WebSocketServer({ noServer: true, path: '/ws' });
 
-                // Handle connection errors
-                ws.on('error', (error) => {
-                    logger.error('WebSocket error:', error);
-                });
+        wss.on('connection', (ws, req) => {
+            // Parse the clientId from query params
+            const queryObject = url.parse(req.url, true).query;
+            const clientId = queryObject.clientId || null;
+            ws.clientId = clientId;
 
-                // Handle connection close
-                ws.on('close', () => {
-                    logger.info('WebSocket connection closed');
-                });
-
-                // Send initial connection confirmation
-                ws.send(JSON.stringify({
-                    type: 'connection',
-                    status: 'connected',
-                    timestamp: new Date().toISOString()
-                }));
+            logger.info('WebSocket connection established', {
+                sessionId: ws.sessionID,
+                userId: ws.userID,
+                clientId: ws.clientId
             });
 
-            // Handle server-level errors
-            wss.on('error', (error) => {
-                logger.error('WebSocket server error:', error);
+            ws.on('error', (error) => {
+                logger.error('WebSocket error:', {
+                    error: error.message,
+                    sessionId: ws.sessionID,
+                    userId: ws.userID,
+                    clientId: ws.clientId
+                });
             });
 
-            return wss;
-        } catch (error) {
-            logger.error('Failed to initialize WebSocket server:', error);
-            throw error;
-        }
+            ws.on('close', () => {
+                logger.info('WebSocket connection closed', {
+                    sessionId: ws.sessionID,
+                    userId: ws.userID,
+                    clientId: ws.clientId
+                });
+            });
+        });
+
+        return wss;
     }
 
-    static getClientConnection(req) {
-        if (!req.app.locals.wss) {
-            throw new Error('WebSocket server not initialized');
-        }
-
-        const clients = Array.from(req.app.locals.wss.clients)
-            .filter(client => client.readyState === WebSocket.OPEN);
-
-        if (clients.length === 0) {
-            throw new Error('No active WebSocket connections');
-        }
-
-        return clients[0];
-    }
-
-    static broadcast(message) {
+    static broadcastToUser(message, userId) {
         if (!global.wss) {
             throw new Error('WebSocket server not initialized');
         }
 
         global.wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify(message));
+            if (client.readyState === client.OPEN && client.userID === userId) {
+                client.send(JSON.stringify({
+                    ...message,
+                    timestamp: new Date().toISOString(),
+                    userId: userId
+                }));
+            }
+        });
+    }
+
+    static broadcastToSession(message, sessionId) {
+        if (!global.wss) {
+            throw new Error('WebSocket server not initialized');
+        }
+
+        global.wss.clients.forEach(client => {
+            if (client.readyState === client.OPEN && client.sessionID === sessionId) {
+                client.send(JSON.stringify({
+                    ...message,
+                    timestamp: new Date().toISOString(),
+                    sessionId: sessionId
+                }));
             }
         });
     }

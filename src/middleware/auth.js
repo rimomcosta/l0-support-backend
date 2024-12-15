@@ -1,4 +1,6 @@
+//src/middleware/auth.js
 import { logger } from '../services/logger.js';
+import { SessionService } from '../services/sessionService.js';
 
 export function requireAuth(req, res, next) {
     if (!req.session.user) {
@@ -23,11 +25,30 @@ export function sessionDebug(req, res, next) {
 }
 
 export function conditionalAuth(req, res, next) {
-    // Skip authentication if not in production
     if (process.env.NODE_ENV !== 'production') {
         return next();
     }
-    
-    // Apply authentication in production
     return requireAuth(req, res, next);
+}
+
+// Add this new function
+export async function verifySession(req) {
+    try {
+        if (!req.session?.user) {
+            return false;
+        }
+
+        const userContext = await SessionService.getUserContext(req.sessionID);
+        if (!userContext || !userContext.userId) {
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        logger.error('Session verification failed:', {
+            error: error.message,
+            sessionId: req.sessionID
+        });
+        return false;
+    }
 }

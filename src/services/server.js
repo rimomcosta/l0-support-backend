@@ -9,8 +9,7 @@ dotenv.config();
 const port = process.env.PORT || 4000;
 
 initializeApp()
-    .then((app) => {
-        // Create HTTP server instance first
+    .then(({ app, sessionParser }) => {
         const server = app.listen(port, () => {
             logger.info(`Server running on port ${port}`);
             logger.info(`Environment: ${process.env.NODE_ENV}`);
@@ -21,24 +20,35 @@ initializeApp()
             });
         });
 
-        try {
-            // Initialize WebSocket after server is created
-            const wss = WebSocketService.initialize(server);
-            app.locals.wss = wss;
-            global.wss = wss;
-            logger.info('WebSocket server initialized successfully');
-        } catch (error) {
-            logger.error('WebSocket initialization failed:', error);
-            // Continue running the server even if WebSocket fails
-        }
+        const wss = WebSocketService.initialize(server);
 
-        // Handle server errors
+        // Handle the upgrade event for WebSocket to run sessionParser
+        server.on('upgrade', (request, socket, head) => {
+            sessionParser(request, {}, async () => {
+                if (!request.session || !request.session.user) {
+                    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+                    socket.destroy();
+                    return;
+                }
+
+                // If session is valid, complete upgrade
+                wss.handleUpgrade(request, socket, head, (ws) => {
+                    ws.sessionID = request.sessionID;
+                    ws.userID = request.session.user.id;
+                    wss.emit('connection', ws, request);
+                });
+            });
+        });
+
+        app.locals.wss = wss;
+        global.wss = wss;
+        logger.info('WebSocket server initialized successfully');
+
         server.on('error', (error) => {
             logger.error('Server error:', error);
             process.exit(1);
         });
 
-        // Handle process termination
         process.on('SIGTERM', () => {
             logger.info('SIGTERM received. Closing server...');
             server.close(() => {
@@ -47,13 +57,11 @@ initializeApp()
             });
         });
 
-        // Handle uncaught exceptions
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught exception:', error);
             process.exit(1);
         });
 
-        // Handle unhandled promise rejections
         process.on('unhandledRejection', (reason, promise) => {
             logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
         });

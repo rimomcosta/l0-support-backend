@@ -13,7 +13,7 @@ export const sessionConfig = {
         httpOnly: true,
         sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000,
-        path: '/',
-        domain: process.env.NODE_ENV === 'development' ? undefined : '.ngrok-free.app'
+        path: '/'
+        // domain: process.env.NODE_ENV === 'development' ? undefined : '.ngrok-free.app'
     }
 };
