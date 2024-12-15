@@ -1,4 +1,3 @@
-// src/api/app/sqlCommands.js
 'use strict';
 
 import { logger } from '../../services/logger.js';
@@ -29,7 +28,8 @@ function parseQueryOutput(output, queries) {
                 results.push({
                     queryId: currentQuery.id,
                     output: currentOutput.join('\n').trim(),
-                    error: null
+                    error: null,
+                    status: currentOutput.join('\n').trim() ? "SUCCESS" : "ERROR"
                 });
                 currentOutput = [];
             }
@@ -51,7 +51,8 @@ function parseQueryOutput(output, queries) {
         results.push({
             queryId: currentQuery.id,
             output: currentOutput.join('\n').trim(),
-            error: null
+            error: null,
+            status: currentOutput.join('\n').trim() ? "SUCCESS" : "ERROR"
         });
     }
 
@@ -210,7 +211,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                     logger.debug('Executing query through tunnel');
                     const result = await sqlService.executeQuery(query.query, false);
                     queryResult.results.push({
-                        nodeId: nodes[0].id, // Use first node ID for reference
+                        nodeId: 'tunnel',
                         output: result,
                         error: null,
                         status: 'SUCCESS'
@@ -221,7 +222,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                         query: query.title
                     });
                     queryResult.results.push({
-                        nodeId: nodes[0].id,
+                        nodeId: 'tunnel',
                         output: null,
                         error: error.message,
                         status: 'ERROR'

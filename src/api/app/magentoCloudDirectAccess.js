@@ -73,7 +73,8 @@ async function executeCommand(magentoCloud, command, context) {
 
         return {
             output: stdout || null,
-            error: stderr || null
+            error: stderr || null,
+            status: stderr ? 'ERROR' : 'SUCCESS'
         };
     } catch (error) {
         logger.error('Command execution failed:', {
@@ -84,7 +85,8 @@ async function executeCommand(magentoCloud, command, context) {
 
         return {
             output: null,
-            error: error.message
+            error: error.message,
+            status: 'ERROR'
         };
     }
 }
@@ -111,7 +113,7 @@ export async function executeCommands(req, res) {
         };
 
         const results = await Promise.all(commands.map(async (cmd) => {
-            const { output, error } = await executeCommand(
+            const { output, error, status } = await executeCommand(
                 magentoCloud, 
                 cmd.command.replace(/^"|"$/g, ''), // Remove surrounding quotes if present
                 context
@@ -122,9 +124,16 @@ export async function executeCommands(req, res) {
                 title: cmd.title,
                 command: cmd.command,
                 results: [{
+                    nodeId: 'single-node',
                     output,
-                    error
-                }]
+                    error,
+                    status
+                }],
+                summary: {
+                    total: 1,
+                    successful: status === 'SUCCESS' ? 1 : 0,
+                    failed: status === 'ERROR' ? 1 : 0
+                }
             };
         }));
 

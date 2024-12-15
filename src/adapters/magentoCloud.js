@@ -1,3 +1,4 @@
+// src/adapters/magentoCloud.js
 import { access, constants } from 'fs/promises';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -27,19 +28,28 @@ class MagentoCloudAdapter {
 
     async executeCommand(command) {
         try {
-            return await execAsync(`${this.executablePath} ${command}`, {
+            const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
                 env: {
                     ...process.env,
                     PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin`
                 }
             });
+            return { stdout, stderr }; // Return both stdout and stderr
         } catch (error) {
-            logger.error('Magento cloud command execution failed:', {
-                error: error.message,
-                command,
-                timestamp: new Date().toISOString()
-            });
-            throw error;
+            if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
+                logger.info('Magento cloud command execution (tunnel:info) returned no tunnel info (expected when tunnel is closed).', {
+                    command,
+                    timestamp: new Date().toISOString()
+                });
+                return { stdout: '', stderr: error.message }; // Return empty stdout and the error message as stderr
+            } else {
+                logger.error('Magento cloud command execution failed:', {
+                    error: error.message,
+                    command,
+                    timestamp: new Date().toISOString()
+                });
+                throw error;
+            }
         }
     }
 

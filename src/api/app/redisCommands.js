@@ -32,8 +32,10 @@ export async function runQueries(req, res) {
             try {
                 const output = await redisService.executeCommand(query.query);
                 queryResult.results.push({
+                    nodeId: 'tunnel',
                     output,
-                    error: null
+                    error: null,
+                    status: 'SUCCESS'
                 });
             } catch (error) {
                 logger.error('Redis query execution failed:', {
@@ -41,10 +43,18 @@ export async function runQueries(req, res) {
                     query: query.title
                 });
                 queryResult.results.push({
+                    nodeId: 'tunnel',
                     output: null,
-                    error: error.message
+                    error: error.message,
+                    status: 'ERROR'
                 });
             }
+            
+            queryResult.summary = {
+                total: queryResult.results.length,
+                successful: queryResult.results.filter(r => r.status === 'SUCCESS').length,
+                failed: queryResult.results.filter(r => r.status === 'ERROR').length
+            };
 
             results.push(queryResult);
         }

@@ -25,7 +25,8 @@ function parseCommandOutput(output, commands) {
                 results.push({
                     commandId: currentCommand.id,
                     output: currentOutput.join('\n').trim(),
-                    error: null
+                    error: null,
+                    status: currentOutput.join('\n').trim() ? "SUCCESS" : "ERROR"
                 });
                 currentOutput = [];
             }
@@ -47,7 +48,8 @@ function parseCommandOutput(output, commands) {
         results.push({
             commandId: currentCommand.id,
             output: currentOutput.join('\n').trim(),
-            error: null
+            error: null,
+            status: currentOutput.join('\n').trim() ? "SUCCESS" : "ERROR"
         });
     }
 
@@ -129,7 +131,8 @@ async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, no
             commandId: cmd.id,
             nodeId: isSingleNode ? 'single-node' : nodeId,
             output: null,
-            error: error.message
+            error: error.message,
+            status: "ERROR"
         }));
     }
 }
@@ -246,6 +249,17 @@ export async function runCommands(req, res) {
                 }
             });
         }
+        
+        // Add summary for each command
+        results.forEach(commandResult => {
+            const successful = commandResult.results.filter(r => r.status === 'SUCCESS').length;
+            const failed = commandResult.results.filter(r => r.status === 'ERROR').length;
+            commandResult.summary = {
+                total: commandResult.results.length,
+                successful,
+                failed
+            };
+        });
 
         res.json({
             projectId,

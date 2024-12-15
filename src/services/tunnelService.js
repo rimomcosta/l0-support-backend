@@ -186,12 +186,13 @@ class TunnelManager {
     }
     
     async getTunnelInfo(projectId, environment) {
+        const tunnelKey = `${projectId}-${environment}`;
         try {
             const { stdout } = await this.magentoCloud.executeCommand(
                 `tunnel:info -p ${projectId} -e ${environment} -y`
             );
             const tunnelInfo = this.parseTunnelInfo(stdout);
-            
+    
             if (Object.keys(tunnelInfo).length > 0) {
                 const isHealthy = await this.checkTunnelHealth(tunnelInfo);
                 if (!isHealthy) {
@@ -199,12 +200,12 @@ class TunnelManager {
                         projectId,
                         environment
                     });
-                    
+    
                     try {
                         await this.magentoCloud.executeCommand('tunnel:close -y');
                     } catch (closeError) {
-                        logger.debug('Error closing unhealthy tunnel', { 
-                            error: closeError.message 
+                        logger.debug('Error closing unhealthy tunnel', {
+                            error: closeError.message
                         });
                     }
                     return null;
@@ -214,7 +215,12 @@ class TunnelManager {
             return null;
         } catch (error) {
             if (error.message.includes('No tunnels found')) {
-                // Don't log as error, just return null
+                // Check if a tunnel is expected to be open
+                if (this.timers.has(tunnelKey)) {
+                    logger.info('Tunnel closed as expected, no tunnel info available', { projectId, environment });
+                } else {
+                    logger.debug('No tunnels found (tunnel might not be open yet)', { projectId, environment });
+                }
                 return null;
             }
             throw error;
