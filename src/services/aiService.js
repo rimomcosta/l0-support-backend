@@ -20,9 +20,9 @@ class AiService {
         }
     }
 
-    async generateComponentCode(command, description, outputExample) {
+    async generateComponentCode(command, description, outputExample, aiGuidance = '') {
         try {
-            const prompt = this.createPrompt(command, description, outputExample);
+            const prompt = this.createPrompt(command, description, outputExample, aiGuidance);
             const generatedCode = await this.adapter.generateCode(prompt);
 
             // Clean up the response if needed based on the provider
@@ -46,7 +46,7 @@ class AiService {
     }
 
 
-    createPrompt(command, description, outputExample) {
+    createPrompt(command, description, outputExample, aiGuidance = '') {
         return `
         You are a React code generation assistant. Generate a React component for a dashboard based on the following information:
     
@@ -54,6 +54,7 @@ class AiService {
         Description: ${description}
         Output Example:
         ${outputExample}
+        Type of Component: ${aiGuidance}
     
         The component should be able to display the data in a dashboard in the most explanatory and graphic way, but it should look clean, futuristic, very appealling visualy and with elements that make sense. Avoid using cards unless it is the best option for the data representation. Feel free to use collors to represent intensity or importance of the data, bars, charts, etc.
         

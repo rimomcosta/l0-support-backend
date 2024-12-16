@@ -14,14 +14,14 @@ const commandService = new CommandService();
 
 // AI Code Generation Endpoint
 export async function generateComponentCode(req, res) {
-    const { command, description, outputExample } = req.body;
+    const { command, description, outputExample, aiGuidance } = req.body;
 
     if (!outputExample || !command) {
         return res.status(400).json({ error: 'Command, description and output example are required' });
     }
 
     try {
-        const generatedCode = await aiService.generateComponentCode(command, description, outputExample);
+        const generatedCode = await aiService.generateComponentCode(command, description, outputExample, aiGuidance);
         res.json({ generatedCode });
     } catch (error) {
         logger.error('AI code generation failed:', error);
