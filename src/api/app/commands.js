@@ -8,8 +8,26 @@ import * as sqlCommands from './sqlCommands.js';
 import * as redisCommands from './redisCommands.js';
 import * as openSearchCommands from './openSearchCommands.js';
 import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
+import { aiService } from '../../services/aiService.js';
 
 const commandService = new CommandService();
+
+// AI Code Generation Endpoint
+export async function generateComponentCode(req, res) {
+    const { command, description, outputExample } = req.body;
+
+    if (!outputExample || !command) {
+        return res.status(400).json({ error: 'Command, description and output example are required' });
+    }
+
+    try {
+        const generatedCode = await aiService.generateComponentCode(command, description, outputExample);
+        res.json({ generatedCode });
+    } catch (error) {
+        logger.error('AI code generation failed:', error);
+        res.status(500).json({ error: 'Failed to generate component code' });
+    }
+}
 
 // Service type handlers configuration
 const SERVICE_HANDLERS = {
@@ -170,7 +188,10 @@ export async function executeAllCommands(req, res) {
             }))
         });
 
-        const commandsByService = allCommands.reduce((acc, cmd) => {
+        // Filter commands where auto_run is true
+        const commandsToRun = allCommands.filter(cmd => cmd.auto_run);
+
+        const commandsByService = commandsToRun.reduce((acc, cmd) => {
             const serviceType = cmd.service_type;
             acc[serviceType] = acc[serviceType] || [];
             acc[serviceType].push({
@@ -247,12 +268,11 @@ export async function executeAllCommands(req, res) {
             timestamp: new Date().toISOString()
         };
 
-        // Update error broadcast
         WebSocketService.broadcastToUser({
             type: 'execution_error',
             timestamp: new Date().toISOString(),
             error: errorResponse
-        }, req.session.user.id);  // Pass the user ID
+        }, req.session.user.id);
 
         res.status(500).json(errorResponse);
     }

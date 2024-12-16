@@ -8,6 +8,7 @@
     "dev": "nodemon src/services/server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
     "connect-redis": "^7.1.1",
     "cookie": "^1.0.2",
     "cookie-parser": "^1.4.7",
@@ -16,6 +17,7 @@
     "express": "^4.21.1",
     "express-session": "^1.18.1",
     "mysql2": "^3.11.5",
+    "openai": "^4.76.3",
     "openid-client": "^5.6.1",
     "redis": "^4.7.0",
     "url": "^0.11.4",

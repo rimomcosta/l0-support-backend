@@ -25,5 +25,6 @@ router.post('/commands', conditionalAuth, commands.createCommand);
 router.put('/commands/:id', conditionalAuth, commands.updateCommand);
 router.delete('/command/:id', conditionalAuth, commands.deleteCommand);
 router.get('/:projectId/:environment/commands', conditionalAuth, commands.executeAllCommands);
+router.post('/ai/generate-component-code', conditionalAuth, commands.generateComponentCode);
 
 export default router;
