@@ -23,8 +23,8 @@ export class OpenAIAdapter {
                         content: prompt
                     }
                 ],
-                max_tokens: 2000, // Adjust as needed
-                temperature: 0.7, // Adjust for creativity vs. precision
+                max_tokens: 3000, // Adjust as needed
+                temperature: 0.9, // Adjust for creativity vs. precision
             });
 
             // Extract and return the generated code
