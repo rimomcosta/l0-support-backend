@@ -118,7 +118,7 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         commands: commands.map(cmd => ({
             id: cmd.id,
             title: cmd.title,
-            
+
         }))
     });
 
@@ -337,5 +337,95 @@ export async function deleteCommand(req, res) {
     } catch (error) {
         logger.error('Failed to delete command:', error);
         res.status(500).json({ error: error.message });
+    }
+}
+
+export async function executeSingleCommand(req, res) {
+    const { commandId, projectId } = req.body;
+    const environment = req.body.environment || null;
+    const instance = req.body.instance || null; // Not used yet
+
+    if (!commandId || !projectId) {
+        return res.status(400).json({ error: 'Command ID, project ID and environment are required' });
+    }
+
+    try {
+        const command = await commandService.getById(commandId);
+        if (!command || command.length === 0) {
+            return res.status(404).json({ error: 'Command not found' });
+        }
+
+        const singleCommand = command[0];
+        const serviceType = singleCommand.service_type;
+
+        const serviceHandler = SERVICE_HANDLERS[serviceType];
+        if (!serviceHandler) {
+            return res.status(400).json({ error: `Unsupported service type: ${serviceType}` });
+        }
+
+        const { handler, preparePayload } = serviceHandler;
+
+        // Execute command using the appropriate handler
+        const request = {
+            params: {
+                projectId,
+                environment,
+                instance
+            },
+            body: preparePayload([singleCommand], projectId, environment) // Pass an array with the single command
+        };
+
+        const responseHandler = {
+            status: function (code) {
+                this.statusCode = code;
+                return this;
+            },
+            json: function (data) {
+                this.data = data;
+                return this;
+            }
+        };
+
+        // Add error handling and logging
+        try {
+            await handler(request, responseHandler);
+        } catch (innerError) {
+            logger.error(`Error executing ${serviceType} command:`, {
+                error: innerError.message,
+                projectId,
+                environment,
+                commandId
+            });
+            return res.status(500).json({
+                error: 'Failed to execute command',
+                details: process.env.NODE_ENV === 'development' ? innerError.message : undefined,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        if (responseHandler.statusCode && responseHandler.statusCode >= 400) {
+            logger.error(`Error executing ${serviceType} command:`, {
+                error: responseHandler.data.error,
+                projectId,
+                environment,
+                commandId
+            });
+            return res.status(responseHandler.statusCode).json(responseHandler.data);
+        }
+
+        res.json(responseHandler.data);
+    } catch (error) {
+        logger.error('Failed to execute single command:', {
+            error: error.message,
+            projectId,
+            environment,
+            commandId
+        });
+
+        res.status(500).json({
+            error: 'Failed to execute command',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            timestamp: new Date().toISOString()
+        });
     }
 }
