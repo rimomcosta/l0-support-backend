@@ -16,7 +16,7 @@ export class OpenAIAdapter {
                 messages: [
                     {
                         role: "system",
-                        content: "You are a helpful assistant."
+                        content: "You are a helpful assistant!"
                     },
                     {
                         role: "user",

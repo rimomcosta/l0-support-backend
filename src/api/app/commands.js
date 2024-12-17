@@ -37,7 +37,8 @@ const SERVICE_HANDLERS = {
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                command: cmd.command.replace(/^"|"$/g, ''),
+                command: cmd.command,
+                // command: cmd.command.replace(/^"|"$/g, ''),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
             }))
         })
@@ -48,7 +49,8 @@ const SERVICE_HANDLERS = {
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                query: cmd.command.replace(/^"|"$/g, ''),
+                query: cmd.command,
+                // query: cmd.command.replace(/^"|"$/g, ''),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
             }))
         })
@@ -59,7 +61,8 @@ const SERVICE_HANDLERS = {
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                query: cmd.command.replace(/^"|"$/g, '')
+                // query: cmd.command.replace(/^"|"$/g, '')
+                query: cmd.command
             }))
         })
     },
@@ -82,7 +85,8 @@ const SERVICE_HANDLERS = {
         handler: magentoCloudDirectAccess.executeCommands,
         preparePayload: (commands, projectId, environment) => ({
             commands: commands.map(cmd => {
-                let command = cmd.command.replace(/^"|"$/g, '');
+                // let command = cmd.command.replace(/^"|"$/g, '');
+                let command = cmd.command;
                 // Replace placeholders in the command during payload preparation
                 command = command
                     .replace(/:projectid/g, projectId)
@@ -113,7 +117,8 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         count: commands.length,
         commands: commands.map(cmd => ({
             id: cmd.id,
-            title: cmd.title
+            title: cmd.title,
+            
         }))
     });
 
@@ -179,7 +184,7 @@ export async function executeAllCommands(req, res) {
 
     try {
         const allCommands = await commandService.getAll();
-        logger.info('Fetched commands from DB:', {
+        logger.info('Fetched commands from DB: ', {
             total: allCommands.length,
             commands: allCommands.map(cmd => ({
                 id: cmd.id,

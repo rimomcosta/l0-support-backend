@@ -1,13 +1,10 @@
-// src/services/commandsManagerService.js
 import { pool } from '../config/database.js';
 import { logger } from './logger.js';
 
 export class CommandService {
     async create(command) {
         try {
-            // Remove surrounding quotes if present and parse JSON if needed
             const processedCommand = this.processCommandString(command.command);
-            
             const [result] = await pool.execute(
                 'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, auto_run, component_code, layout) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 [
@@ -30,30 +27,26 @@ export class CommandService {
 
     async update(id, command) {
         try {
-            // Remove surrounding quotes if present and parse JSON if needed
             const processedCommand = this.processCommandString(command.command);
-            
-            // Ensure all parameters are defined with fallbacks
             const params = [
-                command.title || '',
+                command.title,
                 processedCommand,
-                command.description || null,
-                command.serviceType || '',
+                command.description,
+                command.serviceType,
                 command.executeOnAllNodes ?? false,
                 command.autoRun ?? true,
-                command.componentCode || null,
-                command.layout || null,
+                command.componentCode,
+                command.layout,
                 id
             ];
 
-            // Log the parameters for debugging
             logger.debug('Updating command with params:', params);
 
             await pool.execute(
                 'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, auto_run = ?, component_code = ?, layout = ? WHERE id = ?',
                 params
             );
-            
+
             return { success: true };
         } catch (error) {
             logger.error('Failed to update command:', error);
@@ -63,19 +56,16 @@ export class CommandService {
 
     processCommandString(command) {
         if (!command) return '';
-        
-        // If it's already an object/array, stringify it
+
         if (typeof command === 'object') {
             return JSON.stringify(command);
         }
 
-        let processedCommand = command;
-        
-        if (typeof processedCommand === 'string') {
-            processedCommand = processedCommand.replace(/"/g, '\\"'); // Escape double quotes
+        if (typeof command === 'string') {
+            return command;
         }
-        
-        return processedCommand;
+
+        return '';
     }
 
     async delete(id) {
@@ -106,7 +96,7 @@ export class CommandService {
                 execute_on_all_nodes: row.execute_on_all_nodes,
                 auto_run: row.auto_run,
                 component_code: row.component_code,
-                layout: row.layout, // Add layout
+                layout: row.layout,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
@@ -128,7 +118,7 @@ export class CommandService {
                 execute_on_all_nodes: row.execute_on_all_nodes,
                 auto_run: row.auto_run,
                 component_code: row.component_code,
-                layout: row.layout, // Add layout
+                layout: row.layout,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));

@@ -6,8 +6,7 @@ import { execute as getNodes } from './nodes.js';
 // Bundles multiple commands into a single shell script
 function bundleCommands(commands) {
     return commands.map(cmd => {
-        const escapedCommand = cmd.command.replace(/"/g, '\\"').replace(/'/g, "\\'");
-        return `echo 'id: ${cmd.id}'; echo 'title: ${cmd.title}'; ${escapedCommand};`;
+        return `echo 'id: ${cmd.id}'; echo 'title: ${cmd.title}'; ${cmd.command};`;
     }).join(' ');
 }
 
@@ -103,9 +102,20 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
 async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode) {
     try {
         const bundledCommand = bundleCommands(commands);
+        logger.debug("Bundled command:", bundledCommand);
+
+        // Escape the bundled command for safe execution within SSH
+        const escapedBundledCommand = bundledCommand.replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/"/g, '\\"');
+
         const sshCommand = isSingleNode
-            ? `ssh -p ${projectId} -e ${environment} "${bundledCommand}"`
-            : `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${bundledCommand}"`;
+            ? `ssh -p ${projectId} -e ${environment} "${escapedBundledCommand}"`
+            : `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${escapedBundledCommand}"`;
+
+        logger.debug("Executing SSH command:", {
+            sshCommand,
+            nodeId,
+            isSingleNode
+        });
 
         const { stdout, stderr } = await executeWithRetry(
             magentoCloud,
@@ -137,9 +147,40 @@ async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, no
     }
 }
 
+function validateCommand(cmd, index) {
+    const errors = [];
+
+    // Check required fields
+    if (!cmd.id) errors.push('Missing id');
+    if (!cmd.title) errors.push('Missing title');
+    if (!cmd.command) errors.push('Missing command');
+    if (typeof cmd.executeOnAllNodes !== 'boolean') {
+        errors.push('Missing or invalid executeOnAllNodes');
+    }
+
+    // Validate command string
+    if (cmd.command && typeof cmd.command === 'string') {
+        if (cmd.command.trim().length === 0) {
+            errors.push('Empty command string');
+        }
+    }
+
+    return errors;
+}
+
 export async function runCommands(req, res) {
     const { projectId, environment } = req.params;
     const { commands } = req.body;
+
+    logger.info('Received SSH commands:', {
+        projectId,
+        environment,
+        commands: commands.map(cmd => ({
+            id: cmd.id,
+            title: cmd.title,
+            command: cmd.command
+        }))
+    });
 
     if (!Array.isArray(commands) || commands.length === 0) {
         return res.status(400).json({
@@ -148,47 +189,24 @@ export async function runCommands(req, res) {
         });
     }
 
-    // Validate command structure and uniqueness of IDs
-    const seenIds = new Set();
-    const validationErrors = [];
+    // Track valid and invalid commands separately
+    const validCommands = [];
+    const invalidCommands = [];
 
+    // Validate commands individually
     commands.forEach((cmd, index) => {
-        // Check required fields
-        if (!cmd.id) validationErrors.push(`Command at index ${index} is missing 'id'`);
-        if (!cmd.title) validationErrors.push(`Command at index ${index} is missing 'title'`);
-        if (!cmd.command) validationErrors.push(`Command at index ${index} is missing 'command'`);
-        if (typeof cmd.executeOnAllNodes !== 'boolean') {
-            validationErrors.push(`Command at index ${index} is missing 'executeOnAllNodes' or it's not a boolean`);
-        }
-
-        // Check for duplicate IDs
-        if (cmd.id) {
-            if (seenIds.has(cmd.id)) {
-                validationErrors.push(`Duplicate command ID found: ${cmd.id}`);
-            } else {
-                seenIds.add(cmd.id);
-            }
-        }
-
-        // Validate command string is not empty and doesn't contain dangerous characters
-        if (cmd.command && typeof cmd.command === 'string') {
-            if (cmd.command.trim().length === 0) {
-                validationErrors.push(`Command at index ${index} has empty command string`);
-            }
-            // Check for command injection attempts
-            if (cmd.command.includes('&&') || cmd.command.includes('||') ||
-                cmd.command.includes(';') || cmd.command.includes('|')) {
-                validationErrors.push(`Command at index ${index} contains invalid characters`);
-            }
+        const errors = validateCommand(cmd, index);
+        
+        if (errors.length > 0) {
+            invalidCommands.push({
+                command: cmd,
+                errors,
+                index
+            });
+        } else {
+            validCommands.push(cmd);
         }
     });
-
-    if (validationErrors.length > 0) {
-        return res.status(400).json({
-            error: 'Invalid command format',
-            details: validationErrors
-        });
-    }
 
     try {
         const magentoCloud = new MagentoCloudAdapter();
@@ -201,54 +219,73 @@ export async function runCommands(req, res) {
             throw new Error('No nodes found in the environment');
         }
 
-        // Prepare commands for each node
+        // Execute only valid commands
         const results = [];
-        const allNodesCommands = commands.filter(cmd => cmd.executeOnAllNodes);
 
-        // For node 1 (or single-node), execute all commands (both single-node and all-nodes commands)
-        const node1Results = await executeSSHCommandsOnNode(
-            magentoCloud,
-            projectId,
-            environment,
-            isSingleNode ? null : nodes[0].id,
-            commands,  // Execute all commands on node 1 or single-node
-            isSingleNode
-        );
+        if (validCommands.length > 0) {
+            const allNodesCommands = validCommands.filter(cmd => cmd.executeOnAllNodes);
 
-        // Initialize results for all commands
-        commands.forEach(command => {
+            // Execute commands on first node
+            const node1Results = await executeSSHCommandsOnNode(
+                magentoCloud,
+                projectId,
+                environment,
+                isSingleNode ? null : nodes[0].id,
+                validCommands,
+                isSingleNode
+            );
+
+            // Initialize results for all valid commands
+            validCommands.forEach(command => {
+                results.push({
+                    id: command.id,
+                    title: command.title,
+                    command: command.command,
+                    results: node1Results.filter(r => r.commandId === command.id)
+                });
+            });
+
+            // For remaining nodes, only execute commands that should run on all nodes
+            if (!isSingleNode && allNodesCommands.length > 0 && nodes.length > 1) {
+                const remainingNodePromises = nodes.slice(1).map(node =>
+                    executeSSHCommandsOnNode(
+                        magentoCloud,
+                        projectId,
+                        environment,
+                        node.id,
+                        allNodesCommands,
+                        false
+                    )
+                );
+
+                const remainingNodesResults = await Promise.all(remainingNodePromises);
+                const flattenedResults = remainingNodesResults.flat();
+
+                // Add results from remaining nodes
+                allNodesCommands.forEach(command => {
+                    const resultEntry = results.find(r => r.id === command.id);
+                    if (resultEntry) {
+                        resultEntry.results.push(...flattenedResults.filter(r => r.commandId === command.id));
+                    }
+                });
+            }
+        }
+
+        // Add results for invalid commands
+        invalidCommands.forEach(({ command }) => {
             results.push({
                 id: command.id,
                 title: command.title,
                 command: command.command,
-                results: node1Results.filter(r => r.commandId === command.id)
+                results: [{
+                    commandId: command.id,
+                    nodeId: 'validation-error',
+                    output: null,
+                    error: 'Command failed validation',
+                    status: "ERROR"
+                }]
             });
         });
-
-        // For remaining nodes, only execute commands that should run on all nodes
-        if (!isSingleNode && allNodesCommands.length > 0 && nodes.length > 1) {
-            const remainingNodePromises = nodes.slice(1).map(node =>
-                executeSSHCommandsOnNode(
-                    magentoCloud,
-                    projectId,
-                    environment,
-                    node.id,
-                    allNodesCommands,
-                    false
-                )
-            );
-
-            const remainingNodesResults = await Promise.all(remainingNodePromises);
-            const flattenedResults = remainingNodesResults.flat();
-
-            // Add results from remaining nodes to the appropriate commands
-            allNodesCommands.forEach(command => {
-                const resultEntry = results.find(r => r.id === command.id);
-                if (resultEntry) {
-                    resultEntry.results.push(...flattenedResults.filter(r => r.commandId === command.id));
-                }
-            });
-        }
         
         // Add summary for each command
         results.forEach(commandResult => {
@@ -265,7 +302,15 @@ export async function runCommands(req, res) {
             projectId,
             environment,
             timestamp: new Date().toISOString(),
-            results
+            results,
+            warnings: invalidCommands.length > 0 ? {
+                message: `${invalidCommands.length} command(s) were skipped due to validation errors`,
+                skippedCommands: invalidCommands.map(ic => ({
+                    id: ic.command.id,
+                    title: ic.command.title,
+                    errors: ic.errors
+                }))
+            } : undefined
         });
 
     } catch (error) {
@@ -276,15 +321,10 @@ export async function runCommands(req, res) {
             timestamp: new Date().toISOString()
         });
 
-        const statusCode = error.message.includes('authentication')
-            ? 401
-            : error.message.includes('No nodes found')
-                ? 404
-                : 500;
-
-        res.status(statusCode).json({
+        res.status(500).json({
             error: 'Command execution failed',
             details: error.message,
+            results: [], // Return empty results array
             timestamp: new Date().toISOString()
         });
     }
