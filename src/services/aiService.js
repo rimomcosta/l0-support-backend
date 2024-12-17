@@ -4,7 +4,7 @@ import { AnthropicAdapter } from '../adapters/anthropicAdapter.js';
 import { logger } from './logger.js';
 
 class AiService {
-    constructor(provider = 'openai') {
+    constructor(provider = 'anthropic') {
         this.provider = provider;
         this.adapter = this.createAdapter(provider);
     }

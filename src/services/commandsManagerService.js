@@ -71,21 +71,8 @@ export class CommandService {
 
         let processedCommand = command;
         
-        // Remove surrounding quotes if present
         if (typeof processedCommand === 'string') {
-            processedCommand = processedCommand.replace(/^["']|["']$/g, '');
-            
-            // Try to parse as JSON if it looks like a JSON string
-            if ((processedCommand.startsWith('{') && processedCommand.endsWith('}')) || 
-                (processedCommand.startsWith('[') && processedCommand.endsWith(']'))) {
-                try {
-                    const parsed = JSON.parse(processedCommand);
-                    return JSON.stringify(parsed);
-                } catch (e) {
-                    // If parsing fails, return the processed string
-                    return processedCommand;
-                }
-            }
+            processedCommand = processedCommand.replace(/"/g, '\\"'); // Escape double quotes
         }
         
         return processedCommand;
