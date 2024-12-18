@@ -3,14 +3,22 @@ import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 import { execute as getNodes } from './nodes.js';
 
-// Bundles multiple commands into a single shell script
-function bundleCommands(commands) {
+/**
+ * Instead of bundling commands into a single inline command, we will create
+ * a script (as a string) and pass it to SSH via a here-document.
+ */
+function createScriptContent(commands) {
+    // Each command prints its id and title, then runs the command line from DB.
+    // We do not escape quotes here, we just trust the script content.
     return commands.map(cmd => {
-        return `echo 'id: ${cmd.id}'; echo 'title: ${cmd.title}'; ${cmd.command};`;
-    }).join(' ');
+        return `echo 'id: ${cmd.id}'
+echo 'title: ${cmd.title}'
+${cmd.command}
+`;
+    }).join('\n');
 }
 
-// Parses the output from bundled commands into individual results
+// Parses the output from commands into individual results
 function parseCommandOutput(output, commands) {
     const results = [];
     const lines = output.split('\n');
@@ -101,17 +109,20 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
 
 async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode) {
     try {
-        const bundledCommand = bundleCommands(commands);
-        logger.debug("Bundled command:", bundledCommand);
+        // Create the script content with all commands.
+        const scriptContent = createScriptContent(commands);
 
-        // Escape the bundled command for safe execution within SSH
-        const escapedBundledCommand = bundledCommand.replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/"/g, '\\"');
+        // Use a here-document to pass the script to `bash -s` via SSH.
+        // The 'EOF' delimiter is quoted to prevent shell expansion of variables inside it.
+        const sshPrefix = isSingleNode
+            ? `ssh -p ${projectId} -e ${environment}`
+            : `ssh -p ${projectId} -e ${environment} --instance ${nodeId}`;
 
-        const sshCommand = isSingleNode
-            ? `ssh -p ${projectId} -e ${environment} "${escapedBundledCommand}"`
-            : `ssh -p ${projectId} -e ${environment} --instance ${nodeId} "${escapedBundledCommand}"`;
+        const sshCommand = `${sshPrefix} "bash -s" <<'EOF'
+${scriptContent}
+EOF`;
 
-        logger.debug("Executing SSH command:", {
+        logger.debug("Executing SSH command via here-document:", {
             sshCommand,
             nodeId,
             isSingleNode

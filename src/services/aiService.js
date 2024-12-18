@@ -4,50 +4,50 @@ import { AnthropicAdapter } from '../adapters/anthropicAdapter.js';
 import { logger } from './logger.js';
 
 class AiService {
-    constructor(provider = 'anthropic') {
-        this.provider = provider;
-        this.adapter = this.createAdapter(provider);
+  constructor(provider = 'anthropic') {
+    this.provider = provider;
+    this.adapter = this.createAdapter(provider);
+  }
+
+  createAdapter(provider) {
+    switch (provider) {
+      case 'openai':
+        return new OpenAIAdapter();
+      case 'anthropic':
+        return new AnthropicAdapter();
+      default:
+        throw new Error(`Unsupported AI provider: ${provider}`);
     }
+  }
 
-    createAdapter(provider) {
-        switch (provider) {
-            case 'openai':
-                return new OpenAIAdapter();
-            case 'anthropic':
-                return new AnthropicAdapter();
-            default:
-                throw new Error(`Unsupported AI provider: ${provider}`);
-        }
+  async generateComponentCode(command, description, outputExample, aiGuidance = '') {
+    try {
+      const prompt = this.createPrompt(command, description, outputExample, aiGuidance);
+      const generatedCode = await this.adapter.generateCode(prompt);
+
+      // Clean up the response if needed based on the provider
+      const cleanedCode = this.cleanGeneratedCode(generatedCode);
+      return cleanedCode;
+    } catch (error) {
+      logger.error('Failed to generate component code:', {
+        error: error.message,
+        provider: this.provider
+      });
+      throw error;
     }
+  }
 
-    async generateComponentCode(command, description, outputExample, aiGuidance = '') {
-        try {
-            const prompt = this.createPrompt(command, description, outputExample, aiGuidance);
-            const generatedCode = await this.adapter.generateCode(prompt);
-
-            // Clean up the response if needed based on the provider
-            const cleanedCode = this.cleanGeneratedCode(generatedCode);
-            return cleanedCode;
-        } catch (error) {
-            logger.error('Failed to generate component code:', {
-                error: error.message,
-                provider: this.provider
-            });
-            throw error;
-        }
-    }
-
-    cleanGeneratedCode(code) {
-        // Remove any markdown code blocks or unnecessary formatting
-        return code
-            .replace(/```(jsx|javascript)?\n?/g, '')
-            .replace(/```$/g, '')
-            .trim();
-    }
+  cleanGeneratedCode(code) {
+    // Remove any markdown code blocks or unnecessary formatting
+    return code
+      .replace(/```(jsx|javascript)?\n?/g, '')
+      .replace(/```$/g, '')
+      .trim();
+  }
 
 
-    createPrompt(command, description, outputExample, aiGuidance = '') {
-        return `
+  createPrompt(command, description, outputExample, aiGuidance = '') {
+    return `
         You are a React code generation assistant. Generate a React component for a dashboard based on the following information:
     
         Command: ${command}
@@ -73,6 +73,7 @@ class AiService {
         12. Don't create any grid.
         13. for titles like "Node x", use very discreet font size and color.
         14. For dark mode, always use a very tin gray border when applicable.
+        15. Use Try...Catch block in case the data is not available.
         Example of dark mode support with Tailwind:
         className: "bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
     
@@ -107,8 +108,8 @@ class AiService {
           ]);
         };
     
-        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative:`;
-    }
+        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance}`;
+  }
 }
 
 export const aiService = new AiService();
