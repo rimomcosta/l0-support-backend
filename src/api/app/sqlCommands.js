@@ -196,7 +196,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
         // Handle queries that should run through tunnel
         if (singleNodeQueries.length > 0) {
             // Ensure tunnel is open and get connection info
-            const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
+            const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'database');
             const sqlService = new SQLService(tunnelInfo);
 
             // Format tunnel query results to match the structure of multi-node results

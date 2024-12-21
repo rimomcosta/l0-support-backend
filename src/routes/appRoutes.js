@@ -10,6 +10,7 @@ import * as openSearchCommands from '../api/app/openSearchCommands.js';
 import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
 import * as commands from '../api/app/commands.js';
 import * as bashCommands from '../api/app/bashCommands.js';
+import { openTunnel } from '../api/app/tunnel.js'; // Import the new openTunnel function
 
 const router = express.Router();
 
@@ -30,5 +31,7 @@ router.post('/ai/generate-component-code', conditionalAuth, commands.generateCom
 // New route for single command execution
 router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
+// New route for opening the tunnel
+router.post('/:projectId/:environment/open-tunnel', conditionalAuth, openTunnel);
 
 export default router;

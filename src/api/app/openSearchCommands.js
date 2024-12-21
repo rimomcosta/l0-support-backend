@@ -15,8 +15,8 @@ export async function runQueries(req, res) {
     }
 
     try {
-        const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
-        const searchService = new OpenSearchService(tunnelInfo);
+        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'opensearch');
+        const openSearchService = new OpenSearchService(tunnelInfo);
 
         const results = [];
 
@@ -29,7 +29,7 @@ export async function runQueries(req, res) {
             };
 
             try {
-                const output = await searchService.executeCommand(query.command);
+                const output = await openSearchService.executeCommand(query.command);
                 queryResult.results.push({
                     nodeId: 'tunnel',
                     output, // Output is already parsed JSON
@@ -48,7 +48,7 @@ export async function runQueries(req, res) {
                     status: 'ERROR'
                 });
             }
-            
+
             queryResult.summary = {
                 total: queryResult.results.length,
                 successful: queryResult.results.filter(r => r.status === 'SUCCESS').length,

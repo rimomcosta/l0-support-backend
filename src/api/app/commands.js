@@ -10,6 +10,8 @@ import * as openSearchCommands from './openSearchCommands.js';
 import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
 import { aiService } from '../../services/aiService.js';
 import * as bashCommands from './bashCommands.js';
+import * as rabbitmqCommands from './rabbitmqCommands.js';
+import { json } from 'express';
 
 const commandService = new CommandService();
 
@@ -39,6 +41,16 @@ const SERVICE_HANDLERS = {
                 title: cmd.title,
                 command: cmd.command,
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
+            }))
+        })
+    },
+    rabbitmq: {
+        handler: rabbitmqCommands.runCommands,
+        preparePayload: (commands) => ({
+            commands: commands.map(cmd => ({
+                id: cmd.id,
+                title: cmd.title,
+                command: cmd.command // Use "command" for RabbitMQ
             }))
         })
     },
@@ -174,14 +186,14 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
 function shouldUseBashService(command) {
     // List of bash operators and special characters that indicate bash usage
     const bashOperators = ['|', '>', '>>', '<<', '&&', '||', ';', '`', '$(',
-                          'grep', 'awk', 'sed', 'xargs', 'find', 'sort', 'uniq'];
-    
+        'grep', 'awk', 'sed', 'xargs', 'find', 'sort', 'uniq'];
+
     return bashOperators.some(operator => command.includes(operator));
 }
 
 // Execute all commands
 export async function executeAllCommands(req, res) {
-    const { projectId, environment } = req.params;executeSingleCommand
+    const { projectId, environment } = req.params; executeSingleCommand
     const userId = req.session.user.id;
 
     try {
@@ -264,7 +276,7 @@ export async function executeAllCommands(req, res) {
             environment,
             timestamp: new Date().toISOString(),
             services: results.reduce((acc, result) => {
-                acc[result.serviceType] = result.results || { 
+                acc[result.serviceType] = result.results || {
                     error: result.error,
                     timestamp: new Date().toISOString()
                 };
@@ -370,15 +382,15 @@ export async function executeSingleCommand(req, res) {
         }
 
         const singleCommand = command[0];
-        
+
         // Check if command should use bash service
-        if (shouldUseBashService(singleCommand.command)) {
+        if (singleCommand.service_type === 'magento_cloud' && shouldUseBashService(singleCommand.command)) {
             singleCommand.service_type = 'bash';
         }
 
         const serviceType = singleCommand.service_type;
         const serviceHandler = SERVICE_HANDLERS[serviceType];
-        
+
         if (!serviceHandler) {
             return res.status(400).json({ error: `Unsupported service type: ${serviceType}` });
         }
@@ -422,7 +434,7 @@ export async function executeSingleCommand(req, res) {
                 timestamp: new Date().toISOString()
             });
         }
-
+        console.log("Single Command=============>" + JSON.stringify(responseHandler.data, null, 2));
         if (responseHandler.statusCode && responseHandler.statusCode >= 400) {
             logger.error(`Error executing ${serviceType} command:`, {
                 error: responseHandler.data.error,

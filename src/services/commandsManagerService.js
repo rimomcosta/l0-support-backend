@@ -6,7 +6,7 @@ export class CommandService {
         try {
             const processedCommand = this.processCommandString(command.command);
             const [result] = await pool.execute(
-                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, auto_run, component_code, layout) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, auto_run, component_code, layout, locked, reviewed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     command.title,
                     processedCommand,
@@ -15,7 +15,9 @@ export class CommandService {
                     command.executeOnAllNodes ?? false,
                     command.autoRun ?? true,
                     command.componentCode ?? null,
-                    command.layout ?? null
+                    command.layout ?? null,
+                    command.locked ?? false,
+                    false  // reviewed always starts as false
                 ]
             );
             return result.insertId;
@@ -26,6 +28,10 @@ export class CommandService {
     }
 
     async update(id, command) {
+        const [existing] = await pool.execute('SELECT locked FROM commands WHERE id = ?', [id]);
+        if (existing[0]?.locked) {
+            throw new Error('This command is locked and cannot be modified');
+        }
         try {
             const processedCommand = this.processCommandString(command.command);
             const params = [
@@ -69,6 +75,10 @@ export class CommandService {
     }
 
     async delete(id) {
+        const [existing] = await pool.execute('SELECT locked FROM commands WHERE id = ?', [id]);
+        if (existing[0]?.locked) {
+            throw new Error('This command is locked and cannot be deleted');
+        }
         try {
             const [result] = await pool.execute('DELETE FROM commands WHERE id = ?', [id]);
 
@@ -119,9 +129,12 @@ export class CommandService {
                 auto_run: row.auto_run,
                 component_code: row.component_code,
                 layout: row.layout,
+                locked: row.locked,
+                reviewed: row.reviewed,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
+            
         } catch (error) {
             logger.error('Failed to get commands:', error);
             throw error;

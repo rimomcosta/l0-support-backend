@@ -64,7 +64,7 @@ function replacePlaceholders(command, context) {
     return processedCommand.trim();
 }
 
-async function executeCommand(magentoCloud, command, context) {
+export async function executeCommand(magentoCloud, command, context) {
     try {
         let processedCommand = replacePlaceholders(command, context);
 

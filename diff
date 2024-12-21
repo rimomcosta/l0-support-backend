@@ -1,0 +1,256 @@
+diff --git a/src/api/app/commands.js b/src/api/app/commands.js
+index 1de8aed..d4d4a61 100644
+--- a/src/api/app/commands.js
++++ b/src/api/app/commands.js
+@@ -10,6 +10,8 @@ import * as openSearchCommands from './openSearchCommands.js';
+ import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
+ import { aiService } from '../../services/aiService.js';
+ import * as bashCommands from './bashCommands.js';
++import * as rabbitmqCommands from './rabbitmqCommands.js';
++import { json } from 'express';
+ 
+ const commandService = new CommandService();
+ 
+@@ -42,6 +44,16 @@ const SERVICE_HANDLERS = {
+             }))
+         })
+     },
++    rabbitmq: {
++        handler: rabbitmqCommands.runCommands,
++        preparePayload: (commands) => ({
++            commands: commands.map(cmd => ({
++                id: cmd.id,
++                title: cmd.title,
++                command: cmd.command // Use "command" for RabbitMQ
++            }))
++        })
++    },
+     bash: {
+         handler: bashCommands.runCommands,
+         preparePayload: (commands) => ({
+@@ -174,14 +186,14 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
+ function shouldUseBashService(command) {
+     // List of bash operators and special characters that indicate bash usage
+     const bashOperators = ['|', '>', '>>', '<<', '&&', '||', ';', '`', '$(',
+-                          'grep', 'awk', 'sed', 'xargs', 'find', 'sort', 'uniq'];
+-    
++        'grep', 'awk', 'sed', 'xargs', 'find', 'sort', 'uniq'];
++
+     return bashOperators.some(operator => command.includes(operator));
+ }
+ 
+ // Execute all commands
+ export async function executeAllCommands(req, res) {
+-    const { projectId, environment } = req.params;executeSingleCommand
++    const { projectId, environment } = req.params; executeSingleCommand
+     const userId = req.session.user.id;
+ 
+     try {
+@@ -264,7 +276,7 @@ export async function executeAllCommands(req, res) {
+             environment,
+             timestamp: new Date().toISOString(),
+             services: results.reduce((acc, result) => {
+-                acc[result.serviceType] = result.results || { 
++                acc[result.serviceType] = result.results || {
+                     error: result.error,
+                     timestamp: new Date().toISOString()
+                 };
+@@ -370,15 +382,15 @@ export async function executeSingleCommand(req, res) {
+         }
+ 
+         const singleCommand = command[0];
+-        
++
+         // Check if command should use bash service
+-        if (shouldUseBashService(singleCommand.command)) {
++        if (singleCommand.service_type === 'magento_cloud' && shouldUseBashService(singleCommand.command)) {
+             singleCommand.service_type = 'bash';
+         }
+ 
+         const serviceType = singleCommand.service_type;
+         const serviceHandler = SERVICE_HANDLERS[serviceType];
+-        
++
+         if (!serviceHandler) {
+             return res.status(400).json({ error: `Unsupported service type: ${serviceType}` });
+         }
+@@ -422,7 +434,7 @@ export async function executeSingleCommand(req, res) {
+                 timestamp: new Date().toISOString()
+             });
+         }
+-
++        console.log("Single Command=============>" + JSON.stringify(responseHandler.data, null, 2));
+         if (responseHandler.statusCode && responseHandler.statusCode >= 400) {
+             logger.error(`Error executing ${serviceType} command:`, {
+                 error: responseHandler.data.error,
+diff --git a/src/api/app/magentoCloudDirectAccess.js b/src/api/app/magentoCloudDirectAccess.js
+index baee391..fb29b99 100644
+--- a/src/api/app/magentoCloudDirectAccess.js
++++ b/src/api/app/magentoCloudDirectAccess.js
+@@ -64,7 +64,7 @@ function replacePlaceholders(command, context) {
+     return processedCommand.trim();
+ }
+ 
+-async function executeCommand(magentoCloud, command, context) {
++export async function executeCommand(magentoCloud, command, context) {
+     try {
+         let processedCommand = replacePlaceholders(command, context);
+ 
+diff --git a/src/api/app/openSearchCommands.js b/src/api/app/openSearchCommands.js
+index 5d4d390..0854a86 100644
+--- a/src/api/app/openSearchCommands.js
++++ b/src/api/app/openSearchCommands.js
+@@ -15,8 +15,8 @@ export async function runQueries(req, res) {
+     }
+ 
+     try {
+-        const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
+-        const searchService = new OpenSearchService(tunnelInfo);
++        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'opensearch');
++        const openSearchService = new OpenSearchService(tunnelInfo);
+ 
+         const results = [];
+ 
+@@ -29,7 +29,7 @@ export async function runQueries(req, res) {
+             };
+ 
+             try {
+-                const output = await searchService.executeCommand(query.command);
++                const output = await openSearchService.executeCommand(query.command);
+                 queryResult.results.push({
+                     nodeId: 'tunnel',
+                     output, // Output is already parsed JSON
+@@ -48,7 +48,7 @@ export async function runQueries(req, res) {
+                     status: 'ERROR'
+                 });
+             }
+-            
++
+             queryResult.summary = {
+                 total: queryResult.results.length,
+                 successful: queryResult.results.filter(r => r.status === 'SUCCESS').length,
+diff --git a/src/api/app/sqlCommands.js b/src/api/app/sqlCommands.js
+index dbb9e6a..ea33ade 100644
+--- a/src/api/app/sqlCommands.js
++++ b/src/api/app/sqlCommands.js
+@@ -196,7 +196,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
+         // Handle queries that should run through tunnel
+         if (singleNodeQueries.length > 0) {
+             // Ensure tunnel is open and get connection info
+-            const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
++            const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'database');
+             const sqlService = new SQLService(tunnelInfo);
+ 
+             // Format tunnel query results to match the structure of multi-node results
+diff --git a/src/config/initDatabase.js b/src/config/initDatabase.js
+index 3c5b716..be3e99f 100644
+--- a/src/config/initDatabase.js
++++ b/src/config/initDatabase.js
+@@ -9,11 +9,13 @@ const tables = {
+             title VARCHAR(255) NOT NULL,
+             command TEXT NOT NULL,
+             description TEXT, 
+-            service_type ENUM('ssh', 'sql', 'redis', 'opensearch', 'magento_cloud', 'bash') NOT NULL,
++            service_type ENUM('ssh', 'sql', 'redis', 'opensearch', 'magento_cloud', 'bash', 'rabbitmq') NOT NULL,
+             execute_on_all_nodes BOOLEAN DEFAULT FALSE,
+             auto_run BOOLEAN DEFAULT TRUE,
+             component_code TEXT,
+             layout VARCHAR(255) DEFAULT NULL,
++            locked BOOLEAN DEFAULT FALSE,
++            reviewed BOOLEAN DEFAULT FALSE,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+             INDEX idx_service_type (service_type),
+diff --git a/src/routes/appRoutes.js b/src/routes/appRoutes.js
+index 1b9f0b4..84db0a9 100644
+--- a/src/routes/appRoutes.js
++++ b/src/routes/appRoutes.js
+@@ -10,6 +10,7 @@ import * as openSearchCommands from '../api/app/openSearchCommands.js';
+ import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
+ import * as commands from '../api/app/commands.js';
+ import * as bashCommands from '../api/app/bashCommands.js';
++import { openTunnel } from '../api/app/tunnel.js'; // Import the new openTunnel function
+ 
+ const router = express.Router();
+ 
+@@ -30,5 +31,7 @@ router.post('/ai/generate-component-code', conditionalAuth, commands.generateCom
+ // New route for single command execution
+ router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
+ router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
++// New route for opening the tunnel
++router.post('/:projectId/:environment/open-tunnel', conditionalAuth, openTunnel);
+ 
+ export default router;
+\ No newline at end of file
+diff --git a/src/services/aiService.js b/src/services/aiService.js
+index f2d4407..bad552b 100644
+--- a/src/services/aiService.js
++++ b/src/services/aiService.js
+@@ -151,7 +151,7 @@ class AiService {
+           }
+         };
+     
+-        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}`;
++        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}, find a way to parse it. respect the dark/light theme`;
+   }
+ }
+ 
+diff --git a/src/services/commandsManagerService.js b/src/services/commandsManagerService.js
+index 4217f73..6ffe8fa 100644
+--- a/src/services/commandsManagerService.js
++++ b/src/services/commandsManagerService.js
+@@ -6,7 +6,7 @@ export class CommandService {
+         try {
+             const processedCommand = this.processCommandString(command.command);
+             const [result] = await pool.execute(
+-                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, auto_run, component_code, layout) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
++                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, auto_run, component_code, layout, locked, reviewed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                 [
+                     command.title,
+                     processedCommand,
+@@ -15,7 +15,9 @@ export class CommandService {
+                     command.executeOnAllNodes ?? false,
+                     command.autoRun ?? true,
+                     command.componentCode ?? null,
+-                    command.layout ?? null
++                    command.layout ?? null,
++                    command.locked ?? false,
++                    false  // reviewed always starts as false
+                 ]
+             );
+             return result.insertId;
+@@ -26,6 +28,10 @@ export class CommandService {
+     }
+ 
+     async update(id, command) {
++        const [existing] = await pool.execute('SELECT locked FROM commands WHERE id = ?', [id]);
++        if (existing[0]?.locked) {
++            throw new Error('This command is locked and cannot be modified');
++        }
+         try {
+             const processedCommand = this.processCommandString(command.command);
+             const params = [
+@@ -69,6 +75,10 @@ export class CommandService {
+     }
+ 
+     async delete(id) {
++        const [existing] = await pool.execute('SELECT locked FROM commands WHERE id = ?', [id]);
++        if (existing[0]?.locked) {
++            throw new Error('This command is locked and cannot be deleted');
++        }
+         try {
+             const [result] = await pool.execute('DELETE FROM commands WHERE id = ?', [id]);
+ 
+@@ -119,9 +129,12 @@ export class CommandService {
+                 auto_run: row.auto_run,
+                 component_code: row.component_code,
+                 layout: row.layout,
++                locked: row.locked,
++                reviewed: row.reviewed,
+                 created_at: row.created_at,
+                 updated_at: row.updated_at
+             }));
++            
+         } catch (error) {
+             logger.error('Failed to get commands:', error);
+             throw error;

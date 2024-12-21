@@ -151,7 +151,7 @@ class AiService {
           }
         };
     
-        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}`;
+        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}, find a way to parse it. respect the dark/light theme`;
   }
 }
 
