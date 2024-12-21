@@ -199,12 +199,19 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
             const tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
             const sqlService = new SQLService(tunnelInfo);
 
+            // Format tunnel query results to match the structure of multi-node results
             for (const query of singleNodeQueries) {
                 const queryResult = {
                     id: query.id,
                     title: query.title,
                     query: query.query,
-                    results: []
+                    results: [], // Add the extra "results" array
+                    summary: {  // Add the "summary" object
+                        total: 1, // Always 1 for single-node queries
+                        successful: 0,
+                        notRunning: 0,
+                        failed: 0
+                    }
                 };
 
                 try {
@@ -216,6 +223,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                         error: null,
                         status: 'SUCCESS'
                     });
+                    queryResult.summary.successful = 1; // Update summary
                 } catch (error) {
                     logger.error('Tunnel query execution failed:', {
                         error: error.message,
@@ -227,13 +235,14 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                         error: error.message,
                         status: 'ERROR'
                     });
+                    queryResult.summary.failed = 1; // Update summary
                 }
 
                 results.push(queryResult);
             }
         }
 
-        // Handle queries that should run on all nodes via SSH
+        // Handle queries that should run on all nodes via SSH (no changes needed here)
         if (multiNodeQueries.length > 0) {
             // Execute queries on all nodes in parallel
             const nodePromises = nodes.map(node =>
