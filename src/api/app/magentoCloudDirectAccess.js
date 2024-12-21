@@ -1,23 +1,35 @@
 // src/api/app/magentoCloudDirectAccess.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 function normalizeProjectFlag(command) {
-    // Replace --p with proper --project
-    command = command.replace(/\s+--p\s+/, ' --project ');
-    // Replace -project with proper -p
-    command = command.replace(/\s+-project\s+/, ' -p ');
-    return command;
+    const parts = command.split('|');
+    const magentoCommand = parts[0];
+    
+    let normalized = magentoCommand
+        .replace(/\s+--p\s+/, ' --project ')
+        .replace(/\s+-project\s+/, ' -p ');
+    
+    if (parts.length > 1) {
+        normalized += ' | ' + parts.slice(1).join(' | ');
+    }
+    
+    return normalized;
+}
+
+function escapeQuotesForShell(command) {
+    return command.replace(/"/g, '\\"');
 }
 
 function replacePlaceholders(command, context) {
-    // First normalize any project flags
     let processedCommand = normalizeProjectFlag(command);
     
-    // Remove any 'magento-cloud' prefix if it exists
     processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
     
-    // Create a map of placeholders and their values
     const placeholders = {
         ':projectid': {
             value: context.projectId,
@@ -33,16 +45,13 @@ function replacePlaceholders(command, context) {
         }
     };
 
-    // Process each placeholder
     Object.entries(placeholders).forEach(([placeholder, config]) => {
         if (config.value) {
-            // Replace the placeholder itself
             processedCommand = processedCommand.replace(
                 new RegExp(placeholder, 'g'), 
                 config.value
             );
         } else {
-            // If no value provided, remove the flag and placeholder
             config.flags.forEach(flag => {
                 processedCommand = processedCommand.replace(
                     new RegExp(`\\s+${flag}\\s+${placeholder}`, 'g'),
@@ -57,7 +66,10 @@ function replacePlaceholders(command, context) {
 
 async function executeCommand(magentoCloud, command, context) {
     try {
-        const processedCommand = replacePlaceholders(command, context);
+        let processedCommand = replacePlaceholders(command, context);
+
+        // Escape double quotes in the entire command
+        processedCommand = escapeQuotesForShell(processedCommand);
 
         logger.debug('Executing magento-cloud command:', {
             originalCommand: command,
@@ -69,8 +81,12 @@ async function executeCommand(magentoCloud, command, context) {
             throw new Error('Invalid command after processing placeholders');
         }
 
-        const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand);
+        processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
 
+        const { stdout, stderr } = await execAsync(`magento-cloud ${processedCommand}`, {
+            maxBuffer: 1024 * 1024 * 10,
+        });
+        
         return {
             output: stdout || null,
             error: stderr || null,
@@ -115,7 +131,7 @@ export async function executeCommands(req, res) {
         const results = await Promise.all(commands.map(async (cmd) => {
             const { output, error, status } = await executeCommand(
                 magentoCloud, 
-                cmd.command.replace(/^"|"$/g, ''), // Remove surrounding quotes if present
+                cmd.command.replace(/^"|"$/g, ''),
                 context
             );
             

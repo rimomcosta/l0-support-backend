@@ -9,6 +9,7 @@ import * as redisCommands from './redisCommands.js';
 import * as openSearchCommands from './openSearchCommands.js';
 import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
 import { aiService } from '../../services/aiService.js';
+import * as bashCommands from './bashCommands.js';
 
 const commandService = new CommandService();
 
@@ -29,7 +30,6 @@ export async function generateComponentCode(req, res) {
     }
 }
 
-// Service type handlers configuration
 const SERVICE_HANDLERS = {
     ssh: {
         handler: sshCommands.runCommands,
@@ -38,8 +38,17 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
-                // command: cmd.command.replace(/^"|"$/g, ''),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
+            }))
+        })
+    },
+    bash: {
+        handler: bashCommands.runCommands,
+        preparePayload: (commands) => ({
+            commands: commands.map(cmd => ({
+                id: cmd.id,
+                title: cmd.title,
+                command: cmd.command
             }))
         })
     },
@@ -50,7 +59,6 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
-                // query: cmd.command.replace(/^"|"$/g, ''),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
             }))
         })
@@ -61,7 +69,6 @@ const SERVICE_HANDLERS = {
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                // query: cmd.command.replace(/^"|"$/g, '')
                 query: cmd.command
             }))
         })
@@ -85,9 +92,7 @@ const SERVICE_HANDLERS = {
         handler: magentoCloudDirectAccess.executeCommands,
         preparePayload: (commands, projectId, environment) => ({
             commands: commands.map(cmd => {
-                // let command = cmd.command.replace(/^"|"$/g, '');
                 let command = cmd.command;
-                // Replace placeholders in the command during payload preparation
                 command = command
                     .replace(/:projectid/g, projectId)
                     .replace(/:environment/g, environment || '')
@@ -113,15 +118,6 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         throw new Error(`Unsupported service type: ${serviceType}`);
     }
 
-    logger.info(`Executing ${serviceType} commands:`, {
-        count: commands.length,
-        commands: commands.map(cmd => ({
-            id: cmd.id,
-            title: cmd.title,
-
-        }))
-    });
-
     const { handler, preparePayload } = serviceHandler;
 
     // Group commands that require tunnels
@@ -131,10 +127,6 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     if (tunnelNeeded) {
         try {
             tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
-            logger.debug(`Tunnel established for ${serviceType}`, {
-                projectId,
-                environment
-            });
         } catch (error) {
             logger.error(`Failed to establish tunnel for ${serviceType}`, {
                 error: error.message,
@@ -149,7 +141,7 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         params: {
             projectId,
             environment,
-            tunnelInfo // Pass tunnel info to service handlers
+            tunnelInfo
         },
         body: preparePayload(commands, projectId, environment)
     };
@@ -178,28 +170,26 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     }
 }
 
+// Detect if a command should use bash service
+function shouldUseBashService(command) {
+    // List of bash operators and special characters that indicate bash usage
+    const bashOperators = ['|', '>', '>>', '<<', '&&', '||', ';', '`', '$(',
+                          'grep', 'awk', 'sed', 'xargs', 'find', 'sort', 'uniq'];
+    
+    return bashOperators.some(operator => command.includes(operator));
+}
+
 // Execute all commands
 export async function executeAllCommands(req, res) {
-    const { projectId, environment } = req.params;
+    const { projectId, environment } = req.params;executeSingleCommand
+    const userId = req.session.user.id;
 
     try {
         const allCommands = await commandService.getAll();
-        logger.info('Fetched commands from DB: ', {
-            total: allCommands.length,
-            commands: allCommands.map(cmd => ({
-                id: cmd.id,
-                title: cmd.title,
-                service_type: cmd.service_type
-            }))
-        });
-
-        // Filter commands where auto_run is true
         const commandsToRun = allCommands.filter(cmd => cmd.auto_run);
-
         const commandsByService = commandsToRun.reduce((acc, cmd) => {
-            const serviceType = cmd.service_type;
-            acc[serviceType] = acc[serviceType] || [];
-            acc[serviceType].push({
+            acc[cmd.service_type] = acc[cmd.service_type] || [];
+            acc[cmd.service_type].push({
                 ...cmd,
                 command: cmd.command,
                 execute_on_all_nodes: Boolean(cmd.execute_on_all_nodes)
@@ -207,58 +197,82 @@ export async function executeAllCommands(req, res) {
             return acc;
         }, {});
 
-        const results = {
-            projectId,
-            environment,
+        // Send initial status to client
+        WebSocketService.broadcastToUser({
+            type: 'execution_started',
             timestamp: new Date().toISOString(),
-            services: {}
-        };
+            services: Object.keys(commandsByService)
+        }, userId);
 
-        const serviceExecutions = Object.entries(commandsByService).map(async ([serviceType, commands]) => {
-            try {
-                const serviceResults = await executeServiceCommands(
-                    serviceType,
-                    commands,
-                    projectId,
-                    environment
-                );
+        // Execute services in parallel
+        const servicePromises = Object.entries(commandsByService).map(
+            async ([serviceType, commands]) => {
+                try {
+                    const serviceResults = await executeServiceCommands(
+                        serviceType,
+                        commands,
+                        projectId,
+                        environment
+                    );
 
-                results.services[serviceType] = serviceResults;
+                    // Only send the results array in service_complete
+                    WebSocketService.broadcastToUser({
+                        type: 'service_complete',
+                        serviceType,
+                        timestamp: new Date().toISOString(),
+                        results: serviceResults.results // Just send the results array
+                    }, userId);
 
-                // Update this to use broadcastToUser instead of broadcast
-                WebSocketService.broadcastToUser({
-                    type: 'service_complete',
-                    serviceType,
-                    timestamp: new Date().toISOString(),
-                    results: serviceResults
-                }, req.session.user.id);  // Pass the user ID
+                    return { serviceType, results: serviceResults };
+                } catch (error) {
+                    WebSocketService.broadcastToUser({
+                        type: 'service_error',
+                        serviceType,
+                        timestamp: new Date().toISOString(),
+                        error: error.message
+                    }, userId);
 
-            } catch (error) {
-                results.services[serviceType] = {
-                    error: error.message,
-                    timestamp: new Date().toISOString()
-                };
-
-                // Update this to use broadcastToUser
-                WebSocketService.broadcastToUser({
-                    type: 'service_error',
-                    serviceType,
-                    timestamp: new Date().toISOString(),
-                    error: error.message
-                }, req.session.user.id);  // Pass the user ID
+                    return {
+                        serviceType,
+                        error: error.message
+                    };
+                }
             }
-        });
+        );
 
-        await Promise.all(serviceExecutions);
+        // Wait for all services to complete
+        const results = await Promise.all(servicePromises);
 
-        // Update final broadcast
+        // Only send a simple completion message without duplicating the results
         WebSocketService.broadcastToUser({
             type: 'execution_complete',
             timestamp: new Date().toISOString(),
-            results
-        }, req.session.user.id);  // Pass the user ID
+            projectId,
+            environment,
+            summary: results.reduce((acc, result) => {
+                acc[result.serviceType] = {
+                    status: result.error ? 'error' : 'success',
+                    error: result.error
+                };
+                return acc;
+            }, {})
+        }, userId);
 
-        res.json(results);
+        // Transform results for the HTTP response
+        const finalResults = {
+            projectId,
+            environment,
+            timestamp: new Date().toISOString(),
+            services: results.reduce((acc, result) => {
+                acc[result.serviceType] = result.results || { 
+                    error: result.error,
+                    timestamp: new Date().toISOString()
+                };
+                return acc;
+            }, {})
+        };
+
+        res.json(finalResults);
 
     } catch (error) {
         logger.error('Failed to execute commands:', {
@@ -277,7 +291,7 @@ export async function executeAllCommands(req, res) {
             type: 'execution_error',
             timestamp: new Date().toISOString(),
             error: errorResponse
-        }, req.session.user.id);
+        }, userId);
 
         res.status(500).json(errorResponse);
     }
@@ -343,10 +357,10 @@ export async function deleteCommand(req, res) {
 export async function executeSingleCommand(req, res) {
     const { commandId, projectId } = req.body;
     const environment = req.body.environment || null;
-    const instance = req.body.instance || null; // Not used yet
+    const instance = req.body.instance || null;
 
     if (!commandId || !projectId) {
-        return res.status(400).json({ error: 'Command ID, project ID and environment are required' });
+        return res.status(400).json({ error: 'Command ID and project ID are required' });
     }
 
     try {
@@ -356,9 +370,15 @@ export async function executeSingleCommand(req, res) {
         }
 
         const singleCommand = command[0];
-        const serviceType = singleCommand.service_type;
+        
+        // Check if command should use bash service
+        if (shouldUseBashService(singleCommand.command)) {
+            singleCommand.service_type = 'bash';
+        }
 
+        const serviceType = singleCommand.service_type;
         const serviceHandler = SERVICE_HANDLERS[serviceType];
+        
         if (!serviceHandler) {
             return res.status(400).json({ error: `Unsupported service type: ${serviceType}` });
         }

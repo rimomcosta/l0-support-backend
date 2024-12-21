@@ -9,7 +9,7 @@ const tables = {
             title VARCHAR(255) NOT NULL,
             command TEXT NOT NULL,
             description TEXT, 
-            service_type ENUM('ssh', 'sql', 'redis', 'opensearch', 'magento_cloud') NOT NULL,
+            service_type ENUM('ssh', 'sql', 'redis', 'opensearch', 'magento_cloud', 'bash') NOT NULL,
             execute_on_all_nodes BOOLEAN DEFAULT FALSE,
             auto_run BOOLEAN DEFAULT TRUE,
             component_code TEXT,

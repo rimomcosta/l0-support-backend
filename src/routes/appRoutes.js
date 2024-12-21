@@ -9,6 +9,7 @@ import * as redisCommands from '../api/app/redisCommands.js';
 import * as openSearchCommands from '../api/app/openSearchCommands.js';
 import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
 import * as commands from '../api/app/commands.js';
+import * as bashCommands from '../api/app/bashCommands.js';
 
 const router = express.Router();
 
@@ -28,5 +29,6 @@ router.get('/:projectId/:environment/commands', conditionalAuth, commands.execut
 router.post('/ai/generate-component-code', conditionalAuth, commands.generateComponentCode);
 // New route for single command execution
 router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
+router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
 
 export default router;
