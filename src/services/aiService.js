@@ -73,7 +73,7 @@ class AiService {
         12. Don't create any grid.
         13. for titles like "Node x", use very discreet font size and color.
         14. For dark mode, always use a very tin gray border when applicable.
-        15. Use Try...Catch block in case the data is not available.
+        15. Use Try...Catch block in case the data is not available and be aware that some data might be json, others might be just plain text which needs to be parsed. use the Output Example as a guidance.
         Example of dark mode support with Tailwind:
         className: "bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
     
@@ -87,28 +87,71 @@ class AiService {
         
         Example structure:
     
-        const SingleNodeMetric = ({ data }) => {
-          if (!data) {
+        const ExampleComponent = ({ data }) => {
+          const parseOutput = (output) => {
+            if (!output) return null;
+            
+            // If output is already an object, return it
+            if (typeof output === 'object') return output;
+            
+            // If output is a string, try parsing it
+            try {
+              // Try parsing as JSON
+              return JSON.parse(output);
+            } catch (jsonError) {
+              try {
+                // Try parsing as key-value pairs
+                const result = {};
+                output.split('\\n').forEach(line => {
+                  const [key, value] = line.split(':').map(s => s.trim());
+                  if (key && value) {
+                    // Remove quotes if present
+                    result[key.replace(/"/g, '')] = value.replace(/"/g, '').replace(/,$/g, '');
+                  }
+                });
+                if (Object.keys(result).length) return result;
+              } catch (kvError) {
+                // If all parsing fails, return the raw string
+                return output;
+              }
+            }
+          };
+
+          try {
+            if (!data || !data.output) {
+              return React.createElement('div', {
+                className: 'text-gray-500 dark:text-gray-400 p-4'
+              }, 'No data available');
+            }
+
+            const parsedData = parseOutput(data.output);
+            
+            // If parsedData is a string (parsing failed), display it formatted
+            if (typeof parsedData === 'string') {
+              return React.createElement('div', {
+                className: 'p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'
+              }, [
+                React.createElement('div', {
+                  key: 'node-id',
+                  className: 'text-xs text-gray-400 dark:text-gray-500 mb-2'
+                }, \`Node \${data.nodeId}\`),
+                React.createElement('pre', {
+                  key: 'output',
+                  className: 'text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap'
+                }, parsedData)
+              ]);
+            }
+
+            // If parsedData is an object, create a visualization
+            // ... rest of the component logic ...
+          } catch (error) {
             return React.createElement('div', {
               className: 'text-gray-500 dark:text-gray-400 p-4'
-            }, 'No data available');
+            }, 'Error processing data');
           }
-        
-          return React.createElement('div', {
-            className: 'p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 mb-4'
-          }, [
-            React.createElement('h3', {
-              key: 'node-title',
-              className: 'text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2'
-            }, 'Node ' + data.nodeId),
-            React.createElement('pre', {
-              key: 'output',
-              className: 'text-sm whitespace-pre-wrap'
-            }, JSON.stringify(data.output, null, 2))
-          ]);
         };
     
-        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance}`;
+        Generate ONLY the component code without any markdown or decorations. Return just the clean code, be creative, don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}`;
   }
 }
 
