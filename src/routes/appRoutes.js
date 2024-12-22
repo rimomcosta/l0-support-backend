@@ -33,5 +33,6 @@ router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
 // New route for opening the tunnel
 router.post('/:projectId/:environment/open-tunnel', conditionalAuth, openTunnel);
+router.post('/command/refresh-service', conditionalAuth, commands.refreshService);
 
 export default router;

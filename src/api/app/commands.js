@@ -309,6 +309,64 @@ export async function executeAllCommands(req, res) {
     }
 }
 
+export async function refreshService(req, res) {
+    const { serviceType, projectId, environment } = req.body;
+    const userId = req.session.user.id;
+
+    if (!serviceType || !projectId || !environment) {
+        return res.status(400).json({ error: 'Service type, project ID, and environment are required' });
+    }
+
+    try {
+        // Get all commands for this service type
+        const allCommands = await commandService.getAll();
+        const serviceCommands = allCommands.filter(cmd => 
+            cmd.service_type === serviceType && cmd.auto_run
+        );
+
+        if (serviceCommands.length === 0) {
+            return res.json({ results: [] });
+        }
+
+        // Execute commands for this service
+        const serviceResults = await executeServiceCommands(
+            serviceType,
+            serviceCommands,
+            projectId,
+            environment
+        );
+
+        // Broadcast the update through WebSocket
+        WebSocketService.broadcastToUser({
+            type: 'service_complete',
+            serviceType,
+            timestamp: new Date().toISOString(),
+            results: serviceResults.results
+        }, userId);
+
+        res.json({ results: serviceResults.results });
+
+    } catch (error) {
+        logger.error(`Failed to refresh ${serviceType} service:`, {
+            error: error.message,
+            projectId,
+            environment
+        });
+
+        WebSocketService.broadcastToUser({
+            type: 'service_error',
+            serviceType,
+            timestamp: new Date().toISOString(),
+            error: error.message
+        }, userId);
+
+        res.status(500).json({
+            error: `Failed to refresh ${serviceType} service`,
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+}
+
 // CRUD Operations
 export async function getCommand(req, res) {
     try {
