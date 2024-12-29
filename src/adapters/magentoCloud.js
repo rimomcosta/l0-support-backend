@@ -31,17 +31,18 @@ class MagentoCloudAdapter {
             const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
                 env: {
                     ...process.env,
-                    PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin`
+                    // Php is required for magento-cloud, and it is in the PATH
+                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`
                 }
             });
-            return { stdout, stderr }; // Return both stdout and stderr
+            return { stdout, stderr };
         } catch (error) {
             if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
                 logger.info('Magento cloud command execution (tunnel:info) returned no tunnel info (expected when tunnel is closed).', {
                     command,
                     timestamp: new Date().toISOString()
                 });
-                return { stdout: '', stderr: error.message }; // Return empty stdout and the error message as stderr
+                return { stdout: '', stderr: error.message };
             } else {
                 logger.error('Magento cloud command execution failed:', {
                     error: error.message,
@@ -57,7 +58,8 @@ class MagentoCloudAdapter {
         const tunnelProcess = exec(`${this.executablePath} ${command}`, {
             env: {
                 ...process.env,
-                PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin`
+                // Php is required for magento-cloud, and it is in the PATH
+                PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`
             }
         });
 

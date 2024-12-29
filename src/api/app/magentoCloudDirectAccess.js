@@ -1,10 +1,6 @@
 // src/api/app/magentoCloudDirectAccess.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
 
 function normalizeProjectFlag(command) {
     const parts = command.split('|');
@@ -27,7 +23,7 @@ function escapeQuotesForShell(command) {
 
 function replacePlaceholders(command, context) {
     let processedCommand = normalizeProjectFlag(command);
-    
+    // Remove 'magento-cloud' prefix if present
     processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
     
     const placeholders = {
@@ -81,12 +77,9 @@ export async function executeCommand(magentoCloud, command, context) {
             throw new Error('Invalid command after processing placeholders');
         }
 
-        processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
+        // Delegate execution to the MagentoCloudAdapter
+        const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand);
 
-        const { stdout, stderr } = await execAsync(`magento-cloud ${processedCommand}`, {
-            maxBuffer: 1024 * 1024 * 10,
-        });
-        
         return {
             output: stdout || null,
             error: stderr || null,
@@ -119,6 +112,7 @@ export async function executeCommands(req, res) {
     }
 
     try {
+        // Use the adapter
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
@@ -160,7 +154,6 @@ export async function executeCommands(req, res) {
             timestamp: new Date().toISOString(),
             results
         });
-
     } catch (error) {
         logger.error('Commands execution failed:', {
             error: error.message,
