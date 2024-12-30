@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { initializeApp } from '../app.js';
 import { WebSocketService } from './webSocketService.js';
+import url from 'url';
 
 dotenv.config();
 
@@ -31,10 +32,24 @@ initializeApp()
                     return;
                 }
 
+                // Parse the URL and query parameters
+                const queryObject = url.parse(request.url, true).query;
+                const tabId = queryObject.tabId;
+
+                // Store tabId in the session
+                request.session.user.tabId = tabId;
+                await new Promise((resolve, reject) => {
+                    request.session.save((err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    });
+                });
+
                 // If session is valid, complete upgrade
                 wss.handleUpgrade(request, socket, head, (ws) => {
                     ws.sessionID = request.sessionID;
                     ws.userID = request.session.user.id;
+                    ws.tabId = tabId; // Add tabId to the ws object
                     wss.emit('connection', ws, request);
                 });
             });

@@ -203,6 +203,7 @@ function shouldUseBashService(command) {
 export async function executeAllCommands(req, res) {
     const { projectId, environment } = req.params;
     const userId = req.session.user.id;
+    const tabId = req.session.user.tabId; // Get tabId from session
 
     try {
         const allCommands = await commandService.getAll();
@@ -217,12 +218,12 @@ export async function executeAllCommands(req, res) {
             return acc;
         }, {});
 
-        // Send initial status to client
-        WebSocketService.broadcastToUser({
+        // Send initial status to client using tabId
+        WebSocketService.broadcastToTab({
             type: 'execution_started',
             timestamp: new Date().toISOString(),
             services: Object.keys(commandsByService)
-        }, userId);
+        }, tabId);
 
         // Execute services in parallel
         const servicePromises = Object.entries(commandsByService).map(
@@ -233,25 +234,25 @@ export async function executeAllCommands(req, res) {
                         commands,
                         projectId,
                         environment,
-                        userId // Pass userId
+                        userId
                     );
 
-                    // Only send the results array in service_complete
-                    WebSocketService.broadcastToUser({
+                    // Only send the results array in service_complete using tabId
+                    WebSocketService.broadcastToTab({
                         type: 'service_complete',
                         serviceType,
                         timestamp: new Date().toISOString(),
                         results: serviceResults.results // Just send the results array
-                    }, userId);
+                    }, tabId);
 
                     return { serviceType, results: serviceResults };
                 } catch (error) {
-                    WebSocketService.broadcastToUser({
+                    WebSocketService.broadcastToTab({
                         type: 'service_error',
                         serviceType,
                         timestamp: new Date().toISOString(),
                         error: error.message
-                    }, userId);
+                    }, tabId);
 
                     return {
                         serviceType,
@@ -264,8 +265,8 @@ export async function executeAllCommands(req, res) {
         // Wait for all services to complete
         const results = await Promise.all(servicePromises);
 
-        // Only send a simple completion message without duplicating the results
-        WebSocketService.broadcastToUser({
+        // Only send a simple completion message without duplicating the results using tabId
+        WebSocketService.broadcastToTab({
             type: 'execution_complete',
             timestamp: new Date().toISOString(),
             projectId,
@@ -277,7 +278,7 @@ export async function executeAllCommands(req, res) {
                 };
                 return acc;
             }, {})
-        }, userId);
+        }, tabId);
 
         // Transform results for the HTTP response
         const finalResults = {
@@ -308,11 +309,11 @@ export async function executeAllCommands(req, res) {
             timestamp: new Date().toISOString()
         };
 
-        WebSocketService.broadcastToUser({
+        WebSocketService.broadcastToTab({
             type: 'execution_error',
             timestamp: new Date().toISOString(),
             error: errorResponse
-        }, userId);
+        }, tabId);
 
         res.status(500).json(errorResponse);
     }
@@ -321,6 +322,7 @@ export async function executeAllCommands(req, res) {
 export async function refreshService(req, res) {
     const { serviceType, projectId, environment } = req.body;
     const userId = req.session.user.id;
+    const tabId = req.session.user.tabId; // Get tabId from session
 
     if (!serviceType || !projectId || !environment) {
         return res.status(400).json({ error: 'Service type, project ID, and environment are required' });
@@ -343,16 +345,16 @@ export async function refreshService(req, res) {
             serviceCommands,
             projectId,
             environment,
-            userId // Pass userId
+            userId
         );
 
-        // Broadcast the update through WebSocket
-        WebSocketService.broadcastToUser({
+        // Broadcast the update through WebSocket using tabId
+        WebSocketService.broadcastToTab({
             type: 'service_complete',
             serviceType,
             timestamp: new Date().toISOString(),
             results: serviceResults.results
-        }, userId);
+        }, tabId);
 
         res.json({ results: serviceResults.results });
 
@@ -363,12 +365,12 @@ export async function refreshService(req, res) {
             environment
         });
 
-        WebSocketService.broadcastToUser({
+        WebSocketService.broadcastToTab({
             type: 'service_error',
             serviceType,
             timestamp: new Date().toISOString(),
             error: error.message
-        }, userId);
+        }, tabId);
 
         res.status(500).json({
             error: `Failed to refresh ${serviceType} service`,
