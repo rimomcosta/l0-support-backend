@@ -122,7 +122,7 @@ const SERVICE_HANDLERS = {
     }
 };
 
-async function executeServiceCommands(serviceType, commands, projectId, environment, userId) { // Add userId parameter
+async function executeServiceCommands(serviceType, commands, projectId, environment, userId) {
     if (!commands || commands.length === 0) return null;
 
     const serviceHandler = SERVICE_HANDLERS[serviceType];
@@ -131,6 +131,9 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     }
 
     const { handler, preparePayload } = serviceHandler;
+
+    // Set userId for tunnelManager
+    tunnelManager.userId = userId;
 
     // Group commands that require tunnels
     let tunnelNeeded = ['redis', 'sql', 'opensearch'].includes(serviceType);

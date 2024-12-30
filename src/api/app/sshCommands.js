@@ -2,6 +2,7 @@
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 import { execute as getNodes } from './nodes.js';
+import { ApiTokenService } from '../../services/apiTokenService.js';
 
 /**
  * Instead of bundling commands into a single inline command, we will create
@@ -63,12 +64,12 @@ function parseCommandOutput(output, commands) {
     return results;
 }
 
-async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3, delay: 1000 }) {
+async function executeWithRetry(magentoCloud, command, apiToken, options = { maxRetries: 3, delay: 1000 }) {
     let lastError;
 
     for (let attempt = 1; attempt <= options.maxRetries; attempt++) {
         try {
-            const result = await magentoCloud.executeCommand(command);
+            const result = await magentoCloud.executeCommand(command, apiToken); // Pass apiToken
             if (attempt > 1) {
                 logger.info('Command succeeded after retry', {
                     attempt,
@@ -107,7 +108,7 @@ async function executeWithRetry(magentoCloud, command, options = { maxRetries: 3
     throw lastError;
 }
 
-async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode) {
+async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode, apiToken) { // Add apiToken
     try {
         // Create the script content with all commands.
         const scriptContent = createScriptContent(commands);
@@ -131,6 +132,7 @@ EOF`;
         const { stdout, stderr } = await executeWithRetry(
             magentoCloud,
             sshCommand,
+            apiToken, // Pass apiToken
             { maxRetries: 3, delay: 1000 }
         );
 
@@ -182,10 +184,12 @@ function validateCommand(cmd, index) {
 export async function runCommands(req, res) {
     const { projectId, environment } = req.params;
     const { commands } = req.body;
+    const userId = req.session.user.id; // Get userId
 
     logger.info('Received SSH commands:', {
         projectId,
         environment,
+        userId,
         commands: commands.map(cmd => ({
             id: cmd.id,
             title: cmd.title,
@@ -207,7 +211,7 @@ export async function runCommands(req, res) {
     // Validate commands individually
     commands.forEach((cmd, index) => {
         const errors = validateCommand(cmd, index);
-        
+
         if (errors.length > 0) {
             invalidCommands.push({
                 command: cmd,
@@ -220,10 +224,15 @@ export async function runCommands(req, res) {
     });
 
     try {
+        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
+        if (!apiToken) {
+            return res.status(401).json({ error: 'API token not found for user' });
+        }
+
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
-        const nodes = await getNodes(projectId, environment);
+        const nodes = await getNodes(projectId, environment, apiToken); // Pass apiToken to getNodes
         const isSingleNode = !nodes || nodes.length <= 1;
 
         if (!nodes || nodes.length === 0) {
@@ -243,7 +252,8 @@ export async function runCommands(req, res) {
                 environment,
                 isSingleNode ? null : nodes[0].id,
                 validCommands,
-                isSingleNode
+                isSingleNode,
+                apiToken // Pass apiToken
             );
 
             // Initialize results for all valid commands
@@ -265,7 +275,8 @@ export async function runCommands(req, res) {
                         environment,
                         node.id,
                         allNodesCommands,
-                        false
+                        false,
+                        apiToken // Pass apiToken
                     )
                 );
 
@@ -297,7 +308,7 @@ export async function runCommands(req, res) {
                 }]
             });
         });
-        
+
         // Add summary for each command
         results.forEach(commandResult => {
             const successful = commandResult.results.filter(r => r.status === 'SUCCESS').length;
@@ -329,6 +340,7 @@ export async function runCommands(req, res) {
             error: error.message,
             projectId,
             environment,
+            userId,
             timestamp: new Date().toISOString()
         });
 

@@ -1,10 +1,12 @@
 // src/api/app/rabbitmqCommands.js
 import { logger } from '../../services/logger.js';
 import { RabbitMQAdminService } from '../../services/rabbitmqAdminService.js';
+import { ApiTokenService } from '../../services/apiTokenService.js';
 
 export async function runCommands(req, res) {
     const { projectId, environment } = req.params;
     const { commands } = req.body;
+    const userId = req.session.user.id; // Get userId
 
     if (!Array.isArray(commands)) {
         return res.status(400).json({
@@ -14,8 +16,13 @@ export async function runCommands(req, res) {
     }
 
     try {
-        // Initialize RabbitMQAdminService with projectId and environment
-        const rabbitmqService = new RabbitMQAdminService(projectId, environment);
+        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
+        if (!apiToken) {
+            return res.status(401).json({ error: 'API token not found for user' });
+        }
+
+        // Initialize RabbitMQAdminService with projectId, environment, and apiToken
+        const rabbitmqService = new RabbitMQAdminService(projectId, environment, apiToken);
 
         const results = [];
 
@@ -67,7 +74,8 @@ export async function runCommands(req, res) {
         logger.error('RabbitMQ command execution failed:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
 
         const statusCode = error.message.includes('access denied') ? 401 : 500;

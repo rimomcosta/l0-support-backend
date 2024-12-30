@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import { logger } from './logger.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
 import { redisClient } from './redisService.js';
+import { ApiTokenService } from './apiTokenService.js'; // Import ApiTokenService
 
 const execAsync = promisify(exec);
 
@@ -21,6 +22,7 @@ class TunnelManager {
     constructor() {
         this.timers = new Map(); 
         this.magentoCloud = new MagentoCloudAdapter();
+        this.userId = null;
     }
 
     /**
@@ -90,11 +92,12 @@ class TunnelManager {
      * Retrieves the tunnel info from Magento Cloud. If no tunnel is found or
      * the tunnel is unhealthy, returns null.
      */
-    async getTunnelInfo(projectId, environment) {
+    async getTunnelInfo(projectId, environment, apiToken) {
         const tunnelKey = `${projectId}-${environment}`;
         try {
             const { stdout } = await this.magentoCloud.executeCommand(
-                `tunnel:info -p ${projectId} -e ${environment} -y`
+                `tunnel:info -p ${projectId} -e ${environment} -y`,
+                apiToken
             );
             const tunnelInfo = this.parseTunnelInfo(stdout);
 
@@ -106,7 +109,7 @@ class TunnelManager {
                         environment
                     });
                     try {
-                        await this.magentoCloud.executeCommand('tunnel:close -y');
+                        await this.magentoCloud.executeCommand('tunnel:close -y', apiToken);
                     } catch (closeError) {
                         logger.debug('Error closing unhealthy tunnel', {
                             error: closeError.message
@@ -135,10 +138,10 @@ class TunnelManager {
      * Waits for the tunnel to open by spawning "tunnel:open" and parsing its output.
      * This resolves with the tunnel info once all services are reported as ready.
      */
-    async waitForTunnelOpen(projectId, environment) {
+    async waitForTunnelOpen(projectId, environment, apiToken) {
         return new Promise((resolve, reject) => {
             const command = `tunnel:open -p ${projectId} -e ${environment} -y`;
-            const { tunnelProcess } = this.magentoCloud.executeCommandStream(command);
+            const { tunnelProcess } = this.magentoCloud.executeCommandStream(command, apiToken);
 
             let servicesFound = {};
             let allServicesReady = false;
@@ -183,7 +186,8 @@ class TunnelManager {
 
                     try {
                         const { stdout } = await this.magentoCloud.executeCommand(
-                            `tunnel:info -p ${projectId} -e ${environment} -y`
+                            `tunnel:info -p ${projectId} -e ${environment} -y`,
+                            apiToken
                         );
                         const tunnelInfo = this.parseTunnelInfo(stdout);
                         resolve(tunnelInfo);
@@ -207,6 +211,15 @@ class TunnelManager {
      * If already open and healthy, returns the existing info. Otherwise, tries to acquire a lock and open it.
      */
     async openTunnel(projectId, environment) {
+        const userId = this.userId; // Get userId from the property
+        if (!userId) {
+            throw new Error("userId is not set in tunnelManager");
+        }
+        const apiToken = await ApiTokenService.getApiToken(userId);
+        if (!apiToken) {
+            throw new Error('API token not found for user');
+        }
+
         const tunnelKey = `${projectId}-${environment}`;
         const maxRetries = 3;
         let retryCount = 0;
@@ -216,7 +229,7 @@ class TunnelManager {
         while (retryCount < maxRetries) {
             try {
                 // Quick check for existing tunnel
-                let tunnelInfo = await this.getTunnelInfo(projectId, environment);
+                let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
                 if (tunnelInfo) {
                     this.resetIdleTimer(projectId, environment);
                     return tunnelInfo;
@@ -230,7 +243,7 @@ class TunnelManager {
                     // Wait for the other process to finish opening
                     const startTime = Date.now();
                     while (Date.now() - startTime < LOCK_WAIT_TIMEOUT) {
-                        tunnelInfo = await this.getTunnelInfo(projectId, environment);
+                        tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
                         if (tunnelInfo) {
                             this.resetIdleTimer(projectId, environment);
                             return tunnelInfo;
@@ -247,7 +260,7 @@ class TunnelManager {
                     logger.info(`Starting tunnel creation... Attempt ${retryCount + 1} of ${maxRetries}`, 
                                 { projectId, environment });
 
-                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment);
+                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken);
 
                     // Give services a bit more time
                     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -289,18 +302,34 @@ class TunnelManager {
      * Resets the idle timer so that the tunnel is closed automatically after IDLE_TIMEOUT ms
      * if there's no further usage.
      */
-    resetIdleTimer(projectId, environment) {
+    async resetIdleTimer(projectId, environment) {
         const key = `${projectId}-${environment}`;
         if (this.timers.has(key)) {
             clearTimeout(this.timers.get(key));
         }
-
+    
+        const userId = this.userId;
+        if (!userId) {
+            logger.error('UserId is not set. Cannot close tunnel automatically.');
+            return;
+        }
+    
+        const apiToken = await ApiTokenService.getApiToken(userId);
+        if (!apiToken) {
+            logger.error('API token not found for user. Cannot close tunnel automatically.');
+            return;
+        }
+    
         const timer = setTimeout(async () => {
-            await this.closeTunnel(projectId, environment);
+            try {
+                await this.closeTunnel(projectId, environment, apiToken);
+            } catch (error) {
+                logger.error('Error while closing tunnel automatically:', { error: error.message });
+            }
         }, IDLE_TIMEOUT);
-
+    
         this.timers.set(key, timer);
-
+    
         // Also store last activity in Redis with an expiry
         redisClient.set(
             `tunnel_last_activity:${key}`,
@@ -313,7 +342,7 @@ class TunnelManager {
      * Closes the tunnel by acquiring the lock, calling "tunnel:close -y", and removing
      * relevant Redis keys and timeouts.
      */
-    async closeTunnel(projectId, environment) {
+    async closeTunnel(projectId, environment, apiToken) {
         const tunnelKey = `${projectId}-${environment}`;
         const lockAcquired = await this.acquireLock(tunnelKey);
         if (!lockAcquired) {
@@ -322,7 +351,7 @@ class TunnelManager {
         }
 
         try {
-            await this.magentoCloud.executeCommand('tunnel:close -y');
+            await this.magentoCloud.executeCommand('tunnel:close -y', apiToken);
             const keys = [
                 `tunnel_status:${tunnelKey}`,
                 `tunnel_last_activity:${tunnelKey}`
@@ -428,8 +457,13 @@ class TunnelManager {
      * This is used by your redisCommands, openSearchCommands, etc.
      */
     async getServiceTunnelInfo(projectId, environment, serviceName) {
+        const userId = this.userId;
         try {
-            const tunnelInfo = await this.getTunnelInfo(projectId, environment);
+            const apiToken = await ApiTokenService.getApiToken(userId);
+            if (!apiToken) {
+                throw new Error('API token not found for user');
+            }
+            const tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
 
             // If tunnel is missing or doesn't have the requested service, attempt recreation
             if (!tunnelInfo || !tunnelInfo[serviceName] || !tunnelInfo[serviceName].length) {
@@ -438,14 +472,14 @@ class TunnelManager {
                         projectId,
                         environment
                     });
-                    await this.closeTunnel(projectId, environment);
+                    await this.closeTunnel(projectId, environment, apiToken);
                 } else {
                     logger.debug(`Creating new tunnel for ${serviceName} service`, {
                         projectId,
                         environment
                     });
                 }
-                const newTunnelInfo = await this.openTunnel(projectId, environment);
+                const newTunnelInfo = await this.openTunnel(projectId, environment, apiToken);
 
                 if (!newTunnelInfo || !newTunnelInfo[serviceName] || !newTunnelInfo[serviceName].length) {
                     throw new Error(`Service ${serviceName} not available in tunnel configuration`);

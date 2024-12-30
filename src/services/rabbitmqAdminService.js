@@ -4,9 +4,10 @@ import { executeCommand } from '../api/app/magentoCloudDirectAccess.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
 
 export class RabbitMQAdminService {
-    constructor(projectId, environment) {
+    constructor(projectId, environment, apiToken) {
         this.projectId = projectId;
         this.environment = environment;
+        this.apiToken = apiToken;
         this.magentoCloud = new MagentoCloudAdapter();
     }
 
@@ -31,7 +32,8 @@ export class RabbitMQAdminService {
             const { output, error, status } = await executeCommand(
                 this.magentoCloud,
                 sshCommand,
-                { projectId: this.projectId, environment: this.environment }
+                { projectId: this.projectId, environment: this.environment },
+                this.apiToken // Pass the apiToken
             );
 
             if (status === 'ERROR') {

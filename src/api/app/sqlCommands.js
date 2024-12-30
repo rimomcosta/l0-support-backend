@@ -5,6 +5,7 @@ import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 import { execute as getNodes } from './nodes.js';
 import { tunnelManager } from '../../services/tunnelService.js';
 import { SQLService } from '../../services/sqlService.js';
+import { ApiTokenService } from '../../services/apiTokenService.js';
 
 // Bundle multiple queries into a single MySQL command
 function bundleQueries(queries) {
@@ -86,7 +87,7 @@ ${bundleQueries(queries)} | mysql -u"$username" -p"$password" -D"$database" -h"$
 }
 
 // Execute queries on a specific node via SSH
-async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId, queries) {
+async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId, queries, apiToken) {
     try {
         const mysqlCommand = createMySQLCommand(queries);
         const sshCommand = `ssh -p ${projectId} -e ${environment} --instance ${nodeId} ${mysqlCommand}`;
@@ -96,7 +97,7 @@ async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId
             queries: queries.map(q => q.title)
         });
 
-        const { stdout, stderr } = await magentoCloud.executeCommand(sshCommand);
+        const { stdout, stderr } = await magentoCloud.executeCommand(sshCommand, apiToken); // Pass apiToken
 
         // Check if MySQL is not running
         if (stderr.includes('MySQL is not running on this node')) {
@@ -178,13 +179,13 @@ function validateQueries(queries) {
 }
 
 // Main function to execute queries with different strategies
-async function executeQueriesWithStrategy(projectId, environment, queries) {
+async function executeQueriesWithStrategy(projectId, environment, queries, apiToken) { // Add apiToken
     try {
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
         // Get all nodes first
-        const nodes = await getNodes(projectId, environment);
+        const nodes = await getNodes(projectId, environment, apiToken); // Pass apiToken to getNodes
         if (!nodes || nodes.length === 0) {
             throw new Error('No nodes found in the environment');
         }
@@ -251,7 +252,8 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
                     projectId,
                     environment,
                     node.id,
-                    multiNodeQueries
+                    multiNodeQueries,
+                    apiToken // Pass apiToken
                 )
             );
 
@@ -290,6 +292,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries) {
 async function runQueries(req, res) {
     const { projectId, environment } = req.params;
     const { queries } = req.body;
+    const userId = req.session.user.id; // Get userId
 
     // Validate queries
     const validation = validateQueries(queries);
@@ -301,7 +304,12 @@ async function runQueries(req, res) {
     }
 
     try {
-        const results = await executeQueriesWithStrategy(projectId, environment, queries);
+        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
+        if (!apiToken) {
+            return res.status(401).json({ error: 'API token not found for user' });
+        }
+
+        const results = await executeQueriesWithStrategy(projectId, environment, queries, apiToken); // Pass apiToken
 
         res.json({
             projectId,
@@ -313,7 +321,8 @@ async function runQueries(req, res) {
         logger.error('Query execution failed:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
 
         const statusCode = error.message.includes('authentication') ? 401
