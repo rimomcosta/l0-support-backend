@@ -203,7 +203,7 @@ function shouldUseBashService(command) {
 export async function executeAllCommands(req, res) {
     const { projectId, environment } = req.params;
     const userId = req.session.user.id;
-    const tabId = req.session.user.tabId; // Get tabId from session
+    const tabId = req.query.tabId; // Get tabId from session
 
     try {
         const allCommands = await commandService.getAll();
@@ -320,9 +320,9 @@ export async function executeAllCommands(req, res) {
 }
 
 export async function refreshService(req, res) {
-    const { serviceType, projectId, environment } = req.body;
+    const { serviceType, projectId, environment, tabId } = req.body;
     const userId = req.session.user.id;
-    const tabId = req.session.user.tabId; // Get tabId from session
+    // const tabId = req.session.user.tabId; // Get tabId from session
 
     if (!serviceType || !projectId || !environment) {
         return res.status(400).json({ error: 'Service type, project ID, and environment are required' });

@@ -105,13 +105,15 @@ export class WebSocketService {
         if (!global.wss) {
             throw new Error('WebSocket server not initialized');
         }
-    
+
         const connections = global.wss.connectionsByTabId.get(tabId);
         if (connections) {
             connections.forEach(client => {
                 if (client.readyState === client.OPEN) {
+                    // Add tabId to the message
                     client.send(JSON.stringify({
                         ...message,
+                        tabId: tabId, // Include tabId in the message
                         timestamp: new Date().toISOString()
                     }));
                 }
