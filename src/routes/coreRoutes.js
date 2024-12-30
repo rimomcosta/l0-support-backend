@@ -1,6 +1,9 @@
+// src/routes/coreRoutes.js
 import express from 'express';
 import * as auth from '../api/core/auth.js';
 import * as health from '../api/core/health.js';
+import * as apiToken from '../api/core/apiToken.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -12,5 +15,9 @@ router.post('/auth/logout', auth.logout);
 
 // Health routes
 router.get('/health', health.checkHealth);
+
+// API Token routes
+router.post('/auth/api-token', requireAuth, apiToken.saveApiToken);
+router.get('/auth/api-token', requireAuth, apiToken.getApiToken);
 
 export default router;

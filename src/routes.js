@@ -1,3 +1,4 @@
+// src/routes.js
 import coreRoutes from './routes/coreRoutes.js';
 import appRoutes from './routes/appRoutes.js';
 

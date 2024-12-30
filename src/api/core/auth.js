@@ -1,6 +1,9 @@
+// src/api/core/auth.js
 import { oidcClient } from '../../services/oidcService.js';
 import { generators } from 'openid-client';
 import { logger } from '../../services/logger.js';
+import { v4 as uuidv4 } from 'uuid'; // Import uuid
+import { ApiTokenService } from '../../services/apiTokenService.js'; // Import ApiTokenService
 
 export async function login(req, res) {
     try {
@@ -100,8 +103,24 @@ export async function callback(req, res) {
 
         const userInfo = await oidcClient.userinfo(tokenSet.access_token);
 
+        // Check if user exists in the database
+        let user = await ApiTokenService.getUserByEmail(userInfo.email);
+
+        // Generate a new user ID if the user doesn't exist
+        if (!user) {
+            const newUserId = uuidv4();
+            user = {
+                user_id: newUserId,
+                username: userInfo.name,
+                email: userInfo.email,
+                api_token: '' // Initially empty, will be saved later
+            };
+
+            await ApiTokenService.createUser(user);
+        }
+
         req.session.user = {
-            id: userInfo.sub,
+            id: user.user_id,
             email: userInfo.email,
             name: userInfo.name
         };
@@ -150,7 +169,7 @@ export function getUser(req, res) {
 
 export function logout(req, res) {
     const userId = req.session?.user?.id;
-    
+
     logger.debug('Logout initiated', {
         timestamp: new Date().toISOString(),
         userId

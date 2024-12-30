@@ -26,13 +26,18 @@ class MagentoCloudAdapter {
         }
     }
 
-    async executeCommand(command) {
+    async executeCommand(command, apiToken) {
+        if (!apiToken) {
+            throw new Error("API token is required for Magento Cloud CLI commands.");
+        }
+
         try {
             const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
                 env: {
                     ...process.env,
                     // Php is required for magento-cloud, and it is in the PATH
-                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`
+                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`,
+                    MAGENTO_CLOUD_CLI_TOKEN: apiToken
                 }
             });
             return { stdout, stderr };
@@ -54,12 +59,17 @@ class MagentoCloudAdapter {
         }
     }
 
-    executeCommandStream(command) {
+    executeCommandStream(command, apiToken) {
+        if (!apiToken) {
+            throw new Error("API token is required for Magento Cloud CLI commands.");
+        }
+
         const tunnelProcess = exec(`${this.executablePath} ${command}`, {
             env: {
                 ...process.env,
                 // Php is required for magento-cloud, and it is in the PATH
-                PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`
+                PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`,
+                MAGENTO_CLOUD_CLI_TOKEN: apiToken
             }
         });
 
