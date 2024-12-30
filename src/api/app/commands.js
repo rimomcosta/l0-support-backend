@@ -3,6 +3,7 @@ import { CommandService } from '../../services/commandsManagerService.js';
 import { WebSocketService } from '../../services/webSocketService.js';
 import { logger } from '../../services/logger.js';
 import { tunnelManager } from '../../services/tunnelService.js';
+import { ApiTokenService } from '../../services/apiTokenService.js';
 import * as sshCommands from './sshCommands.js';
 import * as sqlCommands from './sqlCommands.js';
 import * as redisCommands from './redisCommands.js';
@@ -440,12 +441,29 @@ export async function executeSingleCommand(req, res) {
     const { commandId, projectId } = req.body;
     const environment = req.body.environment || null;
     const instance = req.body.instance || null;
+    const userId = req.session?.user?.id;
+    const tabId = req.query.tabId || req.body.tabId;
+
+    logger.info('Executing single command:', {
+        commandId,
+        projectId,
+        environment,
+        userId,
+        tabId,
+        timestamp: new Date().toISOString()
+    });
 
     if (!commandId || !projectId) {
         return res.status(400).json({ error: 'Command ID and project ID are required' });
     }
 
     try {
+        // Get API token for the user
+        const apiToken = await ApiTokenService.getApiToken(userId);
+        if (!apiToken) {
+            return res.status(401).json({ error: 'API token not found for user' });
+        }
+
         const command = await commandService.getById(commandId);
         if (!command || command.length === 0) {
             return res.status(404).json({ error: 'Command not found' });
@@ -459,69 +477,49 @@ export async function executeSingleCommand(req, res) {
         }
 
         const serviceType = singleCommand.service_type;
+        
+        // Get the service handler from SERVICE_HANDLERS
         const serviceHandler = SERVICE_HANDLERS[serviceType];
-
         if (!serviceHandler) {
             return res.status(400).json({ error: `Unsupported service type: ${serviceType}` });
         }
 
-        const { handler, preparePayload } = serviceHandler;
+        // Execute the command using executeServiceCommands
+        const result = await executeServiceCommands(
+            serviceType,
+            [singleCommand], // Pass as array with single command
+            projectId,
+            environment,
+            userId
+        );
 
-        // Execute command using the appropriate handler
-        const request = {
-            params: {
-                projectId,
-                environment,
-                instance
-            },
-            body: preparePayload([singleCommand], projectId, environment) // Pass an array with the single command
-        };
-
-        const responseHandler = {
-            status: function (code) {
-                this.statusCode = code;
-                return this;
-            },
-            json: function (data) {
-                this.data = data;
-                return this;
+        // If execution was successful, send the response
+        if (result) {
+            // Store results in session storage if needed
+            if (tabId) {
+                WebSocketService.broadcastToTab({
+                    type: 'command_complete',
+                    commandId,
+                    timestamp: new Date().toISOString(),
+                    results: result
+                }, tabId);
             }
-        };
 
-        // Add error handling and logging
-        try {
-            await handler(request, responseHandler);
-        } catch (innerError) {
-            logger.error(`Error executing ${serviceType} command:`, {
-                error: innerError.message,
-                projectId,
-                environment,
-                commandId
-            });
-            return res.status(500).json({
-                error: 'Failed to execute command',
-                details: process.env.NODE_ENV === 'development' ? innerError.message : undefined,
-                timestamp: new Date().toISOString()
-            });
-        }
-        console.log("Single Command=============>" + JSON.stringify(responseHandler.data, null, 2));
-        if (responseHandler.statusCode && responseHandler.statusCode >= 400) {
-            logger.error(`Error executing ${serviceType} command:`, {
-                error: responseHandler.data.error,
-                projectId,
-                environment,
-                commandId
-            });
-            return res.status(responseHandler.statusCode).json(responseHandler.data);
+            res.json(result);
+        } else {
+            throw new Error('Command execution returned no results');
         }
 
-        res.json(responseHandler.data);
     } catch (error) {
         logger.error('Failed to execute single command:', {
             error: error.message,
+            stack: error.stack,
             projectId,
             environment,
-            commandId
+            commandId,
+            userId,
+            tabId,
+            timestamp: new Date().toISOString()
         });
 
         res.status(500).json({
