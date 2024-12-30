@@ -122,7 +122,7 @@ const SERVICE_HANDLERS = {
     }
 };
 
-async function executeServiceCommands(serviceType, commands, projectId, environment) {
+async function executeServiceCommands(serviceType, commands, projectId, environment, userId) { // Add userId parameter
     if (!commands || commands.length === 0) return null;
 
     const serviceHandler = SERVICE_HANDLERS[serviceType];
@@ -155,7 +155,12 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
             environment,
             tunnelInfo
         },
-        body: preparePayload(commands, projectId, environment)
+        body: preparePayload(commands, projectId, environment),
+        session: {
+            user: {
+                id: userId
+            }
+        }
     };
 
     const responseHandler = {
@@ -193,7 +198,7 @@ function shouldUseBashService(command) {
 
 // Execute all commands
 export async function executeAllCommands(req, res) {
-    const { projectId, environment } = req.params; executeSingleCommand
+    const { projectId, environment } = req.params;
     const userId = req.session.user.id;
 
     try {
@@ -224,7 +229,8 @@ export async function executeAllCommands(req, res) {
                         serviceType,
                         commands,
                         projectId,
-                        environment
+                        environment,
+                        userId // Pass userId
                     );
 
                     // Only send the results array in service_complete
@@ -333,7 +339,8 @@ export async function refreshService(req, res) {
             serviceType,
             serviceCommands,
             projectId,
-            environment
+            environment,
+            userId // Pass userId
         );
 
         // Broadcast the update through WebSocket

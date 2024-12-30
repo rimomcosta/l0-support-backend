@@ -1,6 +1,7 @@
 // src/api/app/magentoCloudDirectAccess.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
+import { ApiTokenService } from '../../services/apiTokenService.js';
 
 function normalizeProjectFlag(command) {
     const parts = command.split('|');
@@ -60,7 +61,7 @@ function replacePlaceholders(command, context) {
     return processedCommand.trim();
 }
 
-export async function executeCommand(magentoCloud, command, context) {
+export async function executeCommand(magentoCloud, command, context, apiToken) { // Add apiToken parameter
     try {
         let processedCommand = replacePlaceholders(command, context);
 
@@ -77,8 +78,8 @@ export async function executeCommand(magentoCloud, command, context) {
             throw new Error('Invalid command after processing placeholders');
         }
 
-        // Delegate execution to the MagentoCloudAdapter
-        const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand);
+        // Delegate execution to the MagentoCloudAdapter, passing the apiToken
+        const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand, apiToken);
 
         return {
             output: stdout || null,
@@ -103,6 +104,7 @@ export async function executeCommand(magentoCloud, command, context) {
 export async function executeCommands(req, res) {
     const { projectId, environment, instance } = req.params;
     const { commands } = req.body;
+    const userId = req.session.user.id; // Get user ID
 
     if (!Array.isArray(commands)) {
         return res.status(400).json({
@@ -112,6 +114,11 @@ export async function executeCommands(req, res) {
     }
 
     try {
+        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
+        if (!apiToken) {
+            return res.status(401).json({ error: 'API token not found for user' });
+        }
+
         // Use the adapter
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
@@ -126,7 +133,8 @@ export async function executeCommands(req, res) {
             const { output, error, status } = await executeCommand(
                 magentoCloud, 
                 cmd.command.replace(/^"|"$/g, ''),
-                context
+                context,
+                apiToken // Pass apiToken to executeCommand
             );
             
             return {
@@ -159,7 +167,8 @@ export async function executeCommands(req, res) {
             error: error.message,
             projectId,
             environment,
-            instance
+            instance,
+            userId
         });
 
         res.status(500).json({
