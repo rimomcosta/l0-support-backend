@@ -471,13 +471,9 @@ export async function executeSingleCommand(req, res) {
 
         const singleCommand = command[0];
 
-        // Check if command should use bash service
-        if (singleCommand.service_type === 'magento_cloud' && shouldUseBashService(singleCommand.command)) {
-            singleCommand.service_type = 'bash';
-        }
-
+        // Ensure service_type is magento_cloud for magento-cloud commands
         const serviceType = singleCommand.service_type;
-        
+
         // Get the service handler from SERVICE_HANDLERS
         const serviceHandler = SERVICE_HANDLERS[serviceType];
         if (!serviceHandler) {

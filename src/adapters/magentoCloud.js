@@ -30,15 +30,15 @@ class MagentoCloudAdapter {
         if (!apiToken) {
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
-
+    
         try {
             const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
                 env: {
                     ...process.env,
-                    // Php is required for magento-cloud, and it is in the PATH
-                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`,
+                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`, // To allow using PHP from PATH
                     MAGENTO_CLOUD_CLI_TOKEN: apiToken
-                }
+                },
+                maxBuffer: 1024 * 1024 * 10 // 10MB buffer
             });
             return { stdout, stderr };
         } catch (error) {
@@ -63,16 +63,16 @@ class MagentoCloudAdapter {
         if (!apiToken) {
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
-
+    
         const tunnelProcess = exec(`${this.executablePath} ${command}`, {
             env: {
                 ...process.env,
-                // Php is required for magento-cloud, and it is in the PATH
-                PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`,
+                PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`, // To allow using PHP from PATH
                 MAGENTO_CLOUD_CLI_TOKEN: apiToken
-            }
+            },
+            maxBuffer: 1024 * 1024 * 10 // 10MB buffer
         });
-
+    
         return { tunnelProcess };
     }
 }

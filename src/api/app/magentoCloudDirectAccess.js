@@ -24,9 +24,8 @@ function escapeQuotesForShell(command) {
 
 function replacePlaceholders(command, context) {
     let processedCommand = normalizeProjectFlag(command);
-    // Remove 'magento-cloud' prefix if present
     processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
-    
+
     const placeholders = {
         ':projectid': {
             value: context.projectId,
@@ -45,15 +44,14 @@ function replacePlaceholders(command, context) {
     Object.entries(placeholders).forEach(([placeholder, config]) => {
         if (config.value) {
             processedCommand = processedCommand.replace(
-                new RegExp(placeholder, 'g'), 
+                new RegExp(placeholder, 'g'),
                 config.value
             );
         } else {
+            // Remove the placeholder and its associated flag if the value is missing
             config.flags.forEach(flag => {
-                processedCommand = processedCommand.replace(
-                    new RegExp(`\\s+${flag}\\s+${placeholder}`, 'g'),
-                    ''
-                );
+                const flagWithPlaceholder = new RegExp(`\\s*${flag}\\s*${placeholder}`, 'g');
+                processedCommand = processedCommand.replace(flagWithPlaceholder, '');
             });
         }
     });
@@ -61,11 +59,9 @@ function replacePlaceholders(command, context) {
     return processedCommand.trim();
 }
 
-export async function executeCommand(magentoCloud, command, context, apiToken) { // Add apiToken parameter
+export async function executeCommand(magentoCloud, command, context, apiToken) {
     try {
         let processedCommand = replacePlaceholders(command, context);
-
-        // Escape double quotes in the entire command
         processedCommand = escapeQuotesForShell(processedCommand);
 
         logger.debug('Executing magento-cloud command:', {
@@ -78,7 +74,6 @@ export async function executeCommand(magentoCloud, command, context, apiToken) {
             throw new Error('Invalid command after processing placeholders');
         }
 
-        // Delegate execution to the MagentoCloudAdapter, passing the apiToken
         const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand, apiToken);
 
         return {
@@ -132,7 +127,7 @@ export async function executeCommands(req, res) {
         const results = await Promise.all(commands.map(async (cmd) => {
             const { output, error, status } = await executeCommand(
                 magentoCloud, 
-                cmd.command.replace(/^"|"$/g, ''),
+                cmd.command,
                 context,
                 apiToken // Pass apiToken to executeCommand
             );
