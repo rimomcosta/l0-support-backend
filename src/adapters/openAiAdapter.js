@@ -12,7 +12,7 @@ export class OpenAIAdapter {
     async generateCode(prompt) {
         try {
             const response = await this.openai.chat.completions.create({
-                model: "gpt-4o", // Or another suitable model
+                model: "gpt-4o-mini", // Or another suitable model
                 messages: [
                     {
                         role: "system",
