@@ -3,9 +3,10 @@
 import { OpenAIAdapter } from '../adapters/openAiAdapter.js';
 import { AnthropicAdapter } from '../adapters/anthropicAdapter.js';
 import { logger } from './logger.js';
+import { FirefallAdapter } from '../adapters/firefallAdapter.js';
 
 class AiService {
-  constructor(provider = 'openai') {
+  constructor(provider = 'firefall') {
     this.provider = provider;
     this.adapter = this.createAdapter(provider);
   }
@@ -16,6 +17,8 @@ class AiService {
         return new OpenAIAdapter();
       case 'anthropic':
         return new AnthropicAdapter();
+      case 'firefall':
+        return new FirefallAdapter();
       default:
         throw new Error(`Unsupported AI provider: ${provider}`);
     }

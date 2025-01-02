@@ -14,7 +14,7 @@ export class AnthropicAdapter {
             const response = await this.anthropic.messages.create({
                 model: "claude-3-5-sonnet-20241022",
                 max_tokens: 3000,
-                temperature: 0.9,
+                temperature: 0.5,
                 messages: [
                     {
                         role: "user",
