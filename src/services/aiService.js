@@ -6,7 +6,7 @@ import { logger } from './logger.js';
 import { FirefallAdapter } from '../adapters/firefallAdapter.js';
 
 class AiService {
-  constructor(provider = 'firefall') {
+  constructor(provider = 'anthropic') {
     this.provider = provider;
     this.adapter = this.createAdapter(provider);
   }
@@ -154,9 +154,19 @@ const ExampleComponent = ({ data }) => {
 };
 \`\`\`
 
-Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}, find a way to parse it, and comply with all requirements above.
+Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}, find a way to parse it, and comply with ALL requirements above without loosing the context - Don not let any element from within a component to overflow its container!.
     `;
   }
 }
 
 export const aiService = new AiService();
+
+
+
+
+
+
+
+
+
+
