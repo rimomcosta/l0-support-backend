@@ -208,7 +208,7 @@ export async function executeAllCommands(req, res) {
 
     try {
         const allCommands = await commandService.getAll();
-        const commandsToRun = allCommands.filter(cmd => cmd.auto_run);
+        const commandsToRun = allCommands.filter(cmd => cmd.auto_run && cmd.reviewed);
         const commandsByService = commandsToRun.reduce((acc, cmd) => {
             acc[cmd.service_type] = acc[cmd.service_type] || [];
             acc[cmd.service_type].push({
@@ -333,7 +333,7 @@ export async function refreshService(req, res) {
         // Get all commands for this service type
         const allCommands = await commandService.getAll();
         const serviceCommands = allCommands.filter(cmd => 
-            cmd.service_type === serviceType && cmd.auto_run
+            cmd.service_type === serviceType && cmd.auto_run && cmd.reviewed
         );
 
         if (serviceCommands.length === 0) {
@@ -470,6 +470,10 @@ export async function executeSingleCommand(req, res) {
         }
 
         const singleCommand = command[0];
+        // Check if the command is reviewed
+        if (!singleCommand.reviewed) {
+            return res.status(403).json({ error: 'This command has not been reviewed and cannot be executed' });
+        }
 
         // Ensure service_type is magento_cloud for magento-cloud commands
         const serviceType = singleCommand.service_type;
