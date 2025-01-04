@@ -6,7 +6,7 @@ import { logger } from './logger.js';
 import { FirefallAdapter } from '../adapters/firefallAdapter.js';
 
 class AiService {
-  constructor(provider = 'anthropic') {
+  constructor(provider = 'firefall') {
     this.provider = provider;
     this.adapter = this.createAdapter(provider);
   }

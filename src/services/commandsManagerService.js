@@ -43,13 +43,12 @@ export class CommandService {
                 command.autoRun ?? true,
                 command.componentCode,
                 command.layout,
+                command.reviewed,
                 id
             ];
 
-            logger.debug('Updating command with params:', params);
-
             await pool.execute(
-                'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, auto_run = ?, component_code = ?, layout = ? WHERE id = ?',
+                'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, auto_run = ?, component_code = ?, layout = ?, reviewed = ? WHERE id = ?',
                 params
             );
 
@@ -136,7 +135,7 @@ export class CommandService {
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
-            
+
         } catch (error) {
             logger.error('Failed to get commands:', error);
             throw error;
