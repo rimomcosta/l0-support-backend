@@ -107,6 +107,8 @@ export class CommandService {
                 auto_run: row.auto_run,
                 component_code: row.component_code,
                 layout: row.layout,
+                locked: row.locked,
+                reviewed: row.reviewed,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
