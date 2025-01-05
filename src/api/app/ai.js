@@ -1,3 +1,4 @@
+// src/api/app/ai.js
 import ReactComponentCreator from '../../services/ai/agents/reactComponentCreator.js';
 
 export async function generateComponentCode(req, res) {

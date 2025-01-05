@@ -10,7 +10,7 @@ import * as openSearchCommands from '../api/app/openSearchCommands.js';
 import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
 import * as commands from '../api/app/commands.js';
 import * as bashCommands from '../api/app/bashCommands.js';
-import { openTunnel } from '../api/app/tunnel.js'; // Import the new openTunnel function
+import { openTunnel } from '../api/app/tunnel.js';
 import * as ai from '../api/app/ai.js';
 
 const router = express.Router();

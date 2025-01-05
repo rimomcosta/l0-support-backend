@@ -1,3 +1,4 @@
+// src/services/ai/aiService.js
 import { OpenAIAdapter } from '../../adapters/openAiAdapter.js';
 import { AnthropicAdapter } from '../../adapters/anthropicAdapter.js';
 import { FirefallAdapter } from '../../adapters/firefallAdapter.js';
