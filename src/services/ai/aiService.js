@@ -1,6 +1,7 @@
 import { OpenAIAdapter } from '../../adapters/openAiAdapter.js';
 import { AnthropicAdapter } from '../../adapters/anthropicAdapter.js';
 import { FirefallAdapter } from '../../adapters/firefallAdapter.js';
+import { GoogleAdapter } from '../../adapters/googleAdapter.js';
 import { logger } from '../logger.js';
 
 class AiService {
@@ -9,6 +10,7 @@ class AiService {
       openai: OpenAIAdapter,
       anthropic: AnthropicAdapter,
       firefall: FirefallAdapter,
+      google: GoogleAdapter,
     };
   }
 

@@ -8,8 +8,8 @@ export class AnthropicAdapter {
         });
         this.provider = 'anthropic';
         this.model = config.model || "claude-3-5-sonnet-20241022";
-        this.temperature = config.temperature || 0.5;
-        this.maxTokens = config.maxTokens || 3000;
+        this.temperature = config.temperature || 0.9;
+        this.maxTokens = config.maxTokens || 1000;
         this.stream = config.stream || false;
     }
 

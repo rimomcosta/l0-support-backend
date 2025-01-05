@@ -10,7 +10,7 @@ export class OpenAIAdapter {
         this.provider = 'openai';
         this.model = config.model || "gpt-4o-mini"; // Default model
         this.temperature = config.temperature || 0.9; // Default temperature
-        this.maxTokens = config.maxTokens || 3000; // Default max tokens
+        this.maxTokens = config.maxTokens || 1000; // Default max tokens
         this.stream = config.stream || false; // Default stream value
     }
 

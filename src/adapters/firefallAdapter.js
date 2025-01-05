@@ -10,9 +10,10 @@ export class FirefallAdapter {
         this.clientSecret = config.clientSecret || process.env.FIREFALL_CLIENT_SECRET;
         this.imsOrgId = config.imsOrgId || process.env.FIREFALL_IMS_ORG_ID;
         this.authCode = config.authCode || process.env.FIREFALL_AUTH_CODE;
-        this.model = config.model || "gpt-4o";
-        this.temperature = config.temperature || 0.5;
-        this.maxTokens = config.maxTokens || 3000;
+        this.model = config.model || "gpt-4o-mini";
+        this.temperature = config.temperature || 0.9;
+        this.maxTokens = config.maxTokens || 1000;
+        this.stream = config.stream || false;
 
         if (!this.clientId || !this.clientSecret || !this.imsOrgId || !this.authCode) {
             logger.error('FirefallAdapter: Missing required configuration');
