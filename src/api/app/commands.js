@@ -9,35 +9,10 @@ import * as sqlCommands from './sqlCommands.js';
 import * as redisCommands from './redisCommands.js';
 import * as openSearchCommands from './openSearchCommands.js';
 import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
-import ReactComponentCreator from '../../services/ai/agents/reactComponentCreator.js';
 import * as bashCommands from './bashCommands.js';
 import * as rabbitmqCommands from './rabbitmqCommands.js';
-import { json } from 'express';
 
 const commandService = new CommandService();
-
-// AI Code Generation Endpoint
-export async function generateComponentCode(req, res) {
-    const { command, description, outputExample, aiGuidance } = req.body;
-
-    if (!outputExample || !command) {
-        return res.status(400).json({ error: 'Command, description and output example are required' });
-    }
-
-    try {
-        const data = {
-            command,
-            description,
-            outputExample,
-            aiGuidance,
-        };
-        const generatedCode = await ReactComponentCreator.generateComponent(data);
-        res.json({ generatedCode });
-    } catch (error) {
-        logger.error('AI code generation failed:', error);
-        res.status(500).json({ error: 'Failed to generate component code' });
-    }
-}
 
 const SERVICE_HANDLERS = {
     ssh: {

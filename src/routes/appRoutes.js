@@ -11,11 +11,13 @@ import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.j
 import * as commands from '../api/app/commands.js';
 import * as bashCommands from '../api/app/bashCommands.js';
 import { openTunnel } from '../api/app/tunnel.js'; // Import the new openTunnel function
+import * as ai from '../api/app/ai.js';
 
 const router = express.Router();
 
 router.get('/:projectId/environments', conditionalAuth, environment.getEnvironments);
 router.get('/:projectId/:environment/nodes', conditionalAuth, nodes.getNodes);
+router.post('/:projectId/:environment/open-tunnel', conditionalAuth, openTunnel);
 router.post('/:projectId/:environment/sshcommand', conditionalAuth, sshCommands.runCommands);
 router.post('/:projectId/:environment/sqlquery', conditionalAuth, sqlCommands.runQueries);
 router.post('/:projectId/:environment/redisquery', conditionalAuth, redisCommands.runQueries);
@@ -27,12 +29,10 @@ router.post('/commands', conditionalAuth, commands.createCommand);
 router.put('/commands/:id', conditionalAuth, commands.updateCommand);
 router.delete('/command/:id', conditionalAuth, commands.deleteCommand);
 router.get('/:projectId/:environment/commands', conditionalAuth, commands.executeAllCommands);
-router.post('/ai/generate-component-code', conditionalAuth, commands.generateComponentCode);
 // New route for single command execution
 router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
-// New route for opening the tunnel
-router.post('/:projectId/:environment/open-tunnel', conditionalAuth, openTunnel);
 router.post('/command/refresh-service', conditionalAuth, commands.refreshService);
+router.post('/ai/generate-component-code', conditionalAuth, ai.generateComponentCode);
 
 export default router;
