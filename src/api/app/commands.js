@@ -25,7 +25,13 @@ export async function generateComponentCode(req, res) {
     }
 
     try {
-        const generatedCode = await ReactComponentCreator.generateComponent(command, description, outputExample, aiGuidance);
+        const data = {
+            command,
+            description,
+            outputExample,
+            aiGuidance,
+        };
+        const generatedCode = await ReactComponentCreator.generateComponent(data);
         res.json({ generatedCode });
     } catch (error) {
         logger.error('AI code generation failed:', error);

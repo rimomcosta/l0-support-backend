@@ -1,24 +1,12 @@
 import { aiService } from '../aiService.js';
 
-class ReactComponentCreator {
-    constructor(config) {
-        this.config = {
-            provider: 'firefall', // Default provider
-            model: 'gpt-4o', // Default model
-            temperature: 0.7,
-            maxTokens: 3000,
-            stream: false,
-            systemMessage: 'You are a helpful assistant that generates React code.'
-        };
+const instructions = (data) => `
+You are a React code generator. Generate a React component for a dashboard based on the following information:
 
-        this.adapter = aiService.getAdapter(this.config.provider, this.config);
-        this.instructionsTemplate = `
-You are a React code generation assistant. Generate a React component for a dashboard based on the following information:
-
-Command: {command}
-Description: {description}
-Output Example: {outputExample}
-Type of Component: {aiGuidance}
+Command: \`\`\`${data.command}\`\`\`
+Description: \`\`\`${data.description}\`\`\`
+Output Example: \`\`\`${data.outputExample}\`\`\`
+Type of Component: \`\`\`${data.aiGuidance || 'Optimal for a dashboard'}\`\`\`
 
 The component should be able to display the data in a dashboard in the most explanatory and graphic way, but it should look clean, futuristic, very appealing visually, and with elements that make sense. Avoid using cards unless it is the best option for the data representation. Feel free to use colors to represent intensity or importance of the data, bars, charts, etc.
 
@@ -116,37 +104,41 @@ const ExampleComponent = ({ data }) => {
 };
 \`\`\`
 
-Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Don't forget: Type of Component: {aiGuidance} for the output {outputExample}, find a way to parse it, and comply with ALL requirements above without loosing the context - Don not let any element from within a component to overflow its container!.
+Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Comply with ALL requirements above without loosing the context - Do not let any element from within a component to overflow its container! Pay attention to the Type of Component: "${data.aiGuidance || 'Optimal for a dashboard'}", and this is an example of the data the component will display ${data.outputExample} Take the quotations mark and json elements into consideration, if present
 `;
-    }
 
-    createPrompt(data) {
-        return this.instructionsTemplate
-            .replace('{command}', data.command)
-            .replace('{description}', data.description)
-            .replace('{outputExample}', data.outputExample)
-            .replace('{aiGuidance}', data.aiGuidance || '');
-    }
+const config = {
+    provider: 'firefall',
+    model: 'gpt-4o',
+    temperature: 0.1,
+    maxTokens: 3000,
+    stream: false,
+    systemMessage: 'You are a helpful assistant that generates React code.',
+};
 
-    static async generateComponent(data) {
-        const agent = new ReactComponentCreator({});
-        const prompt = agent.createPrompt(data);
-        const generatedCode = await agent.adapter.generateCode({
-            prompt,
-            model: agent.config.model,
-            temperature: agent.config.temperature,
-            maxTokens: agent.config.maxTokens,
-            systemMessage: agent.config.systemMessage
-        });
+async function generateComponent(data) {
+    const adapter = aiService.getAdapter(config.provider, config);
+    const prompt = instructions(data);
+    console.log('Full prompt==============>'+prompt);
+    const generatedCode = await adapter.generateCode({
+        prompt,
+        model: config.model,
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        systemMessage: config.systemMessage,
+    });
 
-        // Basic cleanup (remove markdown code blocks)
-        const cleanedCode = generatedCode
-            .replace(/```(jsx|javascript)?/g, '')
-            .replace(/```/g, '')
-            .trim();
+    // Basic cleanup (remove markdown code blocks)
+    const cleanedCode = generatedCode
+        .replace(/```(jsx|javascript)?/g, '')
+        .replace(/```/g, '')
+        .trim();
 
-        return cleanedCode;
-    }
+    return cleanedCode;
 }
+
+const ReactComponentCreator = {
+    generateComponent,
+};
 
 export default ReactComponentCreator;
