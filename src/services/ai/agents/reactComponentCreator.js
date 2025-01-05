@@ -119,7 +119,7 @@ const config = {
 async function generateComponent(data) {
     const adapter = aiService.getAdapter(config.provider, config);
     const prompt = instructions(data);
-    console.log('Full prompt==============>'+prompt);
+    
     const generatedCode = await adapter.generateCode({
         prompt,
         model: config.model,
