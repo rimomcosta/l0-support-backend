@@ -5,6 +5,10 @@ import { FirefallAdapter } from '../../adapters/firefallAdapter.js';
 import { GoogleAdapter } from '../../adapters/googleAdapter.js';
 import { logger } from '../logger.js';
 
+/**
+ * AiService is responsible for returning the correct adapter based on
+ * the "provider" type and calling the appropriate generate/generateStream methods.
+ */
 class AiService {
   constructor() {
     this.adapters = {
@@ -23,7 +27,7 @@ class AiService {
     return new AdapterClass(config);
   }
 
-  // This method can be used by agents or other services if needed
+  // Example method if you do a non-streaming call:
   async generate(adapter, prompt, model, temperature, maxTokens) {
     try {
       const response = await adapter.generate({
@@ -36,7 +40,7 @@ class AiService {
     } catch (error) {
       logger.error('AI generation failed:', {
         error: error.message,
-        provider: adapter.provider, // Log the provider name
+        provider: adapter.provider,
       });
       throw error;
     }

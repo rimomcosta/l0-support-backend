@@ -3,184 +3,214 @@ import { WebSocketServer } from 'ws';
 import { logger } from './logger.js';
 import url from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import chatAgent from './ai/agents/chat.js'; // We'll import our chat agent
+import chatAgent from './ai/agents/chat.js';
 
 export class WebSocketService {
-  static initialize(server) {
-    const wss = new WebSocketServer({ noServer: true, path: '/ws' });
+    static initialize(server) {
+        const wss = new WebSocketServer({ noServer: true, path: '/ws' });
 
-    // Store connections by tabId
-    const connectionsByTabId = new Map();
+        // Store connections by tabId
+        const connectionsByTabId = new Map();
 
-    wss.on('connection', (ws, req) => {
-      const queryObject = url.parse(req.url, true).query;
-      const clientId = queryObject.clientId || null;
-      const tabId = queryObject.tabId; // Get tabId from query parameters
+        // Store controllers by chatId, so we can handle "stop_stream" repeatedly
+        const abortControllers = new Map();
 
-      ws.clientId = clientId;
-      ws.tabId = tabId;
+        wss.on('connection', (ws, req) => {
+            const queryObject = url.parse(req.url, true).query;
+            const clientId = queryObject.clientId || null;
+            const tabId = queryObject.tabId || 'default-tab'; 
 
-      // Store the connection
-      if (!connectionsByTabId.has(tabId)) {
-        connectionsByTabId.set(tabId, []);
-      }
-      connectionsByTabId.get(tabId).push(ws);
+            ws.clientId = clientId;
+            ws.tabId = tabId;
 
-      logger.info('WebSocket connection established', {
-        sessionId: ws.sessionID,
-        userId: ws.userID,
-        clientId: ws.clientId,
-        tabId: ws.tabId
-      });
+            // Keep track of the connection
+            if (!connectionsByTabId.has(tabId)) {
+                connectionsByTabId.set(tabId, []);
+            }
+            connectionsByTabId.get(tabId).push(ws);
 
-      ws.on('error', (error) => {
-        logger.error('WebSocket error:', {
-          error: error.message,
-          sessionId: ws.sessionID,
-          userId: ws.userID,
-          clientId: ws.clientId,
-          tabId: ws.tabId
+            logger.info('WebSocket connection established', {
+                sessionId: ws.sessionID,
+                userId: ws.userID,
+                clientId: ws.clientId,
+                tabId: ws.tabId
+            });
+
+            ws.on('error', (error) => {
+                logger.error('WebSocket error:', {
+                    error: error.message,
+                    sessionId: ws.sessionID,
+                    userId: ws.userID,
+                    clientId: ws.clientId,
+                    tabId: ws.tabId
+                });
+            });
+
+            ws.on('close', () => {
+                logger.info('WebSocket connection closed', {
+                    sessionId: ws.sessionID,
+                    userId: ws.userID,
+                    clientId: ws.clientId,
+                    tabId: ws.tabId
+                });
+
+                // Remove ws from that tab
+                const connections = connectionsByTabId.get(tabId);
+                if (connections) {
+                    const index = connections.indexOf(ws);
+                    if (index > -1) {
+                        connections.splice(index, 1);
+                    }
+                    if (connections.length === 0) {
+                        connectionsByTabId.delete(tabId);
+                    }
+                }
+
+                // Optionally, abort all ongoing streams for this tab
+                for (const [cid, entry] of abortControllers.entries()) {
+                    if (entry.tabId === tabId) {
+                        entry.controller.abort();
+                        abortControllers.delete(cid);
+                        logger.info(`Aborted stream for chatId=${cid} due to tab closure.`);
+                    }
+                }
+            });
+
+            // **** CORE WEBSOCKET MESSAGE HANDLER ****
+            ws.on('message', async (message) => {
+                console.log('Message received from frontend:', message.toString());
+
+                try {
+                    const parsedMessage = JSON.parse(message);
+                    console.log('Parsed message:', parsedMessage);
+
+                    switch (parsedMessage.type) {
+                        case 'new_chat': {
+                            // Create a new session row in DB
+                            const userId = ws.userID || null;
+                            const chatId = await chatAgent.createNewChatSession(userId);
+
+                            console.log('Created new chatId:', chatId, 'for tab:', parsedMessage.tabId);
+
+                            // Create an AbortController for this chat
+                            const abortController = new AbortController();
+                            abortControllers.set(chatId, {
+                                controller: abortController,
+                                tabId: parsedMessage.tabId
+                            });
+
+                            // Notify the client
+                            ws.send(JSON.stringify({
+                                type: 'new_chat',
+                                chatId,
+                                tabId: parsedMessage.tabId
+                            }));
+                            break;
+                        }
+
+                        case 'chat_message': {
+                            console.log('Received chat_message for chatId:', parsedMessage.chatId);
+                            console.log('User content:', parsedMessage.content);
+
+                            // If we do not have a controller for that chat, create it
+                            // (So we can keep sending messages with the same chatId)
+                            let entry = abortControllers.get(parsedMessage.chatId);
+                            if (!entry) {
+                                console.warn(`No AbortController found for chatId: ${parsedMessage.chatId}. Creating a new one so user can continue...`);
+                                const newAbort = new AbortController();
+                                abortControllers.set(parsedMessage.chatId, {
+                                    controller: newAbort,
+                                    tabId: parsedMessage.tabId
+                                });
+                                entry = abortControllers.get(parsedMessage.chatId);
+                            }
+
+                            // Now pass the entry's abortSignal to the chatAgent
+                            chatAgent.handleUserMessage({
+                                chatId: parsedMessage.chatId,
+                                content: parsedMessage.content,
+                                temperature: parsedMessage.temperature,
+                                maxTokens: parsedMessage.maxTokens,
+                                tabId: parsedMessage.tabId,
+                                abortSignal: entry.controller.signal
+                            }).catch(err => {
+                                console.error('Error in handleUserMessage:', err);
+                                ws.send(JSON.stringify({
+                                    type: 'error',
+                                    message: 'An error occurred while processing your message.',
+                                    chatId: parsedMessage.chatId
+                                }));
+                            });
+
+                            // We do NOT remove the entry from the map, so the same chatId can continue
+                            break;
+                        }
+
+                        case 'stop_stream': {
+                            const { chatId } = parsedMessage;
+                            console.log('Stop stream requested for chatId:', chatId);
+
+                            const entry = abortControllers.get(chatId);
+                            if (entry) {
+                                entry.controller.abort();
+                                console.log('AbortController aborted for chatId:', chatId);
+
+                                // Keep it in the map if we want to allow further messages
+                                // If you prefer to "clear" it so further messages fail, you can remove it:
+                                // abortControllers.delete(chatId);
+
+                                // Notify the client
+                                ws.send(JSON.stringify({
+                                    type: 'stream_stopped',
+                                    chatId
+                                }));
+                            } else {
+                                console.warn(`No AbortController found for chatId: ${chatId}`);
+                                ws.send(JSON.stringify({
+                                    type: 'error',
+                                    message: 'No active chat session found to stop.',
+                                    chatId
+                                }));
+                            }
+                            break;
+                        }
+
+                        default:
+                            console.warn('Unknown message type:', parsedMessage.type);
+                    }
+                } catch (err) {
+                    console.error('Failed to process WebSocket message:', err);
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Invalid message format.',
+                        chatId: null
+                    }));
+                }
+            });
         });
-      });
 
-      ws.on('close', () => {
-        logger.info('WebSocket connection closed', {
-          sessionId: ws.sessionID,
-          userId: ws.userID,
-          clientId: ws.clientId,
-          tabId: ws.tabId
-        });
+        // Attach references if needed
+        wss.connectionsByTabId = connectionsByTabId;
+        global.wss = wss;
 
-        // Remove the connection
-        const connections = connectionsByTabId.get(tabId);
+        return wss;
+    }
+
+    static broadcastToTab(message, tabId) {
+        if (!global.wss) {
+            throw new Error('WebSocket server not initialized');
+        }
+        const connections = global.wss.connectionsByTabId.get(tabId);
         if (connections) {
-          const index = connections.indexOf(ws);
-          if (index > -1) {
-            connections.splice(index, 1);
-          }
-          if (connections.length === 0) {
-            connectionsByTabId.delete(tabId);
-          }
+            connections.forEach(client => {
+                if (client.readyState === client.OPEN) {
+                    client.send(JSON.stringify({
+                        ...message,
+                        tabId,
+                        timestamp: new Date().toISOString()
+                    }));
+                }
+            });
         }
-      });
-
-      // **** CORE WEBSOCKET MESSAGE HANDLER ****
-      ws.on('message', async (message) => {
-        console.log('Message received from frontend:', message);
-
-        try {
-          const parsedMessage = JSON.parse(message);
-          console.log('Parsed message:', parsedMessage);
-          switch (parsedMessage.type) {
-            case 'new_chat': {
-              // Generate or retrieve a new chatId
-              const chatId = uuidv4();
-
-              console.log('Created new chatId:', chatId, 'for tab:', parsedMessage.tabId);
-
-              // Send it back to the client
-              ws.send(JSON.stringify({
-                type: 'new_chat',
-                chatId,
-                tabId: parsedMessage.tabId
-              }));
-              break;
-            }
-
-            case 'chat_message': {
-              // The user has typed a message. We have tabId, chatId, content, etc.
-              console.log('Received chat_message for chatId:', parsedMessage.chatId);
-              console.log('User content:', parsedMessage.content);
-
-              // Example:
-              // Use your chat agent to process or stream AI content
-              const response = await chatAgent.handleUserMessage({
-                chatId: parsedMessage.chatId,
-                content: parsedMessage.content,
-                temperature: parsedMessage.temperature,
-                maxTokens: parsedMessage.maxTokens,
-                tabId: parsedMessage.tabId
-              });
-
-              // For a simple "instant" response (non-streaming):
-              // broadcast the final result
-              WebSocketService.broadcastToTab({
-                type: 'chunk',
-                chatId: parsedMessage.chatId,
-                content: response
-              }, parsedMessage.tabId);
-
-              // Then broadcast "end"
-              WebSocketService.broadcastToTab({
-                type: 'end',
-                chatId: parsedMessage.chatId
-              }, parsedMessage.tabId);
-
-              break;
-            }
-
-            default:
-              console.warn('Unknown message type:', parsedMessage.type);
-          }
-        } catch (err) {
-          console.error('Failed to process WebSocket message:', err);
-        }
-      });
-    });
-
-    // Attach the connections map to our WebSocket server instance
-    wss.connectionsByTabId = connectionsByTabId;
-
-    return wss;
-  }
-
-  static broadcastToUser(message, userId) {
-    if (!global.wss) {
-      throw new Error('WebSocket server not initialized');
     }
-    global.wss.clients.forEach(client => {
-      if (client.readyState === client.OPEN && client.userID === userId) {
-        client.send(JSON.stringify({
-          ...message,
-          timestamp: new Date().toISOString(),
-          userId: userId
-        }));
-      }
-    });
-  }
-
-  static broadcastToSession(message, sessionId) {
-    if (!global.wss) {
-      throw new Error('WebSocket server not initialized');
-    }
-    global.wss.clients.forEach(client => {
-      if (client.readyState === client.OPEN && client.sessionID === sessionId) {
-        client.send(JSON.stringify({
-          ...message,
-          timestamp: new Date().toISOString(),
-          sessionId: sessionId
-        }));
-      }
-    });
-  }
-
-  static broadcastToTab(message, tabId) {
-    if (!global.wss) {
-      throw new Error('WebSocket server not initialized');
-    }
-
-    const connections = global.wss.connectionsByTabId.get(tabId);
-    if (connections) {
-      connections.forEach(client => {
-        if (client.readyState === client.OPEN) {
-          // Add tabId to the message
-          client.send(JSON.stringify({
-            ...message,
-            tabId: tabId,
-            timestamp: new Date().toISOString()
-          }));
-        }
-      });
-    }
-  }
 }

@@ -32,6 +32,27 @@ const tables = {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_user_id (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `,
+    chat_sessions: `
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            chat_id VARCHAR(255) NOT NULL,
+            user_id VARCHAR(255) DEFAULT NULL, 
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY (chat_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `,
+    chat_messages: `
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            chat_id VARCHAR(255) NOT NULL,
+            role ENUM('user','assistant','system') NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_chat_id (chat_id),
+            CONSTRAINT fk_chat_id FOREIGN KEY (chat_id) REFERENCES chat_sessions(chat_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `
 };
 

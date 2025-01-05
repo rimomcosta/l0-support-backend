@@ -12,6 +12,7 @@ import * as commands from '../api/app/commands.js';
 import * as bashCommands from '../api/app/bashCommands.js';
 import { openTunnel } from '../api/app/tunnel.js';
 import * as ai from '../api/app/ai.js';
+import { getChatMessages } from '../api/app/chatApi.js';
 
 const router = express.Router();
 
@@ -34,5 +35,6 @@ router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
 router.post('/command/refresh-service', conditionalAuth, commands.refreshService);
 router.post('/ai/generate-component-code', conditionalAuth, ai.generateComponentCode);
+router.get('/ai/chat/:chatId', conditionalAuth, getChatMessages);
 
 export default router;
