@@ -2,13 +2,17 @@ import { logger } from '../services/logger.js';
 import fetch from 'node-fetch';
 
 export class FirefallAdapter {
-    constructor() {
-        this.baseUrl = process.env.FIREFALL_URL || 'https://firefall-stage.adobe.io';
-        this.imsEndpoint = process.env.FIREFALL_IMS_ENDPOINT || 'https://ims-na1-stg1.adobelogin.com/ims/token/v4';
-        this.clientId = process.env.FIREFALL_CLIENT_ID;
-        this.clientSecret = process.env.FIREFALL_CLIENT_SECRET;
-        this.imsOrgId = process.env.FIREFALL_IMS_ORG_ID;
-        this.authCode = process.env.FIREFALL_AUTH_CODE;
+    constructor(config = {}) {
+        this.provider = 'firefall';
+        this.baseUrl = config.baseUrl || process.env.FIREFALL_URL || 'https://firefall-stage.adobe.io';
+        this.imsEndpoint = config.imsEndpoint || process.env.FIREFALL_IMS_ENDPOINT || 'https://ims-na1-stg1.adobelogin.com/ims/token/v4';
+        this.clientId = config.clientId || process.env.FIREFALL_CLIENT_ID;
+        this.clientSecret = config.clientSecret || process.env.FIREFALL_CLIENT_SECRET;
+        this.imsOrgId = config.imsOrgId || process.env.FIREFALL_IMS_ORG_ID;
+        this.authCode = config.authCode || process.env.FIREFALL_AUTH_CODE;
+        this.model = config.model || "gpt-4o";
+        this.temperature = config.temperature || 0.5;
+        this.maxTokens = config.maxTokens || 3000;
 
         if (!this.clientId || !this.clientSecret || !this.imsOrgId || !this.authCode) {
             logger.error('FirefallAdapter: Missing required configuration');
@@ -64,25 +68,24 @@ export class FirefallAdapter {
         }
     }
 
-    async generateCode(prompt) {
+    async generateCode(data) {
         try {
             await this.initialize();
-
             const requestBody = {
                 messages: [
                     {
                         role: "system",
-                        content: "You are a helpful assistant that generates code.",
+                        content: data.systemMessage || "You are a helpful assistant that generates code.",
                     },
                     {
                         role: "user",
-                        content: prompt,
+                        content: data.prompt,
                     },
                 ],
                 llm_metadata: {
-                    model_name: "gpt-4o",
-                    temperature: 0.5,
-                    max_tokens: 3000,
+                    model_name: data.model || this.model,
+                    temperature: data.temperature || this.temperature,
+                    max_tokens: data.maxTokens || this.maxTokens,
                     llm_type: "azure_chat_openai"
                 },
             };
@@ -103,16 +106,14 @@ export class FirefallAdapter {
                 if (response.status === 401) {
                     logger.info('FirefallAdapter: Unauthorized, attempting token refresh');
                     await this.getAccessToken();
-                    return this.generateCode(prompt);
+                    return this.generateCode(data); // Retry with new token
                 }
                 throw new Error(`Firefall API error: ${response.status} ${response.statusText}, Error: ${errorText}`);
             }
 
             const responseData = await response.json();
 
-            logger.debug('FirefallAdapter: Response data', { responseData });
-
-            // Return the raw response content
+            // Return the generated code
             if (responseData.choices && responseData.choices[0] && responseData.choices[0].message && responseData.choices[0].message.content) {
                 const generatedCode = responseData.choices[0].message.content;
                 logger.info('FirefallAdapter: Successfully generated code', { codeLength: generatedCode.length });

@@ -1,62 +1,24 @@
-// src/services/aiService.js
+import { aiService } from '../aiService.js';
 
-import { OpenAIAdapter } from '../adapters/openAiAdapter.js';
-import { AnthropicAdapter } from '../adapters/anthropicAdapter.js';
-import { logger } from './logger.js';
-import { FirefallAdapter } from '../adapters/firefallAdapter.js';
+class ReactComponentCreator {
+    constructor(config) {
+        this.config = {
+            provider: 'firefall', // Default provider
+            model: 'gpt-4o', // Default model
+            temperature: 0.7,
+            maxTokens: 3000,
+            stream: false,
+            systemMessage: 'You are a helpful assistant that generates React code.'
+        };
 
-class AiService {
-  constructor(provider = 'firefall') {
-    this.provider = provider;
-    this.adapter = this.createAdapter(provider);
-  }
-
-  createAdapter(provider) {
-    switch (provider) {
-      case 'openai':
-        return new OpenAIAdapter();
-      case 'anthropic':
-        return new AnthropicAdapter();
-      case 'firefall':
-        return new FirefallAdapter();
-      default:
-        throw new Error(`Unsupported AI provider: ${provider}`);
-    }
-  }
-
-  async generateComponentCode(command, description, outputExample, aiGuidance = '') {
-    try {
-      const prompt = this.createPrompt(command, description, outputExample, aiGuidance);
-      const generatedCode = await this.adapter.generateCode(prompt);
-
-      // Clean up the response if needed based on the provider
-      const cleanedCode = this.cleanGeneratedCode(generatedCode);
-      return cleanedCode;
-    } catch (error) {
-      logger.error('Failed to generate component code:', {
-        error: error.message,
-        provider: this.provider
-      });
-      throw error;
-    }
-  }
-
-  cleanGeneratedCode(code) {
-    // Remove any markdown code blocks or unnecessary formatting
-    return code
-      .replace(/```(jsx|javascript)?\n?/g, '')
-      .replace(/```$/g, '')
-      .trim();
-  }
-
-  createPrompt(command, description, outputExample, aiGuidance = '') {
-    return `
+        this.adapter = aiService.getAdapter(this.config.provider, this.config);
+        this.instructionsTemplate = `
 You are a React code generation assistant. Generate a React component for a dashboard based on the following information:
 
-Command: ${command}
-Description: ${description}
-Output Example: ${outputExample}
-Type of Component: ${aiGuidance}
+Command: {command}
+Description: {description}
+Output Example: {outputExample}
+Type of Component: {aiGuidance}
 
 The component should be able to display the data in a dashboard in the most explanatory and graphic way, but it should look clean, futuristic, very appealing visually, and with elements that make sense. Avoid using cards unless it is the best option for the data representation. Feel free to use colors to represent intensity or importance of the data, bars, charts, etc.
 
@@ -154,19 +116,37 @@ const ExampleComponent = ({ data }) => {
 };
 \`\`\`
 
-Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Don't forget: Type of Component: ${aiGuidance} for the output ${outputExample}, find a way to parse it, and comply with ALL requirements above without loosing the context - Don not let any element from within a component to overflow its container!.
-    `;
-  }
+Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Don't forget: Type of Component: {aiGuidance} for the output {outputExample}, find a way to parse it, and comply with ALL requirements above without loosing the context - Don not let any element from within a component to overflow its container!.
+`;
+    }
+
+    createPrompt(data) {
+        return this.instructionsTemplate
+            .replace('{command}', data.command)
+            .replace('{description}', data.description)
+            .replace('{outputExample}', data.outputExample)
+            .replace('{aiGuidance}', data.aiGuidance || '');
+    }
+
+    static async generateComponent(data) {
+        const agent = new ReactComponentCreator({});
+        const prompt = agent.createPrompt(data);
+        const generatedCode = await agent.adapter.generateCode({
+            prompt,
+            model: agent.config.model,
+            temperature: agent.config.temperature,
+            maxTokens: agent.config.maxTokens,
+            systemMessage: agent.config.systemMessage
+        });
+
+        // Basic cleanup (remove markdown code blocks)
+        const cleanedCode = generatedCode
+            .replace(/```(jsx|javascript)?/g, '')
+            .replace(/```/g, '')
+            .trim();
+
+        return cleanedCode;
+    }
 }
 
-export const aiService = new AiService();
-
-
-
-
-
-
-
-
-
-
+export default ReactComponentCreator;

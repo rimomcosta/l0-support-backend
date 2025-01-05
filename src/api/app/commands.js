@@ -9,7 +9,7 @@ import * as sqlCommands from './sqlCommands.js';
 import * as redisCommands from './redisCommands.js';
 import * as openSearchCommands from './openSearchCommands.js';
 import * as magentoCloudDirectAccess from './magentoCloudDirectAccess.js';
-import { aiService } from '../../services/aiService.js';
+import ReactComponentCreator from '../../services/ai/agents/reactComponentCreator.js';
 import * as bashCommands from './bashCommands.js';
 import * as rabbitmqCommands from './rabbitmqCommands.js';
 import { json } from 'express';
@@ -25,7 +25,7 @@ export async function generateComponentCode(req, res) {
     }
 
     try {
-        const generatedCode = await aiService.generateComponentCode(command, description, outputExample, aiGuidance);
+        const generatedCode = await ReactComponentCreator.generateComponent(command, description, outputExample, aiGuidance);
         res.json({ generatedCode });
     } catch (error) {
         logger.error('AI code generation failed:', error);
@@ -332,7 +332,7 @@ export async function refreshService(req, res) {
     try {
         // Get all commands for this service type
         const allCommands = await commandService.getAll();
-        const serviceCommands = allCommands.filter(cmd => 
+        const serviceCommands = allCommands.filter(cmd =>
             cmd.service_type === serviceType && cmd.auto_run && cmd.reviewed
         );
 
