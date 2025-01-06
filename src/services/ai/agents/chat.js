@@ -13,21 +13,50 @@ const defaultConfig = {
   systemMessage: 'You are a helpful assistant.',
 };
 
+const formatDashboardData = (serviceResults) => {
+    let contextData = 'Current System Status:\n\n';
+    
+    for (const [service, data] of Object.entries(serviceResults)) {
+      if (data?.results) {
+        contextData += `${service.toUpperCase()} Service:\n`;
+        data.results.forEach(result => {
+          contextData += `- Command: ${result.command}\n`;
+          if (Array.isArray(result.results)) {
+            result.results.forEach(r => {
+              contextData += `  Output: ${JSON.stringify(r)}\n`;
+            });
+          } else {
+            contextData += `  Output: ${JSON.stringify(result.results)}\n`;
+          }
+        });
+        contextData += '\n';
+      }
+    }
+    
+    return contextData;
+  };
+
 const chatAgent = {
   async createNewChatSession(userId) {
     const chatId = await ChatDao.createChatSession(userId);
     return chatId;
   },
 
-  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal }) {
+  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData }) {
     try {
       // 1) Save the user message
       await ChatDao.saveMessage(chatId, 'user', content);
 
       // 2) Gather conversation
       const conversation = await ChatDao.getMessagesByChatId(chatId);
+
+      const systemMessage = `You are a helpful assistant specialized in Adobe Commerce Cloud infrastructure.
+        You have access to real-time data from the server which you should use to provide accurate answers.
+        
+        ${formatDashboardData(dashboardData)}`;
+
       const messagesForOpenAI = [
-        { role: 'system', content: defaultConfig.systemMessage },
+        { role: 'system', content: systemMessage },
         ...conversation.map(msg => ({
           role: msg.role,
           content: msg.content

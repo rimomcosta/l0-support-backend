@@ -18,7 +18,7 @@ export class WebSocketService {
         wss.on('connection', (ws, req) => {
             const queryObject = url.parse(req.url, true).query;
             const clientId = queryObject.clientId || null;
-            const tabId = queryObject.tabId || 'default-tab'; 
+            const tabId = queryObject.tabId || 'default-tab';
 
             ws.clientId = clientId;
             ws.tabId = tabId;
@@ -113,7 +113,6 @@ export class WebSocketService {
                             console.log('User content:', parsedMessage.content);
 
                             // If we do not have a controller for that chat, create it
-                            // (So we can keep sending messages with the same chatId)
                             let entry = abortControllers.get(parsedMessage.chatId);
                             if (!entry) {
                                 console.warn(`No AbortController found for chatId: ${parsedMessage.chatId}. Creating a new one so user can continue...`);
@@ -132,7 +131,8 @@ export class WebSocketService {
                                 temperature: parsedMessage.temperature,
                                 maxTokens: parsedMessage.maxTokens,
                                 tabId: parsedMessage.tabId,
-                                abortSignal: entry.controller.signal
+                                abortSignal: entry.controller.signal,
+                                dashboardData: parsedMessage.dashboardData // Pass the dashboard data
                             }).catch(err => {
                                 console.error('Error in handleUserMessage:', err);
                                 ws.send(JSON.stringify({
@@ -141,8 +141,6 @@ export class WebSocketService {
                                     chatId: parsedMessage.chatId
                                 }));
                             });
-
-                            // We do NOT remove the entry from the map, so the same chatId can continue
                             break;
                         }
 
@@ -155,8 +153,7 @@ export class WebSocketService {
                                 entry.controller.abort();
                                 console.log('AbortController aborted for chatId:', chatId);
 
-                                // Keep it in the map if we want to allow further messages
-                                // If you prefer to "clear" it so further messages fail, you can remove it:
+                                // Optionally remove it here if you prefer to disallow further messages:
                                 // abortControllers.delete(chatId);
 
                                 // Notify the client

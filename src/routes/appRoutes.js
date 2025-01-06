@@ -35,6 +35,6 @@ router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
 router.post('/command/refresh-service', conditionalAuth, commands.refreshService);
 router.post('/ai/generate-component-code', conditionalAuth, ai.generateComponentCode);
-router.get('/ai/chat/:chatId', conditionalAuth, getChatMessages);
+router.get('/ai/chat/:chatId', conditionalAuth, getChatMessages); //Use in IntelligencePage.js
 
 export default router;
