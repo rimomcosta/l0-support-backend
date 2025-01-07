@@ -3,42 +3,43 @@ import { aiService } from '../aiService.js';
 import { WebSocketService } from '../../webSocketService.js';
 import { logger } from '../../logger.js';
 import { ChatDao } from '../../dao/chatDao.js';
+import fs from 'fs/promises';
 
 const defaultConfig = {
   provider: 'firefall',
-//   model: 'claude-3-5-sonnet-20241022',
-  temperature: 0.1,
-  maxTokens: 3000,
+  model: 'gpt-4o',
+  temperature: 0.4,
+  maxTokens: 30000,
   stream: true,
   systemMessage: 'You are a helpful assistant specialized in Adobe Commerce Cloud infrastructure. You have access to real-time data from the server which you should use to provide accurate answers.'
 };
 
 // Format server data into readable format
 const formatServerData = (dashboardData) => {
-    if (!dashboardData || typeof dashboardData !== 'object') {
-      return '';
-    }
-    
-    let formattedData = '\n\nServer Data:\n';
-    
-    Object.entries(dashboardData).forEach(([serviceName, commands]) => {
-      formattedData += `\n${serviceName.toUpperCase()} Service:\n`;
-      
-      Object.entries(commands).forEach(([commandTitle, commandData]) => {
-        formattedData += `  ${commandTitle}:\n`;
-        formattedData += `    Description: ${commandData.description}\n`;
-        formattedData += `    Outputs:\n`;
-        
-        Object.entries(commandData.outputs).forEach(([nodeId, output]) => {
-          formattedData += `      ${nodeId}:\n        ${output.replace(/\n/g, '\n        ')}\n`;
-        });
-        
-        formattedData += '\n';
+  if (!dashboardData || typeof dashboardData !== 'object') {
+    return '';
+  }
+
+  let formattedData = '\n\nServer Data:\n';
+
+  Object.entries(dashboardData).forEach(([serviceName, commands]) => {
+    formattedData += `\n${serviceName.toUpperCase()} Service:\n`;
+
+    Object.entries(commands).forEach(([commandTitle, commandData]) => {
+      formattedData += `  ${commandTitle}:\n`;
+      formattedData += `    Description: ${commandData.description}\n`;
+      formattedData += `    Outputs:\n`;
+
+      Object.entries(commandData.outputs).forEach(([nodeId, output]) => {
+        formattedData += `      ${nodeId}:\n        ${output.replace(/\n/g, '\n        ')}\n`;
       });
+
+      formattedData += '\n';
     });
-    
-    return formattedData;
-  };
+  });
+
+  return formattedData;
+};
 
 const chatAgent = {
   async createNewChatSession(userId) {
@@ -55,7 +56,8 @@ const chatAgent = {
       const conversation = await ChatDao.getMessagesByChatId(chatId);
 
       // 3) Create system message with server data
-      const systemMessageWithData = defaultConfig.systemMessage + formatServerData(dashboardData);
+      const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
+      const systemMessageWithData = instructions + defaultConfig.systemMessage + formatServerData(dashboardData) + "Only tell me what is needed, ignore what is already done";
 
       // 4) Format messages for the AI
       const messages = [
@@ -86,17 +88,17 @@ const chatAgent = {
 
       // 7) Handle streaming response
       let fullAssistantReply = '';
-      
+
       for await (const token of stream) {
         if (abortSignal?.aborted) {
           logger.info(`Streaming aborted for chatId=${chatId}`);
           break;
         }
-        
+
         if (!token) continue;
-        
+
         fullAssistantReply += token;
-        
+
         // Send chunk to frontend
         WebSocketService.broadcastToTab({
           type: 'chunk',
