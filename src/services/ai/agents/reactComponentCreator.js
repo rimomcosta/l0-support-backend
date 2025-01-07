@@ -128,7 +128,7 @@ async function generateComponent(data) {
         maxTokens: config.maxTokens,
         systemMessage: config.systemMessage,
     });
-console.log('generatedCode:', generatedCode);
+    
     // Basic cleanup (remove markdown code blocks)
     const cleanedCode = generatedCode
         .replace(/```(jsx|javascript)?/g, '')

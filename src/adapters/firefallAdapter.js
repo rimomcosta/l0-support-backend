@@ -139,7 +139,6 @@ export class FirefallAdapter {
     }
 
     async generateStream({ model, messages, systemMessage, temperature, maxTokens }) {
-console.log('generateStream======>'+systemMessage);
         try {
             await this.initialize();
 
