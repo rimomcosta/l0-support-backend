@@ -5,36 +5,34 @@ import { logger } from '../../logger.js';
 import { ChatDao } from '../../dao/chatDao.js';
 
 const defaultConfig = {
-  provider: 'openai',
-  model: 'gpt-4o-mini',
+  provider: 'firefall',
+//   model: 'claude-3-5-sonnet-20241022',
   temperature: 0.1,
   maxTokens: 3000,
   stream: true,
-  systemMessage: 'You are a helpful assistant.',
+  systemMessage: 'You are a helpful assistant specialized in Adobe Commerce Cloud infrastructure. You have access to real-time data from the server which you should use to provide accurate answers.'
 };
 
-const formatDashboardData = (serviceResults) => {
-    let contextData = 'Current System Status:\n\n';
-    
-    for (const [service, data] of Object.entries(serviceResults)) {
-      if (data?.results) {
-        contextData += `${service.toUpperCase()} Service:\n`;
-        data.results.forEach(result => {
-          contextData += `- Command: ${result.command}\n`;
-          if (Array.isArray(result.results)) {
-            result.results.forEach(r => {
-              contextData += `  Output: ${JSON.stringify(r)}\n`;
-            });
-          } else {
-            contextData += `  Output: ${JSON.stringify(result.results)}\n`;
-          }
-        });
-        contextData += '\n';
-      }
+// Format server data into readable format
+const formatServerData = (dashboardData) => {
+  if (!dashboardData) return '';
+  
+  let formattedData = '\n\nServer Data:\n';
+  for (const [service, data] of Object.entries(dashboardData)) {
+    if (data?.results) {
+      formattedData += `\n${service.toUpperCase()}:\n`;
+      data.results.forEach(result => {
+        formattedData += `Command: ${result.command}\n`;
+        if (Array.isArray(result.results)) {
+          result.results.forEach(r => formattedData += `Output: ${JSON.stringify(r)}\n`);
+        } else {
+          formattedData += `Output: ${JSON.stringify(result.results)}\n`;
+        }
+      });
     }
-    
-    return contextData;
-  };
+  }
+  return formattedData;
+};
 
 const chatAgent = {
   async createNewChatSession(userId) {
@@ -44,53 +42,56 @@ const chatAgent = {
 
   async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData }) {
     try {
-      // 1) Save the user message
+      // 1) Save user message
       await ChatDao.saveMessage(chatId, 'user', content);
 
-      // 2) Gather conversation
+      // 2) Get conversation history
       const conversation = await ChatDao.getMessagesByChatId(chatId);
 
-      const systemMessage = `You are a helpful assistant specialized in Adobe Commerce Cloud infrastructure.
-        You have access to real-time data from the server which you should use to provide accurate answers.
-        
-        ${formatDashboardData(dashboardData)}`;
+      // 3) Create system message with server data
+      const systemMessageWithData = defaultConfig.systemMessage + formatServerData(dashboardData);
 
-      const messagesForOpenAI = [
-        { role: 'system', content: systemMessage },
+      // 4) Format messages for the AI
+      const messages = [
         ...conversation.map(msg => ({
           role: msg.role,
           content: msg.content
-        })),
+        }))
       ];
 
-      // 3) Get adapter
+      // 5) Get adapter with config
       const adapter = aiService.getAdapter(defaultConfig.provider, {
         ...defaultConfig,
         temperature: temperature ?? defaultConfig.temperature,
         maxTokens: maxTokens ?? defaultConfig.maxTokens,
         stream: true,
+        systemMessage: systemMessageWithData // Pass complete system message with data
       });
 
-      // 4) Stream
+      // 6) Generate stream
       const { stream } = await adapter.generateStream({
         model: defaultConfig.model,
         temperature: temperature ?? defaultConfig.temperature,
         maxTokens: maxTokens ?? defaultConfig.maxTokens,
-        systemMessage: defaultConfig.systemMessage,
-        messages: messagesForOpenAI,
-        signal: abortSignal,
+        systemMessage: systemMessageWithData,
+        messages: messages,
+        signal: abortSignal
       });
 
+      // 7) Handle streaming response
       let fullAssistantReply = '';
-
+      
       for await (const token of stream) {
-        if (abortSignal && abortSignal.aborted) {
+        if (abortSignal?.aborted) {
           logger.info(`Streaming aborted for chatId=${chatId}`);
           break;
         }
+        
         if (!token) continue;
+        
         fullAssistantReply += token;
-
+        
+        // Send chunk to frontend
         WebSocketService.broadcastToTab({
           type: 'chunk',
           chatId,
@@ -98,10 +99,9 @@ const chatAgent = {
         }, tabId);
       }
 
-      if (!abortSignal || !abortSignal.aborted) {
-        // Save the entire assistant reply
+      // 8) Handle completion
+      if (!abortSignal?.aborted) {
         await ChatDao.saveMessage(chatId, 'assistant', fullAssistantReply);
-
         WebSocketService.broadcastToTab({
           type: 'end',
           chatId

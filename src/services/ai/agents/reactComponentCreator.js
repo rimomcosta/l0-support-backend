@@ -109,8 +109,8 @@ Generate ONLY the component code without any markdown code block markers or extr
 `;
 
 const config = {
-    provider: 'firefall',
-    model: 'gpt-4o',
+    provider: 'anthropic',
+    model: 'claude-3-5-sonnet-20241022',
     temperature: 0.1,
     maxTokens: 3000,
     stream: false,
@@ -128,7 +128,7 @@ async function generateComponent(data) {
         maxTokens: config.maxTokens,
         systemMessage: config.systemMessage,
     });
-
+console.log('generatedCode:', generatedCode);
     // Basic cleanup (remove markdown code blocks)
     const cleanedCode = generatedCode
         .replace(/```(jsx|javascript)?/g, '')

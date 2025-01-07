@@ -4,7 +4,6 @@ import { logger } from '../services/logger.js';
 
 export class OpenAIAdapter {
   constructor(config = {}) {
-    // Create the client using either a config key or env var
     this.openai = new OpenAI({
       apiKey: config.apiKey || process.env.OPENAI_API_KEY,
     });
@@ -13,6 +12,7 @@ export class OpenAIAdapter {
     this.temperature = config.temperature ?? 0.9;
     this.maxTokens = config.maxTokens ?? 1000;
     this.stream = config.stream ?? false;
+    this.systemMessage = config.systemMessage;
   }
 
   async generateCode(data) {
@@ -22,7 +22,7 @@ export class OpenAIAdapter {
         messages: [
           {
             role: 'system',
-            content: data.systemMessage || 'You are a helpful assistant!',
+            content: data.systemMessage || this.systemMessage || 'You are a helpful assistant!',
           },
           {
             role: 'user',
@@ -31,7 +31,7 @@ export class OpenAIAdapter {
         ],
         max_tokens: data.maxTokens || this.maxTokens,
         temperature: data.temperature || this.temperature,
-        stream: false, // This is the final mode
+        stream: false,
       });
 
       return response.choices[0].message.content.trim();
@@ -43,18 +43,18 @@ export class OpenAIAdapter {
     }
   }
 
-
   async generateStream({ model, messages, systemMessage, temperature, maxTokens }) {
     try {
-
-      const finalMessages = messages || [
+      // Ensure system message is first in the messages array
+      const finalMessages = [
         {
           role: 'system',
-          content: systemMessage || 'You are a helpful assistant!',
+          content: systemMessage || this.systemMessage || 'You are a helpful assistant!',
         },
+        ...(messages || [])
       ];
 
-      const response = await this.openai.chat.completions.create({
+      const stream = await this.openai.chat.completions.create({
         model: model || this.model,
         messages: finalMessages,
         max_tokens: maxTokens ?? this.maxTokens,
@@ -62,8 +62,7 @@ export class OpenAIAdapter {
         stream: true,
       });
 
-      const streamIterator = this._readStreamingResponse(response);
-      return { stream: streamIterator };
+      return { stream: this._createStreamIterator(stream) };
     } catch (error) {
       logger.error('Error generating stream with OpenAI:', {
         error: error.message,
@@ -72,12 +71,19 @@ export class OpenAIAdapter {
     }
   }
 
-  async *_readStreamingResponse(response) {
-    for await (const part of response) {
-      const content = part.choices[0]?.delta?.content;
-      if (content) {
-        yield content;
+  async *_createStreamIterator(stream) {
+    try {
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) {
+          yield content;
+        }
       }
+    } catch (error) {
+      logger.error('Error in stream iterator:', {
+        error: error.message,
+      });
+      throw error;
     }
   }
 }
