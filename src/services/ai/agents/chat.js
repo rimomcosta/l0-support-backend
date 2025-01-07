@@ -24,12 +24,16 @@ const formatServerData = (dashboardData) => {
     Object.entries(dashboardData).forEach(([serviceName, commands]) => {
       formattedData += `\n${serviceName.toUpperCase()} Service:\n`;
       
-      Object.entries(commands).forEach(([commandTitle, nodeOutputs]) => {
+      Object.entries(commands).forEach(([commandTitle, commandData]) => {
         formattedData += `  ${commandTitle}:\n`;
+        formattedData += `    Description: ${commandData.description}\n`;
+        formattedData += `    Outputs:\n`;
         
-        Object.entries(nodeOutputs).forEach(([nodeId, output]) => {
-          formattedData += `    ${nodeId}:\n      ${output.replace(/\n/g, '\n      ')}\n`;
+        Object.entries(commandData.outputs).forEach(([nodeId, output]) => {
+          formattedData += `      ${nodeId}:\n        ${output.replace(/\n/g, '\n        ')}\n`;
         });
+        
+        formattedData += '\n';
       });
     });
     
