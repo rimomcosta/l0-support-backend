@@ -15,24 +15,26 @@ const defaultConfig = {
 
 // Format server data into readable format
 const formatServerData = (dashboardData) => {
-  if (!dashboardData) return '';
-  
-  let formattedData = '\n\nServer Data:\n';
-  for (const [service, data] of Object.entries(dashboardData)) {
-    if (data?.results) {
-      formattedData += `\n${service.toUpperCase()}:\n`;
-      data.results.forEach(result => {
-        formattedData += `Command: ${result.command}\n`;
-        if (Array.isArray(result.results)) {
-          result.results.forEach(r => formattedData += `Output: ${JSON.stringify(r)}\n`);
-        } else {
-          formattedData += `Output: ${JSON.stringify(result.results)}\n`;
-        }
-      });
+    if (!dashboardData || typeof dashboardData !== 'object') {
+      return '';
     }
-  }
-  return formattedData;
-};
+    
+    let formattedData = '\n\nServer Data:\n';
+    
+    Object.entries(dashboardData).forEach(([serviceName, commands]) => {
+      formattedData += `\n${serviceName.toUpperCase()} Service:\n`;
+      
+      Object.entries(commands).forEach(([commandTitle, nodeOutputs]) => {
+        formattedData += `  ${commandTitle}:\n`;
+        
+        Object.entries(nodeOutputs).forEach(([nodeId, output]) => {
+          formattedData += `    ${nodeId}:\n      ${output.replace(/\n/g, '\n      ')}\n`;
+        });
+      });
+    });
+    
+    return formattedData;
+  };
 
 const chatAgent = {
   async createNewChatSession(userId) {
