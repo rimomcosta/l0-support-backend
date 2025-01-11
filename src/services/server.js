@@ -64,12 +64,26 @@ initializeApp()
             process.exit(1);
         });
 
-        process.on('SIGTERM', () => {
+        process.on('SIGTERM', async () => {
             logger.info('SIGTERM received. Closing server...');
-            server.close(() => {
-                logger.info('Server closed');
-                process.exit(0);
-            });
+            try {
+                // Cleanup all Redis sessions
+                await cleanupAllSessions();
+                
+                // Close WebSocket connections
+                wss.clients.forEach(client => {
+                    client.terminate();
+                });
+        
+                // Close the server
+                server.close(() => {
+                    logger.info('Server closed');
+                    process.exit(0);
+                });
+            } catch (error) {
+                logger.error('Error during server shutdown:', error);
+                process.exit(1);
+            }
         });
 
         process.on('uncaughtException', (error) => {

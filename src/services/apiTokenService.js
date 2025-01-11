@@ -4,7 +4,7 @@ import { logger } from './logger.js';
 
 export class ApiTokenService {
     static async createUser(user) {
-        const query = 'INSERT INTO user (user_id, username, email, api_token) VALUES (?, ?, ?, ?)';
+        const query = 'INSERT INTO users (user_id, username, email, api_token) VALUES (?, ?, ?, ?)';
         try {
             const [result] = await pool.execute(query, [user.user_id, user.username, user.email, user.api_token]);
             logger.info('User created', { userId: user.user_id });
@@ -19,7 +19,7 @@ export class ApiTokenService {
     }
 
     static async getUserByEmail(email) {
-        const query = 'SELECT * FROM user WHERE email = ?';
+        const query = 'SELECT * FROM users WHERE email = ?';
         try {
             const [rows] = await pool.execute(query, [email]);
             if (rows.length > 0) {
@@ -36,7 +36,7 @@ export class ApiTokenService {
     }
 
     static async saveApiToken(userId, apiToken) {
-        const query = 'UPDATE user SET api_token = ? WHERE user_id = ?';
+        const query = 'UPDATE users SET api_token = ? WHERE user_id = ?';
         try {
             const [result] = await pool.execute(query, [apiToken, userId]);
             logger.info('API token saved', { userId });
@@ -51,7 +51,7 @@ export class ApiTokenService {
     }
 
     static async getApiToken(userId) {
-        const query = 'SELECT api_token FROM user WHERE user_id = ?';
+        const query = 'SELECT api_token FROM users WHERE user_id = ?';
         try {
             const [rows] = await pool.execute(query, [userId]);
             if (rows.length > 0) {
@@ -68,7 +68,7 @@ export class ApiTokenService {
     }
 
     static async deleteApiToken(userId) {
-        const query = 'UPDATE user SET api_token = NULL WHERE user_id = ?';
+        const query = 'UPDATE users SET api_token = NULL WHERE user_id = ?';
         try {
             const [result] = await pool.execute(query, [userId]);
             logger.info('API token deleted', { userId });

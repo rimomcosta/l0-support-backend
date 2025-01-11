@@ -29,3 +29,33 @@ export function createSessionStore() {
         disableTouch: false
     });
 }
+
+export async function cleanupSession(sessionId) {
+    try {
+        await redisClient.del(`sess:${sessionId}`);
+        await redisClient.del(`user_context:${sessionId}`);
+        logger.debug('Redis session cleanup successful', { sessionId });
+    } catch (error) {
+        logger.error('Redis session cleanup failed:', {
+            error: error.message,
+            sessionId
+        });
+        throw error;
+    }
+}
+
+export async function cleanupAllSessions() {
+    try {
+        const sessionKeys = await redisClient.keys('sess:*');
+        const contextKeys = await redisClient.keys('user_context:*');
+        const allKeys = [...sessionKeys, ...contextKeys];
+        
+        if (allKeys.length > 0) {
+            await redisClient.del(allKeys);
+        }
+        logger.info('All Redis sessions cleaned up successfully');
+    } catch (error) {
+        logger.error('Failed to cleanup all Redis sessions:', error);
+        throw error;
+    }
+}

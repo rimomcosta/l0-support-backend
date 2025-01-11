@@ -1,4 +1,4 @@
-//src/services/sessionService.js
+// src/services/sessionService.js
 import { redisClient } from './redisService.js';
 import { logger } from './logger.js';
 
@@ -34,9 +34,11 @@ export class SessionService {
     static async removeUserContext(sessionId) {
         try {
             await redisClient.del(`user_context:${sessionId}`);
-            logger.debug('User context removed', { sessionId });
+            // Also remove the session from Redis
+            await redisClient.del(`sess:${sessionId}`);
+            logger.debug('User context and session removed', { sessionId });
         } catch (error) {
-            logger.error('Failed to remove user context:', {
+            logger.error('Failed to remove user context and session:', {
                 error: error.message,
                 sessionId
             });
