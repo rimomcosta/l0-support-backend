@@ -20,4 +20,7 @@ router.get('/health', health.checkHealth);
 router.post('/auth/api-token', requireAuth, apiToken.saveApiToken);
 router.get('/auth/api-token', requireAuth, apiToken.getApiToken);
 
+// Route for decrypting and verifying the token
+router.post('/auth/verify-api-token', requireAuth, apiToken.decryptAndVerifyApiToken);
+
 export default router;

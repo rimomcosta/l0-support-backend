@@ -6,6 +6,7 @@ import { oidcClient } from './oidcService.js';
 import { ApiTokenService } from './apiTokenService.js';
 import { logger } from './logger.js';
 import { cleanupSession } from '../services/redisService.js';
+import { EncryptionService } from './encryptionService.js';
 
 export class AuthService {
     static async generateAuthParameters() {
@@ -102,12 +103,16 @@ export class AuthService {
                 email: userInfo.email,
                 role: userInfo.userRole
             });
-            
+
+            // Generate salt here
+            const salt = EncryptionService.generateSalt();
+
             user = {
                 user_id: uuidv4(),
                 username: userInfo.name,
                 email: userInfo.email,
-                api_token: '',
+                api_token: null, // API token is null initially
+                salt: salt, // Store the salt
                 role: userInfo.userRole
             };
 
