@@ -27,6 +27,7 @@ class MagentoCloudAdapter {
     }
 
     async executeCommand(command, apiToken) {
+        console.log('apiToken in MagentoCloudAdapter:executeCommand=====>', apiToken);
         if (!apiToken) {
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
@@ -60,6 +61,7 @@ class MagentoCloudAdapter {
     }
 
     executeCommandStream(command, apiToken) {
+        console.log('apiToken in MagentoCloudAdapter:executeCommandStream=====>', apiToken);
         if (!apiToken) {
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
