@@ -141,4 +141,29 @@ export class CommandService {
             throw error;
         }
     }
+
+    async getByServiceType(service_type) {
+        try {
+            const [rows] = await pool.execute('SELECT * FROM commands where service_type = ? ORDER BY id ASC', [service_type]);
+            return rows.map(row => ({
+                id: row.id,
+                title: row.title,
+                command: row.command,
+                description: row.description,
+                service_type: row.service_type,
+                execute_on_all_nodes: row.execute_on_all_nodes,
+                auto_run: row.auto_run,
+                component_code: row.component_code,
+                layout: row.layout,
+                locked: row.locked,
+                reviewed: row.reviewed,
+                created_at: row.created_at,
+                updated_at: row.updated_at
+            }));
+
+        } catch (error) {
+            logger.error('Failed to get commands:', error);
+            throw error;
+        }
+    }
 }

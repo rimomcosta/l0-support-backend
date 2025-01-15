@@ -27,8 +27,13 @@ export class EncryptionService {
         const key = this.deriveKey(password, salt);
         const iv = Buffer.from(ivHex, 'hex');
         const decipher = crypto.createDecipheriv(algorithm, key, iv);
-        let decrypted = decipher.update(encrypted, 'hex', 'utf-8');
-        decrypted += decipher.final('utf-8');
-        return decrypted;
+        
+        try {
+            let decrypted = decipher.update(encrypted, 'hex', 'utf-8');
+            decrypted += decipher.final('utf-8');
+            return decrypted;
+        } catch (error) {
+            throw new Error('Decryption failed.');
+        }
     }
 }

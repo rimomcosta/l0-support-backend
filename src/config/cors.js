@@ -5,7 +5,7 @@ export const corsConfig = {
             process.env.CLIENT_ORIGIN,
             process.env.REACT_APP_API_URL
         ].filter(Boolean);
-        
+
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
@@ -21,7 +21,8 @@ export const corsConfig = {
         'ngrok-skip-browser-warning',
         'Origin',
         'Accept',
-        'Cookie'
+        'Cookie',
+        'x-api-token-password'
     ],
     exposedHeaders: ['Set-Cookie'],
     preflightContinue: false,

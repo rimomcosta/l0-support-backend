@@ -83,17 +83,11 @@ export class ApiTokenService {
     }
 
     static async getApiToken(userId) {
-        const query = 'SELECT api_token, salt FROM users WHERE user_id = ?';
+        const query = 'SELECT api_token FROM users WHERE user_id = ?';
         try {
             const [rows] = await pool.execute(query, [userId]);
-            if (!rows.api_token) return null;
-            if (rows.length > 0) {
-                return {
-                    encryptedApiToken: rows[0].api_token,
-                    salt: rows[0].salt
-                };
-            }
-            return null;
+            if (!rows[0].api_token) return null;
+            return rows[0].api_token
         } catch (error) {
             logger.error('Failed to get API token and salt:', {
                 error: error.message,

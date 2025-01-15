@@ -17,10 +17,8 @@ router.post('/auth/logout', auth.logout);
 router.get('/health', health.checkHealth);
 
 // API Token routes
-router.post('/auth/api-token', requireAuth, apiToken.saveApiToken);
+router.post('/auth/api-token', requireAuth, apiToken.encryptAndSaveApiToken);
 router.get('/auth/api-token', requireAuth, apiToken.getApiToken);
-
-// Route for decrypting and verifying the token
-router.post('/auth/verify-api-token', requireAuth, apiToken.decryptAndVerifyApiToken);
+router.post('/auth/api-token-decrypt', requireAuth, apiToken.decryptApiToken);
 
 export default router;

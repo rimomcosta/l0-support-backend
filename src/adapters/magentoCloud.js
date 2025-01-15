@@ -35,7 +35,7 @@ class MagentoCloudAdapter {
             const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
                 env: {
                     ...process.env,
-                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`, // To allow using PHP from PATH
+                    // PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`, // To allow using PHP from PATH
                     MAGENTO_CLOUD_CLI_TOKEN: apiToken
                 },
                 maxBuffer: 1024 * 1024 * 10 // 10MB buffer
