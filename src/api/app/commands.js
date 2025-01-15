@@ -1,4 +1,6 @@
 // src/api/app/commands.js
+'use strict';
+
 import { CommandService } from '../../services/commandsManagerService.js';
 import { WebSocketService } from '../../services/webSocketService.js';
 import { logger } from '../../services/logger.js';
@@ -17,59 +19,64 @@ const commandService = new CommandService();
 const SERVICE_HANDLERS = {
     ssh: {
         handler: sshCommands.runCommands,
-        preparePayload: (commands) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
-                executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
+                executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
+                apiToken: apiToken
             }))
         })
     },
     rabbitmq: {
         handler: rabbitmqCommands.runCommands,
-        preparePayload: (commands) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                command: cmd.command // Use "command" for RabbitMQ
+                command: cmd.command, // Use "command" for RabbitMQ
+                apiToken: apiToken
             }))
         })
     },
     bash: {
         handler: bashCommands.runCommands,
-        preparePayload: (commands) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                command: cmd.command
+                command: cmd.command,
+                apiToken: apiToken
             }))
         })
     },
     sql: {
         handler: sqlCommands.runQueries,
-        preparePayload: (commands) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
-                executeOnAllNodes: Boolean(cmd.execute_on_all_nodes)
+                executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
+                apiToken: apiToken
             }))
         })
     },
     redis: {
         handler: redisCommands.runQueries,
-        preparePayload: (commands) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
-                query: cmd.command
+                query: cmd.command,
+                apiToken: apiToken
             }))
         })
     },
     opensearch: {
         handler: openSearchCommands.runQueries,
-        preparePayload: (commands) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             queries: commands.map(cmd => {
                 const config = typeof cmd.command === 'string'
                     ? JSON.parse(cmd.command)
@@ -77,14 +84,15 @@ const SERVICE_HANDLERS = {
                 return {
                     id: cmd.id,
                     title: cmd.title,
-                    command: config
+                    command: config,
+                    apiToken: apiToken
                 };
             })
         })
     },
     magento_cloud: {
         handler: magentoCloudDirectAccess.executeCommands,
-        preparePayload: (commands, projectId, environment) => ({
+        preparePayload: (commands, projectId, environment, apiToken) => ({
             commands: commands.map(cmd => {
                 let command = cmd.command;
                 command = command
@@ -97,14 +105,16 @@ const SERVICE_HANDLERS = {
                 return {
                     id: cmd.id,
                     title: cmd.title,
-                    command: command
+                    command: command,
+                    apiToken: apiToken
                 };
             })
         })
     }
 };
 
-async function executeServiceCommands(serviceType, commands, projectId, environment, userId) {
+async function executeServiceCommands(serviceType, commands, projectId, environment, userId, apiToken) {
+    console.log('apiToken in commands:executeServiceCommands=====>', apiToken);
     if (!commands || commands.length === 0) return null;
 
     const serviceHandler = SERVICE_HANDLERS[serviceType];
@@ -114,8 +124,7 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
 
     const { handler, preparePayload } = serviceHandler;
 
-    // Set userId for tunnelManager
-    tunnelManager.userId = userId;
+    // Removed: tunnelManager.userId = userId;
 
     // Group commands that require tunnels
     let tunnelNeeded = ['redis', 'sql', 'opensearch'].includes(serviceType);
@@ -123,12 +132,17 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
 
     if (tunnelNeeded) {
         try {
-            tunnelInfo = await tunnelManager.openTunnel(projectId, environment);
+            // Pass userId to openTunnel
+            tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
+            if (!tunnelInfo) {
+                throw new Error('Tunnel information is unavailable after opening.');
+            }
         } catch (error) {
             logger.error(`Failed to establish tunnel for ${serviceType}`, {
                 error: error.message,
                 projectId,
-                environment
+                environment,
+                userId
             });
             throw error;
         }
@@ -140,11 +154,12 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
             environment,
             tunnelInfo
         },
-        body: preparePayload(commands, projectId, environment),
+        body: preparePayload(commands, projectId, environment, apiToken),
         session: {
             user: {
                 id: userId
-            }
+            },
+            decryptedApiToken: apiToken
         }
     };
 
@@ -166,7 +181,8 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         logger.error(`Error executing ${serviceType} commands:`, {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
         throw error;
     }
@@ -185,7 +201,12 @@ function shouldUseBashService(command) {
 export async function executeAllCommands(req, res) {
     const { projectId, environment } = req.params;
     const userId = req.session.user.id;
-    const tabId = req.query.tabId; // Get tabId from session
+    const tabId = req.query.tabId;
+    const apiToken = req.session.decryptedApiToken;
+    console.log('apiToken in commands:executeAllCommands=====>', apiToken);
+    if (!apiToken) {
+        return res.status(401).json({ error: 'Decrypted API token not found in session' });
+    }
 
     try {
         const allCommands = await commandService.getAll();
@@ -216,7 +237,8 @@ export async function executeAllCommands(req, res) {
                         commands,
                         projectId,
                         environment,
-                        userId
+                        userId,
+                        apiToken
                     );
 
                     // Only send the results array in service_complete using tabId
@@ -282,7 +304,8 @@ export async function executeAllCommands(req, res) {
         logger.error('Failed to execute commands:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
 
         const errorResponse = {
@@ -304,7 +327,23 @@ export async function executeAllCommands(req, res) {
 export async function refreshService(req, res) {
     const { serviceType, projectId, environment, tabId } = req.body;
     const userId = req.session.user.id;
-    // const tabId = req.session.user.tabId; // Get tabId from session
+    const apiToken = req.session.decryptedApiToken;
+    console.log('req.session in =======commands:executeSingleCommand=====>', req.session);
+    console.log('req.session in =======commands:executeSingleCommand=====>', req.session);
+
+    // Check if the session is expired
+    if (req.session && req.session.cookie && req.session.cookie._expires) {
+        const now = new Date();
+        const expires = new Date(req.session.cookie._expires);
+
+        if (now > expires) {
+            console.log('Session status: Expired');
+        } else {
+            console.log('Session status: Active');
+        }
+    } else {
+        console.log('Session status: Missing expiration info');
+    }
 
     if (!serviceType || !projectId || !environment) {
         return res.status(400).json({ error: 'Service type, project ID, and environment are required' });
@@ -327,7 +366,8 @@ export async function refreshService(req, res) {
             serviceCommands,
             projectId,
             environment,
-            userId
+            userId,
+            apiToken
         );
 
         // Broadcast the update through WebSocket using tabId
@@ -344,7 +384,9 @@ export async function refreshService(req, res) {
         logger.error(`Failed to refresh ${serviceType} service:`, {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId,
+            tabId
         });
 
         WebSocketService.broadcastToTab({
@@ -424,6 +466,8 @@ export async function executeSingleCommand(req, res) {
     const instance = req.body.instance || null;
     const userId = req.session?.user?.id;
     const tabId = req.query.tabId || req.body.tabId;
+    const apiToken = req.session.decryptedApiToken;
+    console.log('apiToken in commands:executeSingleCommand=====>', apiToken);
 
     logger.info('Executing single command:', {
         commandId,
@@ -440,7 +484,6 @@ export async function executeSingleCommand(req, res) {
 
     try {
         // Get API token for the user
-        const apiToken = await ApiTokenService.getApiToken(userId);
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }
@@ -471,7 +514,8 @@ export async function executeSingleCommand(req, res) {
             [singleCommand], // Pass as array with single command
             projectId,
             environment,
-            userId
+            userId,
+            apiToken
         );
 
         // If execution was successful, send the response
