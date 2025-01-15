@@ -1,7 +1,7 @@
 // src/api/app/magentoCloudDirectAccess.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
-import { ApiTokenService } from '../../services/apiTokenService.js';
+// import { ApiTokenService } from '../../services/apiTokenService.js';
 
 function normalizeProjectFlag(command) {
     const parts = command.split('|');
@@ -60,6 +60,7 @@ function replacePlaceholders(command, context) {
 }
 
 export async function executeCommand(magentoCloud, command, context, apiToken) {
+    console.log('apiToken in magentoCloudDirectAccess:executeCommand=====>', apiToken);
     try {
         let processedCommand = replacePlaceholders(command, context);
         processedCommand = escapeQuotesForShell(processedCommand);
@@ -100,7 +101,8 @@ export async function executeCommands(req, res) {
     const { projectId, environment, instance } = req.params;
     const { commands } = req.body;
     const userId = req.session.user.id; // Get user ID
-
+    const apiToken = req.session.decryptedApiToken;
+    console.log('apiToken in magentoCloudDirectAccess:executeCommands=====>', apiToken);
     if (!Array.isArray(commands)) {
         return res.status(400).json({
             error: 'Invalid request format',
@@ -108,8 +110,7 @@ export async function executeCommands(req, res) {
         });
     }
 
-    try {
-        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
+    try { 
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }
