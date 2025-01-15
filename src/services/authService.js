@@ -7,6 +7,7 @@ import { ApiTokenService } from './apiTokenService.js';
 import { logger } from './logger.js';
 import { cleanupSession } from '../services/redisService.js';
 import { EncryptionService } from './encryptionService.js';
+import session from 'express-session';
 
 export class AuthService {
     static async generateAuthParameters() {
