@@ -6,6 +6,15 @@ import { RedisCliService } from '../../services/redisCliService.js';
 export async function runQueries(req, res) {
     const { projectId, environment } = req.params;
     const { queries } = req.body;
+    const apiToken = req.session.decryptedApiToken;
+    const userId = req.session.user?.id; // Extract userId from session
+
+    // Avoid logging sensitive information like apiToken
+    console.log('Executing Redis queries for user:', userId);
+
+    if (!userId) {
+        return res.status(401).json({ error: 'User ID not found in session' });
+    }
 
     if (!Array.isArray(queries)) {
         return res.status(400).json({
@@ -15,8 +24,18 @@ export async function runQueries(req, res) {
     }
 
     try {
-        // Get Redis-specific tunnel info
-        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'redis');
+        // Get Redis-specific tunnel info, passing userId
+        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'redis', apiToken, userId);
+        
+        if (!tunnelInfo) {
+            logger.error('Failed to retrieve tunnel information for Redis', {
+                projectId,
+                environment,
+                userId
+            });
+            return res.status(500).json({ error: 'Failed to retrieve tunnel information' });
+        }
+
         const redisService = new RedisCliService(tunnelInfo);
 
         const results = [];
@@ -40,7 +59,10 @@ export async function runQueries(req, res) {
             } catch (error) {
                 logger.error('Redis query execution failed:', {
                     error: error.message,
-                    query: query.title
+                    query: query.title,
+                    projectId,
+                    environment,
+                    userId
                 });
                 queryResult.results.push({
                     nodeId: 'tunnel',
@@ -69,7 +91,8 @@ export async function runQueries(req, res) {
         logger.error('Redis query execution failed:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
 
         const statusCode = error.message.includes('access denied') ? 401 : 500;
