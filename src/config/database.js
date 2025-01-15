@@ -1,6 +1,10 @@
 // src/config/database.js
 import mysql from 'mysql2/promise';
 import { logger } from '../services/logger.js';
+import { initializeTables } from './initDatabase.js';
+
+// Initialize the database and tables before creating the pool
+await initializeTables();
 
 const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
