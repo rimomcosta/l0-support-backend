@@ -1,6 +1,10 @@
 // src/config/initDatabase.js
-import { pool } from './database.js';
+import mysql from 'mysql2/promise';
+import fs from 'fs/promises';
+import path from 'path';
 import { logger } from '../services/logger.js';
+
+const dbName = 'l0support';
 
 const tables = {
     commands: `
@@ -22,12 +26,13 @@ const tables = {
             INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `,
-    user: `
+    users: `
         CREATE TABLE IF NOT EXISTS users (
             user_id VARCHAR(255) PRIMARY KEY,
             username VARCHAR(255) UNIQUE NOT NULL,
             email VARCHAR(255) UNIQUE NOT NULL,
-            api_token TEXT UNIQUE NOT NULL,
+            api_token TEXT UNIQUE,
+            salt VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_user_id (user_id)
@@ -56,12 +61,95 @@ const tables = {
     `
 };
 
+async function createDatabase() {
+    try {
+        // Create a connection without specifying the database
+        const connection = await mysql.createConnection({
+            host: process.env.DB_HOST || 'localhost',
+            user: process.env.DB_USER || 'root',
+            password: process.env.DB_PASSWORD || '',
+            multipleStatements: true
+        });
+
+        // Create the database if it doesn't exist
+        await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+        logger.info(`Database ${dbName} created successfully or already exists`);
+
+        // Close the initial connection
+        await connection.end();
+    } catch (error) {
+        logger.error('Failed to create database:', error);
+        throw error;
+    }
+}
+
+async function populateDatabase(seedFilePath) {
+    try {
+        let seedFile = await fs.readFile(seedFilePath, 'utf8');
+
+        // Remove comments
+        seedFile = seedFile.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '');
+
+        // Split into individual queries and filter out empty ones
+        const queries = seedFile
+            .split(';')
+            .map(query => query.trim())
+            .filter(query => query.length > 0);
+
+        // Create a connection pool with the database selected
+        const dbPool = mysql.createPool({
+            host: process.env.DB_HOST || 'localhost',
+            user: process.env.DB_USER || 'root',
+            password: process.env.DB_PASSWORD || '',
+            database: dbName,
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0,
+            multipleStatements: true
+        });
+
+        // Execute each query
+        for (const query of queries) {
+            try {
+                await dbPool.query(query);
+                logger.info('Successfully executed query');
+            } catch (err) {
+                logger.error('Error executing query:', { query, error: err });
+                throw err;
+            }
+        }
+
+        logger.info('Database populated successfully from commandsSeed.sql');
+        await dbPool.end();
+    } catch (error) {
+        logger.error('Failed to populate database:', error);
+        throw error;
+    }
+}
+
 export async function initializeTables() {
     try {
+        await createDatabase();
+
+        // Create a connection pool with the database selected
+        const dbPool = mysql.createPool({
+            host: process.env.DB_HOST || 'localhost',
+            user: process.env.DB_USER || 'root',
+            password: process.env.DB_PASSWORD || '',
+            database: dbName,
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0,
+            multipleStatements: true
+        });
+
+        // Initialize tables
         for (const [tableName, query] of Object.entries(tables)) {
-            await pool.execute(query);
+            await dbPool.query(query);
             logger.info(`Table ${tableName} initialized successfully or already exists`);
         }
+
+        await dbPool.end();
     } catch (error) {
         logger.error('Failed to initialize database tables:', error);
         throw error;

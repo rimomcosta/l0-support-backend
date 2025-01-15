@@ -6,9 +6,11 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 export async function runCommands(req, res) {
+    const { projectId, environment } = req.params;
     const { commands } = req.body;
-    const results = [];
-
+    const userId = req.session.user.id;
+    const apiToken = req.session.decryptedApiToken; // Get apiToken from session
+console.log('apiToken in bashCommands:runCommands=====>', apiToken);
     if (!Array.isArray(commands)) {
         return res.status(400).json({
             error: 'Invalid request format',
@@ -16,13 +18,29 @@ export async function runCommands(req, res) {
         });
     }
 
+    if (!apiToken) {
+        return res.status(401).json({ error: 'API token not found for user' });
+    }
+
+    const results = [];
+
     try {
-        // Execute commands sequentially
         for (const cmd of commands) {
             try {
+                // Option 1: Set MAGENTO_CLOUD_CLI_TOKEN as an environment variable (more secure)
                 const { stdout, stderr } = await execAsync(cmd.command, {
-                    maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+                    maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+                    env: {
+                        ...process.env, // Inherit existing environment variables
+                        MAGENTO_CLOUD_CLI_TOKEN: apiToken
+                    }
                 });
+
+                // Option 2: (Less secure) Pass the token as part of the command string itself
+                // const commandToExecute = `${cmd.command} --api-token="${apiToken}"`;
+                // const { stdout, stderr } = await execAsync(commandToExecute, {
+                //     maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+                // });
 
                 results.push({
                     id: cmd.id,

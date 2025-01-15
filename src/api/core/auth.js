@@ -3,6 +3,7 @@ import { AuthService } from '../../services/authService.js';
 import { oidcClient } from '../../services/oidcService.js';
 import { logger } from '../../services/logger.js';
 import jwt from 'jsonwebtoken';
+import { sessionConfig } from '../../config/session.js';
 
 export async function login(req, res) {
     try {
@@ -118,9 +119,6 @@ export async function logout(req, res) {
             });
         }
 
-        // Cleanup session and Redis
-        await AuthService.logout(sessionId);
-
         // Destroy Express session
         await new Promise((resolve, reject) => {
             req.session.destroy((err) => {
@@ -129,17 +127,20 @@ export async function logout(req, res) {
             });
         });
 
+        // Cleanup session and Redis
+        await AuthService.logout(sessionId);
+
         logger.info('Logout successful', {
             timestamp: new Date().toISOString(),
             userId,
             sessionId
         });
 
-        res.clearCookie('sessionId', {
+        res.clearCookie(sessionConfig.name, {
             path: '/',
-            secure: true,
-            httpOnly: true,
-            sameSite: 'none'
+            secure: sessionConfig.cookie.secure,
+            httpOnly: sessionConfig.cookie.httpOnly,
+            sameSite: sessionConfig.cookie.sameSite
         });
         res.json({ success: true });
     } catch (error) {

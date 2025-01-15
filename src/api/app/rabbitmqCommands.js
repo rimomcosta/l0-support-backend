@@ -1,12 +1,12 @@
 // src/api/app/rabbitmqCommands.js
 import { logger } from '../../services/logger.js';
 import { RabbitMQAdminService } from '../../services/rabbitmqAdminService.js';
-import { ApiTokenService } from '../../services/apiTokenService.js';
 
 export async function runCommands(req, res) {
     const { projectId, environment } = req.params;
     const { commands } = req.body;
     const userId = req.session.user.id; // Get userId
+    const apiToken = req.session.decryptedApiToken;
 
     if (!Array.isArray(commands)) {
         return res.status(400).json({
@@ -16,7 +16,6 @@ export async function runCommands(req, res) {
     }
 
     try {
-        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }

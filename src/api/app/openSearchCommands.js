@@ -1,11 +1,20 @@
 // src/api/app/openSearchCommands.js
 import { logger } from '../../services/logger.js';
 import { tunnelManager } from '../../services/tunnelService.js';
-import { OpenSearchService } from '../../services/openSearchService.js';
+import { OpenSearchService } from '../../services/OpenSearchService.js';
 
+/**
+ * Executes a set of queries against the search service (OpenSearch or Elasticsearch).
+ * @param {Object} req - The Express request object.
+ * @param {Object} res - The Express response object.
+ */
 export async function runQueries(req, res) {
     const { projectId, environment } = req.params;
     const { queries } = req.body;
+    const apiToken = req.session.decryptedApiToken;
+    const userId = req.session.user.id; // Extract userId from session
+
+    console.log('apiToken in openSearchCommands:run=====>', apiToken);
 
     if (!Array.isArray(queries)) {
         return res.status(400).json({
@@ -15,8 +24,26 @@ export async function runQueries(req, res) {
     }
 
     try {
-        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'opensearch');
-        const openSearchService = new OpenSearchService(tunnelInfo);
+        // Attempt to retrieve tunnel info for 'opensearch'
+        let tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'opensearch', apiToken, userId);
+        let serviceName = 'opensearch';
+
+        if (!tunnelInfo || !tunnelInfo['opensearch'] || tunnelInfo['opensearch'].length === 0) {
+            // If 'opensearch' is not available, attempt to retrieve 'elasticsearch'
+            logger.debug(`'opensearch' not available. Attempting to retrieve 'elasticsearch' tunnel info.`, {
+                projectId,
+                environment
+            });
+
+            tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'elasticsearch', apiToken, userId);
+            serviceName = 'elasticsearch';
+        }
+
+        if (!tunnelInfo || !tunnelInfo[serviceName] || tunnelInfo[serviceName].length === 0) {
+            throw new Error(`Neither opensearch nor elasticsearch services are available in the tunnel configuration`);
+        }
+
+        const searchService = new OpenSearchService(tunnelInfo, serviceName);
 
         const results = [];
 
@@ -29,17 +56,18 @@ export async function runQueries(req, res) {
             };
 
             try {
-                const output = await openSearchService.executeCommand(query.command);
+                const output = await searchService.executeCommand(query.command);
                 queryResult.results.push({
                     nodeId: 'tunnel',
-                    output, // Output is already parsed JSON
+                    output, // Output is already parsed JSON or text
                     error: null,
                     status: 'SUCCESS'
                 });
             } catch (error) {
                 logger.error('OpenSearch query execution failed:', {
                     error: error.message,
-                    query: query.title
+                    query: query.title,
+                    userId
                 });
                 queryResult.results.push({
                     nodeId: 'tunnel',
@@ -68,7 +96,8 @@ export async function runQueries(req, res) {
         logger.error('OpenSearch query execution failed:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
 
         const statusCode = error.message.includes('access denied') ? 401 : 500;

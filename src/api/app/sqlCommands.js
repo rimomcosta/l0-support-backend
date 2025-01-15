@@ -179,7 +179,8 @@ function validateQueries(queries) {
 }
 
 // Main function to execute queries with different strategies
-async function executeQueriesWithStrategy(projectId, environment, queries, apiToken) { // Add apiToken
+async function executeQueriesWithStrategy(projectId, environment, queries, apiToken, userId) {
+    console.log('apiToken in sqlCommands:executeQueriesWithStrategy=====>', apiToken);
     try {
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
@@ -197,7 +198,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries, apiTo
         // Handle queries that should run through tunnel
         if (singleNodeQueries.length > 0) {
             // Ensure tunnel is open and get connection info
-            const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'database');
+            const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'database', apiToken, userId);
             const sqlService = new SQLService(tunnelInfo);
 
             // Format tunnel query results to match the structure of multi-node results
@@ -282,11 +283,13 @@ async function executeQueriesWithStrategy(projectId, environment, queries, apiTo
         logger.error('Query execution strategy failed:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
         throw error;
     }
 }
+
 
 // Main API handler for executing SQL queries
 async function runQueries(req, res) {
