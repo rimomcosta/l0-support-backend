@@ -1,9 +1,10 @@
 // src/api/app/environment.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
-import { ApiTokenService } from '../../services/apiTokenService.js'; // Import ApiTokenService
+// import { ApiTokenService } from '../../services/apiTokenService.js'; // Import ApiTokenService
 
 async function listEnvironments(projectId, apiToken) {
+    console.log('apiToken in environment:listEnvironments=====>', apiToken);
     const magentoCloud = new MagentoCloudAdapter();
     await magentoCloud.validateExecutable();
 
@@ -39,15 +40,16 @@ async function listEnvironments(projectId, apiToken) {
 
 export async function getEnvironments(req, res) {
     const { projectId } = req.params;
-    const userId = req.session.user.id; // Get the user ID from the session
+    const userId = req.session.user.id;
 
     try {
-        const apiToken = await ApiTokenService.getApiToken(userId); // Retrieve the API token
+        const apiToken = req.session.decryptedApiToken;
+        console.log('apiToken in environment:getEnvironments=====>', apiToken);
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }
 
-        const environments = await listEnvironments(projectId, apiToken); // Pass apiToken to listEnvironments
+        const environments = await listEnvironments(projectId, apiToken);
 
         if (environments.length === 0) {
             logger.warn('No active environments found', {
