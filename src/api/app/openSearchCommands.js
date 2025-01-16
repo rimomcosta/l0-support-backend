@@ -1,7 +1,7 @@
 // src/api/app/openSearchCommands.js
 import { logger } from '../../services/logger.js';
 import { tunnelManager } from '../../services/tunnelService.js';
-import { OpenSearchService } from '../../services/OpenSearchService.js';
+import { OpenSearchService } from '../../services/openSearchService.js';
 
 /**
  * Executes a set of queries against the search service (OpenSearch or Elasticsearch).
