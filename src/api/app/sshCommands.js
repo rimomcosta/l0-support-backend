@@ -64,13 +64,13 @@ function parseCommandOutput(output, commands) {
     return results;
 }
 
-async function executeWithRetry(magentoCloud, command, apiToken, options = { maxRetries: 3, delay: 1000 }) {
+async function executeWithRetry(magentoCloud, command, apiToken, userId, options = { maxRetries: 3, delay: 1000 }) {
     console.log('apiToken in sshCommands:executeWithRetry=====>', apiToken);
     let lastError;
 
     for (let attempt = 1; attempt <= options.maxRetries; attempt++) {
         try {
-            const result = await magentoCloud.executeCommand(command, apiToken); // Pass apiToken
+            const result = await magentoCloud.executeCommand(command, apiToken, userId); // Pass apiToken
             if (attempt > 1) {
                 logger.info('Command succeeded after retry', {
                     attempt,
@@ -109,7 +109,7 @@ async function executeWithRetry(magentoCloud, command, apiToken, options = { max
     throw lastError;
 }
 
-async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode, apiToken) { // Add apiToken
+async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode, apiToken, userId) { // Add apiToken
     console.log('apiToken in sshCommands:executeSSHCommandsOnNode=====>', apiToken);
     try {
         // Create the script content with all commands.
@@ -134,7 +134,8 @@ EOF`;
         const { stdout, stderr } = await executeWithRetry(
             magentoCloud,
             sshCommand,
-            apiToken, // Pass apiToken
+            apiToken,
+            userId,
             { maxRetries: 3, delay: 1000 }
         );
 
@@ -235,7 +236,7 @@ console.log('apiToken in sshCommands:runCommands=====>', apiToken);
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
-        const nodes = await getNodes(projectId, environment, apiToken); // Pass apiToken to getNodes
+        const nodes = await getNodes(projectId, environment, apiToken, userId); // Pass apiToken to getNodes
         const isSingleNode = !nodes || nodes.length <= 1;
 
         if (!nodes || nodes.length === 0) {
@@ -256,7 +257,8 @@ console.log('apiToken in sshCommands:runCommands=====>', apiToken);
                 isSingleNode ? null : nodes[0].id,
                 validCommands,
                 isSingleNode,
-                apiToken // Pass apiToken
+                apiToken,
+                userId
             );
 
             // Initialize results for all valid commands
@@ -279,7 +281,8 @@ console.log('apiToken in sshCommands:runCommands=====>', apiToken);
                         node.id,
                         allNodesCommands,
                         false,
-                        apiToken // Pass apiToken
+                        apiToken,
+                        userId
                     )
                 );
 

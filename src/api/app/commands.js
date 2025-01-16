@@ -19,66 +19,71 @@ const commandService = new CommandService();
 const SERVICE_HANDLERS = {
     ssh: {
         handler: sshCommands.runCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
-                apiToken: apiToken
+                apiToken: apiToken,
+                userId: userId
             }))
         })
     },
     rabbitmq: {
         handler: rabbitmqCommands.runCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command, // Use "command" for RabbitMQ
-                apiToken: apiToken
+                apiToken: apiToken,
+                userId: userId
             }))
         })
     },
     bash: {
         handler: bashCommands.runCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
-                apiToken: apiToken
+                apiToken: apiToken,
+                userId: userId
             }))
         })
     },
     sql: {
         handler: sqlCommands.runQueries,
-        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo) => ({
+        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo, userId) => ({
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
                 apiToken: apiToken,
-                tunnelInfo: tunnelInfo
+                tunnelInfo: tunnelInfo,
+                userId: userId
             }))
         })
     },
     redis: {
         handler: redisCommands.runQueries,
-        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo) => ({
+        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo, userId) => ({
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
                 apiToken: apiToken,
-                tunnelInfo: tunnelInfo
+                tunnelInfo: tunnelInfo,
+                userId: userId
             }))
         })
     },
     opensearch: {
         handler: openSearchCommands.runQueries,
-        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo) => ({
+        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo, userId) => ({
             queries: commands.map(cmd => {
                 const config = typeof cmd.command === 'string'
                     ? JSON.parse(cmd.command)
@@ -88,14 +93,15 @@ const SERVICE_HANDLERS = {
                     title: cmd.title,
                     command: config,
                     apiToken: apiToken,
-                    tunnelInfo: tunnelInfo
+                    tunnelInfo: tunnelInfo,
+                    userId: userId
                 };
             })
         })
     },
     magento_cloud: {
         handler: magentoCloudDirectAccess.executeCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => {
                 let command = cmd.command;
                 command = command
@@ -109,7 +115,8 @@ const SERVICE_HANDLERS = {
                     id: cmd.id,
                     title: cmd.title,
                     command: command,
-                    apiToken: apiToken
+                    apiToken: apiToken,
+                    userId: userId
                 };
             })
         })
@@ -127,13 +134,12 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
 
     const { handler, preparePayload } = serviceHandler;
 
-    // Group commands that require tunnels
+    // Determine if the service requires a tunnel
     let tunnelNeeded = ['redis', 'sql', 'opensearch'].includes(serviceType);
     let tunnelInfo = null;
 
     if (tunnelNeeded) {
         try {
-            // Ensure the tunnel is open before proceeding
             tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
             if (!tunnelInfo) {
                 throw new Error('Tunnel information is unavailable after opening.');
@@ -149,12 +155,26 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         }
     }
 
+    // Prepare the payload with appropriate arguments
+    let payload;
+    if (tunnelNeeded) {
+        payload = preparePayload(commands, projectId, environment, apiToken, tunnelInfo, userId);
+    } else {
+        payload = preparePayload(commands, projectId, environment, apiToken, userId);
+    }
+
+    logger.debug(`Executing commands for userId: ${userId}`, {
+        serviceType,
+        projectId,
+        environment
+    });
+
     const request = {
         params: {
             projectId,
             environment
         },
-        body: preparePayload(commands, projectId, environment, apiToken, tunnelInfo),
+        body: payload,
         session: {
             user: {
                 id: userId
@@ -187,6 +207,8 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         throw error;
     }
 }
+
+
 
 // Detect if a command should use bash service
 function shouldUseBashService(command) {

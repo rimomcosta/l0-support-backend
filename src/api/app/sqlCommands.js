@@ -87,7 +87,7 @@ ${bundleQueries(queries)} | mysql -u"$username" -p"$password" -D"$database" -h"$
 }
 
 // Execute queries on a specific node via SSH
-async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId, queries, apiToken) {
+async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId, queries, apiToken, userId) {
     try {
         const mysqlCommand = createMySQLCommand(queries);
         const sshCommand = `ssh -p ${projectId} -e ${environment} --instance ${nodeId} ${mysqlCommand}`;
@@ -97,7 +97,7 @@ async function executeQueriesOnNode(magentoCloud, projectId, environment, nodeId
             queries: queries.map(q => q.title)
         });
 
-        const { stdout, stderr } = await magentoCloud.executeCommand(sshCommand, apiToken); // Pass apiToken
+        const { stdout, stderr } = await magentoCloud.executeCommand(sshCommand, apiToken, userId); // Pass apiToken
 
         // Check if MySQL is not running
         if (stderr.includes('MySQL is not running on this node')) {
@@ -186,7 +186,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries, apiTo
         await magentoCloud.validateExecutable();
 
         // Get all nodes first
-        const nodes = await getNodes(projectId, environment, apiToken); // Pass apiToken to getNodes
+        const nodes = await getNodes(projectId, environment, apiToken, userId); // Pass apiToken to getNodes
         if (!nodes || nodes.length === 0) {
             throw new Error('No nodes found in the environment');
         }
@@ -254,7 +254,8 @@ async function executeQueriesWithStrategy(projectId, environment, queries, apiTo
                     environment,
                     node.id,
                     multiNodeQueries,
-                    apiToken // Pass apiToken
+                    apiToken,
+                    userId
                 )
             );
 
@@ -307,12 +308,12 @@ async function runQueries(req, res) {
     }
 
     try {
-        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
+        const apiToken = req.session.decryptedApiToken;
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }
 
-        const results = await executeQueriesWithStrategy(projectId, environment, queries, apiToken); // Pass apiToken
+        const results = await executeQueriesWithStrategy(projectId, environment, queries, apiToken, userId); // Pass apiToken
 
         res.json({
             projectId,

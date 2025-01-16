@@ -1,8 +1,12 @@
 // src/api/app/magentoCloudDirectAccess.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
-// import { ApiTokenService } from '../../services/apiTokenService.js';
 
+/**
+ * Normalizes project flags in the command.
+ * @param {string} command - The original command
+ * @returns {string} - The normalized command
+ */
 function normalizeProjectFlag(command) {
     const parts = command.split('|');
     const magentoCommand = parts[0];
@@ -18,10 +22,21 @@ function normalizeProjectFlag(command) {
     return normalized;
 }
 
+/**
+ * Escapes quotes in the command for shell execution.
+ * @param {string} command - The command to escape
+ * @returns {string} - The escaped command
+ */
 function escapeQuotesForShell(command) {
     return command.replace(/"/g, '\\"');
 }
 
+/**
+ * Replaces placeholders in the command with actual values.
+ * @param {string} command - The command with placeholders
+ * @param {Object} context - The context containing actual values
+ * @returns {string} - The processed command
+ */
 function replacePlaceholders(command, context) {
     let processedCommand = normalizeProjectFlag(command);
     processedCommand = processedCommand.replace(/^magento-cloud\s+/, '');
@@ -59,23 +74,26 @@ function replacePlaceholders(command, context) {
     return processedCommand.trim();
 }
 
-export async function executeCommand(magentoCloud, command, context, apiToken) {
-    console.log('apiToken in magentoCloudDirectAccess:executeCommand=====>', apiToken);
+/**
+ * Executes a single Magento Cloud CLI command.
+ * @param {MagentoCloudAdapter} magentoCloud - The MagentoCloudAdapter instance
+ * @param {string} command - The command to execute
+ * @param {Object} context - The context containing projectId, environment, and instance
+ * @param {string} apiToken - The API token for authentication
+ * @param {string} userId - The unique identifier for the user
+ * @returns {Object} - The result of the command execution
+ */
+export async function executeCommand(magentoCloud, command, context, apiToken, userId) {
+    logger.debug('Executing Magento Cloud command:', { command, context, userId });
     try {
         let processedCommand = replacePlaceholders(command, context);
         processedCommand = escapeQuotesForShell(processedCommand);
-
-        logger.debug('Executing magento-cloud command:', {
-            originalCommand: command,
-            processedCommand,
-            context
-        });
 
         if (!processedCommand) {
             throw new Error('Invalid command after processing placeholders');
         }
 
-        const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand, apiToken);
+        const { stdout, stderr } = await magentoCloud.executeCommand(processedCommand, apiToken, userId);
 
         return {
             output: stdout || null,
@@ -97,6 +115,11 @@ export async function executeCommand(magentoCloud, command, context, apiToken) {
     }
 }
 
+/**
+ * Handles the execution of multiple Magento Cloud CLI commands.
+ * @param {Object} req - The Express request object
+ * @param {Object} res - The Express response object
+ */
 export async function executeCommands(req, res) {
     const { projectId, environment, instance } = req.params;
     const { commands } = req.body;
@@ -130,7 +153,8 @@ export async function executeCommands(req, res) {
                 magentoCloud, 
                 cmd.command,
                 context,
-                apiToken // Pass apiToken to executeCommand
+                apiToken, // Pass apiToken to executeCommand
+                userId    // Pass userId to executeCommand
             );
             
             return {
@@ -169,6 +193,89 @@ export async function executeCommands(req, res) {
 
         res.status(500).json({
             error: 'Command execution failed',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+}
+
+/**
+ * Handles the execution of SSH commands.
+ * @param {Object} req - The Express request object
+ * @param {Object} res - The Express response object
+ */
+export async function executeSSHCommand(req, res) {
+    const { projectId, environment } = req.params;
+    const { command } = req.body;
+    const userId = req.session.user.id;
+    const apiToken = req.session.decryptedApiToken;
+
+    if (!command) {
+        return res.status(400).json({
+            error: 'Invalid request format',
+            details: 'Command must be provided'
+        });
+    }
+
+    if (!apiToken) {
+        return res.status(401).json({ error: 'API token not found for user' });
+    }
+
+    try {
+        const magentoCloud = new MagentoCloudAdapter();
+        await magentoCloud.validateExecutable();
+
+        const context = { 
+            projectId, 
+            environment: environment || null,
+            instance: null // SSH might not need instance
+        };
+
+        // Process and sanitize the command
+        let processedCommand = replacePlaceholders(command, context);
+        processedCommand = escapeQuotesForShell(processedCommand);
+
+        if (!processedCommand) {
+            throw new Error('Invalid command after processing placeholders');
+        }
+
+        // Execute the SSH command as a stream
+        const { tunnelProcess } = magentoCloud.executeCommandStream(processedCommand, apiToken, userId);
+        logger.debug('Executing Magento Cloud command for userId:magentoCloudDirectAccess:executeCommandStream',userId);
+        // Set headers for streaming
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        // Stream stdout to the client
+        tunnelProcess.stdout.on('data', (data) => {
+            res.write(data);
+        });
+
+        // Stream stderr to the client
+        tunnelProcess.stderr.on('data', (data) => {
+            res.write(data);
+        });
+
+        // Handle process exit
+        tunnelProcess.on('close', (code) => {
+            res.end(`\nProcess exited with code ${code}`);
+        });
+
+        // Handle errors
+        tunnelProcess.on('error', (err) => {
+            logger.error('SSH process error:', { error: err.message, userId });
+            res.status(500).end('SSH process encountered an error.');
+        });
+
+    } catch (error) {
+        logger.error('SSH command execution failed:', {
+            error: error.message,
+            projectId,
+            environment,
+            userId
+        });
+
+        res.status(500).json({
+            error: 'SSH command execution failed',
             details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
