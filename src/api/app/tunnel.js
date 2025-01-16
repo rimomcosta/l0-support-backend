@@ -5,9 +5,11 @@ import { logger } from '../../services/logger.js';
 export async function openTunnel(req, res) {
     const { projectId, environment } = req.params;
     const apiToken = req.session.decryptedApiToken;
-    console.log('apiToken in tunnel:openTunnel=====>, ', apiToken);
+    const userId = req.session.user.id; // Extract userId from session
+    console.log('apiToken in tunnel:openTunnel=====>, ', '****MASKED****'); // Avoid logging sensitive tokens
+    console.log('userId in tunnel:openTunnel=====>, ', userId);
     try {
-        const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken);
+        const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
 
         // Respond with the tunnel info
         res.json({
@@ -18,7 +20,8 @@ export async function openTunnel(req, res) {
         logger.error('Failed to open tunnel:', {
             error: error.message,
             projectId,
-            environment
+            environment,
+            userId
         });
 
         res.status(500).json({

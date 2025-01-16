@@ -364,7 +364,7 @@ class TunnelManager {
      * The main entrypoint to ensure a tunnel is open for the specified project/env.
      * If already open and healthy, returns the existing info. Otherwise, tries to acquire a lock and open it.
      */
-    async openTunnel(projectId, environment, apiToken, userId) {
+    async openTunnel(projectId, environment, apiToken, userId, progressCallback) {
         console.log('apiToken in tunnelService:openTunnel=====>', apiToken);
 
         if (!userId) {
@@ -384,16 +384,20 @@ class TunnelManager {
         while (retryCount < maxRetries) {
             try {
                 // Quick check for existing tunnel
+                if (progressCallback) progressCallback('checking_existing_tunnel');
                 let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
                 if (tunnelInfo) {
+                    if (progressCallback) progressCallback('tunnel_exists');
                     await this.incrementTunnelUsage(projectId, environment, userId);
                     this.resetIdleTimer(projectId, environment, userId, apiToken);
                     return tunnelInfo;
                 }
 
                 // Acquire lock
+                if (progressCallback) progressCallback('acquiring_lock');
                 const lockId = await this.acquireLock(tunnelKey);
                 if (!lockId) {
+                    if (progressCallback) progressCallback('waiting_for_lock');
                     logger.debug('Waiting for tunnel creation by another process...', { projectId, environment });
 
                     // Wait for the other process to finish opening
@@ -401,6 +405,7 @@ class TunnelManager {
                     while (Date.now() - startTime < LOCK_WAIT_TIMEOUT) {
                         tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
                         if (tunnelInfo) {
+                            if (progressCallback) progressCallback('tunnel_opened_by_other_process');
                             await this.incrementTunnelUsage(projectId, environment, userId);
                             this.resetIdleTimer(projectId, environment, userId, apiToken);
                             return tunnelInfo;
@@ -419,11 +424,14 @@ class TunnelManager {
                         environment
                     });
 
+                    if (progressCallback) progressCallback('opening_tunnel');
                     const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken);
 
                     // Verify the new tunnel is healthy
+                    if (progressCallback) progressCallback('verifying_tunnel');
                     const isHealthy = await this.checkTunnelHealth(newTunnelInfo);
                     if (isHealthy) {
+                        if (progressCallback) progressCallback('tunnel_ready');
                         await this.incrementTunnelUsage(projectId, environment, userId);
                         this.resetIdleTimer(projectId, environment, userId, apiToken);
                         logger.info('Tunnel successfully created and verified', { projectId, environment });
