@@ -125,7 +125,7 @@ class TunnelManager {
 
             if (this.tunnelUsers.get(key).size === 0) {
                 logger.info('No more users using the tunnel. Initiating closure.', { key });
-                await this.closeTunnel(projectId, environment, apiToken);
+                await this.closeTunnel(projectId, environment, apiToken, userId);
             }
         }
     }
@@ -507,7 +507,7 @@ class TunnelManager {
      * Closes the tunnel by acquiring the lock, calling "tunnel:close -y", and removing
      * relevant Redis keys and timers.
      */
-    async closeTunnel(projectId, environment, apiToken) {
+    async closeTunnel(projectId, environment, apiToken, userId) {
         console.log('apiToken in tunnelManager:closeTunnel=====>', apiToken);
         const tunnelKey = `${projectId}-${environment}`;
         const lockId = await this.acquireLock(tunnelKey);
@@ -517,7 +517,7 @@ class TunnelManager {
         }
 
         try {
-            await this.magentoCloud.executeCommand('tunnel:close -y', apiToken);
+            await this.magentoCloud.executeCommand('tunnel:close -y', apiToken, userId);
             await redisClient.del(`tunnel_status:${tunnelKey}`);
 
             // Using scanIterator for node-redis v4+
