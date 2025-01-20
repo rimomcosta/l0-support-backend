@@ -543,6 +543,17 @@ export async function updateCommand(req, res) {
     }
 }
 
+export async function toggleCommand(req, res) {
+    try {
+        // Pass req.session.user as the third parameter
+        const result = await commandService.updateToggle(req.params.id, req.body, req.session.user);
+        res.status(200).json(result);
+    } catch (error) {
+        logger.error('Failed to toggle command field:', error);
+        res.status(500).json({ error: error.message });
+    }
+}
+
 export async function deleteCommand(req, res) {
     try {
         await commandService.delete(req.params.id);

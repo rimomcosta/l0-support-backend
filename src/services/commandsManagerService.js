@@ -1,3 +1,4 @@
+// src/services/commandsManagerService.js
 import { pool } from '../config/database.js';
 import { logger } from './logger.js';
 
@@ -59,6 +60,86 @@ export class CommandService {
             throw error;
         }
     }
+
+
+
+    async updateToggle(id, changes, user) {
+        // 1) Buscar o registro no DB
+        const [rows] = await pool.execute('SELECT * FROM commands WHERE id = ?', [id]);
+        if (!rows.length) {
+            throw new Error(`Command with id=${id} not found.`);
+        }
+        const existing = rows[0];
+
+        // 2) Se estiver locked e não estamos explicitamente desbloqueando => erro
+        if (existing.locked && changes.locked !== false) {
+            throw new Error('This command is locked and cannot be modified');
+        }
+
+        // 3) Campos booleans que podem ser "toggleados" neste endpoint
+        //    (todos exigem admin se forem alterados)
+        const toggleFields = [
+            'locked',
+            'reviewed',
+            'allow_ai',
+            'auto_run',
+            'execute_on_all_nodes'
+        ];
+
+        // Preparar valores finais (newVals)
+        // Vamos guardar no objeto final o que será salvo no DB
+        const newVals = {
+            locked: existing.locked,
+            reviewed: existing.reviewed,
+            allow_ai: existing.allow_ai,
+            auto_run: existing.auto_run,
+            execute_on_all_nodes: existing.execute_on_all_nodes
+        };
+
+        // 4) Checar cada um, se o valor está mudando => requer admin
+        for (const field of toggleFields) {
+            if (field in changes) {
+                const oldVal = !!existing[field];
+                const newVal = !!changes[field];
+                if (newVal !== oldVal) {
+                    // mudança real => exige admin
+                    if (!user?.isAdmin) {
+                        throw new Error('This action requires admin role');
+                    }
+                    newVals[field] = changes[field]; // Usa o valor exato do request
+                }
+            }
+        }
+
+        // 5) Rodar o UPDATE apenas nos campos toggles
+        try {
+            const sql = `
+            UPDATE commands
+            SET
+              locked = ?,
+              reviewed = ?,
+              allow_ai = ?,
+              auto_run = ?,
+              execute_on_all_nodes = ?
+            WHERE id = ?
+          `;
+            const params = [
+                newVals.locked,
+                newVals.reviewed,
+                newVals.allow_ai,
+                newVals.auto_run,
+                newVals.execute_on_all_nodes,
+                id
+            ];
+
+            await pool.execute(sql, params);
+            return { success: true };
+        } catch (error) {
+            logger.error('Failed to update toggle fields:', error);
+            throw error;
+        }
+    }
+
 
     processCommandString(command) {
         if (!command) return '';
