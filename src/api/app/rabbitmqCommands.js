@@ -21,8 +21,8 @@ export async function runCommands(req, res) {
         }
 
         // Initialize RabbitMQAdminService with projectId, environment, and apiToken
-        const rabbitmqService = new RabbitMQAdminService(projectId, environment, apiToken);
-
+        const rabbitmqService = new RabbitMQAdminService(projectId, environment, apiToken, userId);
+console.log('userId in rabbitmqCommands:runCommands=====>', userId);
         const results = [];
 
         for (const command of commands) {
@@ -30,7 +30,8 @@ export async function runCommands(req, res) {
                 id: command.id,
                 title: command.title,
                 command: command.command,
-                results: []
+                results: [],
+                allowAi: command.allowAi
             };
 
             try {

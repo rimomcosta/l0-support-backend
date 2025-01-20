@@ -78,11 +78,8 @@ export class WebSocketService {
 
             // **** CORE WEBSOCKET MESSAGE HANDLER ****
             ws.on('message', async (message) => {
-                console.log('Message received from frontend:', message.toString());
-
                 try {
                     const parsedMessage = JSON.parse(message);
-                    console.log('Parsed message:', parsedMessage);
 
                     switch (parsedMessage.type) {
                         case 'new_chat': {

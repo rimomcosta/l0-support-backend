@@ -11,13 +11,14 @@ import { ApiTokenService } from '../../services/apiTokenService.js'; // Import A
  * @param {string} apiToken - The user's API token
  * @returns {Promise<Array<Object>>} Array of node objects with id, sshUrl, and status
  */
-export async function execute(projectId, environment, apiToken) {
+export async function execute(projectId, environment, apiToken, userId) {
     const magentoCloud = new MagentoCloudAdapter();
     await magentoCloud.validateExecutable();
 
     const { stdout } = await magentoCloud.executeCommand(
         `ssh -p ${projectId} -e ${environment} --all`,
-        apiToken // Pass apiToken
+        apiToken,
+        userId
     );
 
     return stdout.split('\n')
@@ -38,6 +39,7 @@ export async function execute(projectId, environment, apiToken) {
 export async function getNodes(req, res) {
     const { projectId, environment } = req.params;
     const userId = req.session.user.id; // Get userId
+    const apiToken = req.session.decryptedApiToken;
 
     try {
         logger.info('Fetching nodes', {
@@ -47,12 +49,11 @@ export async function getNodes(req, res) {
             timestamp: new Date().toISOString()
         });
 
-        const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }
 
-        const nodes = await execute(projectId, environment, apiToken); // Pass apiToken
+        const nodes = await execute(projectId, environment, apiToken, userId); // Pass apiToken
         res.json({ nodes });
     } catch (error) {
         logger.error('Failed to fetch nodes', {

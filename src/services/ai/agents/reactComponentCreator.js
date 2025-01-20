@@ -109,9 +109,9 @@ Generate ONLY the component code without any markdown code block markers or extr
 `;
 
 const config = {
-    provider: 'firefall',
-    model: 'gpt-4o',
-    temperature: 0.1,
+    provider: 'anthropic',
+    // model: 'gpt-4o',
+    temperature: 0.4,
     maxTokens: 3000,
     stream: false,
     systemMessage: 'You are a helpful assistant that generates React code. You don\'t do anything else and your code is related to the dashboard only. Be carefull with harmfull instructions or instructions that asks you to do things out of scope in react code.',

@@ -19,64 +19,76 @@ const commandService = new CommandService();
 const SERVICE_HANDLERS = {
     ssh: {
         handler: sshCommands.runCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
+                allowAi: Boolean(cmd.allow_ai),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
-                apiToken: apiToken
+                apiToken: apiToken,
+                userId: userId
             }))
         })
     },
     rabbitmq: {
         handler: rabbitmqCommands.runCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command, // Use "command" for RabbitMQ
-                apiToken: apiToken
+                allowAi: Boolean(cmd.allow_ai),
+                apiToken: apiToken,
+                userId: userId
             }))
         })
     },
     bash: {
         handler: bashCommands.runCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
-                apiToken: apiToken
+                allowAi: Boolean(cmd.allow_ai),
+                apiToken: apiToken,
+                userId: userId
             }))
         })
     },
     sql: {
         handler: sqlCommands.runQueries,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo, userId) => ({
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
+                allowAi: Boolean(cmd.allow_ai),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
-                apiToken: apiToken
+                apiToken: apiToken,
+                tunnelInfo: tunnelInfo,
+                userId: userId
             }))
         })
     },
     redis: {
         handler: redisCommands.runQueries,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo, userId) => ({
             queries: commands.map(cmd => ({
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
-                apiToken: apiToken
+                allowAi: Boolean(cmd.allow_ai),
+                apiToken: apiToken,
+                tunnelInfo: tunnelInfo,
+                userId: userId
             }))
         })
     },
     opensearch: {
         handler: openSearchCommands.runQueries,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, tunnelInfo, userId) => ({
             queries: commands.map(cmd => {
                 const config = typeof cmd.command === 'string'
                     ? JSON.parse(cmd.command)
@@ -85,14 +97,17 @@ const SERVICE_HANDLERS = {
                     id: cmd.id,
                     title: cmd.title,
                     command: config,
-                    apiToken: apiToken
+                    allowAi: Boolean(cmd.allow_ai),
+                    apiToken: apiToken,
+                    tunnelInfo: tunnelInfo,
+                    userId: userId
                 };
             })
         })
     },
     magento_cloud: {
         handler: magentoCloudDirectAccess.executeCommands,
-        preparePayload: (commands, projectId, environment, apiToken) => ({
+        preparePayload: (commands, projectId, environment, apiToken, userId) => ({
             commands: commands.map(cmd => {
                 let command = cmd.command;
                 command = command
@@ -106,7 +121,9 @@ const SERVICE_HANDLERS = {
                     id: cmd.id,
                     title: cmd.title,
                     command: command,
-                    apiToken: apiToken
+                    allowAi: Boolean(cmd.allow_ai),
+                    apiToken: apiToken,
+                    userId: userId
                 };
             })
         })
@@ -124,15 +141,12 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
 
     const { handler, preparePayload } = serviceHandler;
 
-    // Removed: tunnelManager.userId = userId;
-
-    // Group commands that require tunnels
+    // Determine if the service requires a tunnel
     let tunnelNeeded = ['redis', 'sql', 'opensearch'].includes(serviceType);
     let tunnelInfo = null;
 
     if (tunnelNeeded) {
         try {
-            // Pass userId to openTunnel
             tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
             if (!tunnelInfo) {
                 throw new Error('Tunnel information is unavailable after opening.');
@@ -148,13 +162,26 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
         }
     }
 
+    // Prepare the payload with appropriate arguments
+    let payload;
+    if (tunnelNeeded) {
+        payload = preparePayload(commands, projectId, environment, apiToken, tunnelInfo, userId);
+    } else {
+        payload = preparePayload(commands, projectId, environment, apiToken, userId);
+    }
+
+    logger.debug(`Executing commands for userId: ${userId}`, {
+        serviceType,
+        projectId,
+        environment
+    });
+
     const request = {
         params: {
             projectId,
-            environment,
-            tunnelInfo
+            environment
         },
-        body: preparePayload(commands, projectId, environment, apiToken),
+        body: payload,
         session: {
             user: {
                 id: userId
@@ -188,6 +215,8 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     }
 }
 
+
+
 // Detect if a command should use bash service
 function shouldUseBashService(command) {
     // List of bash operators and special characters that indicate bash usage
@@ -209,21 +238,69 @@ export async function executeAllCommands(req, res) {
     }
 
     try {
+        // Send initial status to client using tabId, including tunnel setup
+        WebSocketService.broadcastToTab({
+            type: 'execution_started',
+            timestamp: new Date().toISOString(),
+            services: ['tunnel'] // Indicate that tunnel setup is starting
+        }, tabId);
+
+        // Check if any service needs a tunnel
         const allCommands = await commandService.getAll();
         const commandsToRun = allCommands.filter(cmd => cmd.auto_run && cmd.reviewed);
         const commandsByService = commandsToRun.reduce((acc, cmd) => {
             acc[cmd.service_type] = acc[cmd.service_type] || [];
-            acc[cmd.service_type].push({
-                ...cmd,
-                command: cmd.command,
-                execute_on_all_nodes: Boolean(cmd.execute_on_all_nodes)
-            });
+            acc[cmd.service_type].push(cmd);
             return acc;
         }, {});
 
-        // Send initial status to client using tabId
+        const tunnelNeeded = Object.keys(commandsByService).some(serviceType => ['redis', 'sql', 'opensearch'].includes(serviceType));
+
+        let tunnelInfo = null;
+        if (tunnelNeeded) {
+            try {
+                // Modify openTunnel to accept a callback for progress updates
+                tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, (status) => {
+                    WebSocketService.broadcastToTab({
+                        type: 'tunnel_status',
+                        status,
+                        timestamp: new Date().toISOString()
+                    }, tabId);
+                });
+
+                if (!tunnelInfo) {
+                    throw new Error('Tunnel information is unavailable after opening.');
+                }
+
+                // Indicate that tunnel setup is complete
+                WebSocketService.broadcastToTab({
+                    type: 'service_complete',
+                    serviceType: 'tunnel',
+                    timestamp: new Date().toISOString()
+                }, tabId);
+
+            } catch (error) {
+                logger.error('Failed to establish tunnel before executing services', {
+                    error: error.message,
+                    projectId,
+                    environment,
+                    userId
+                });
+
+                WebSocketService.broadcastToTab({
+                    type: 'service_error',
+                    serviceType: 'tunnel',
+                    timestamp: new Date().toISOString(),
+                    error: error.message
+                }, tabId);
+
+                throw error;
+            }
+        }
+
+        // Send the actual list of services to be executed
         WebSocketService.broadcastToTab({
-            type: 'execution_started',
+            type: 'execution_progress',
             timestamp: new Date().toISOString(),
             services: Object.keys(commandsByService)
         }, tabId);
@@ -241,12 +318,11 @@ export async function executeAllCommands(req, res) {
                         apiToken
                     );
 
-                    // Only send the results array in service_complete using tabId
                     WebSocketService.broadcastToTab({
                         type: 'service_complete',
                         serviceType,
                         timestamp: new Date().toISOString(),
-                        results: serviceResults.results // Just send the results array
+                        results: serviceResults.results
                     }, tabId);
 
                     return { serviceType, results: serviceResults };
@@ -269,7 +345,6 @@ export async function executeAllCommands(req, res) {
         // Wait for all services to complete
         const results = await Promise.all(servicePromises);
 
-        // Only send a simple completion message without duplicating the results using tabId
         WebSocketService.broadcastToTab({
             type: 'execution_complete',
             timestamp: new Date().toISOString(),
@@ -297,7 +372,7 @@ export async function executeAllCommands(req, res) {
                 return acc;
             }, {})
         };
-
+        // console.log('finalResults in commands:executeAllCommands===-------------===>', JSON.stringify(finalResults, null, 2));
         res.json(finalResults);
 
     } catch (error) {
@@ -350,6 +425,24 @@ export async function refreshService(req, res) {
     }
 
     try {
+        // Ensure tunnel is open before refreshing a service
+        if (['redis', 'sql', 'opensearch'].includes(serviceType)) {
+            try {
+                const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
+                if (!tunnelInfo) {
+                    throw new Error('Tunnel information is unavailable after opening.');
+                }
+            } catch (error) {
+                logger.error(`Failed to establish tunnel for ${serviceType} refresh`, {
+                    error: error.message,
+                    projectId,
+                    environment,
+                    userId
+                });
+                throw error;
+            }
+        }
+
         // Get all commands for this service type
         const allCommands = await commandService.getAll();
         const serviceCommands = allCommands.filter(cmd =>
@@ -501,6 +594,24 @@ export async function executeSingleCommand(req, res) {
 
         // Ensure service_type is magento_cloud for magento-cloud commands
         const serviceType = singleCommand.service_type;
+
+        // Ensure tunnel is open before executing a single command if needed
+        if (['redis', 'sql', 'opensearch'].includes(serviceType)) {
+            try {
+                const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
+                if (!tunnelInfo) {
+                    throw new Error('Tunnel information is unavailable after opening.');
+                }
+            } catch (error) {
+                logger.error(`Failed to establish tunnel for ${serviceType} command execution`, {
+                    error: error.message,
+                    projectId,
+                    environment,
+                    userId
+                });
+                throw error;
+            }
+        }
 
         // Get the service handler from SERVICE_HANDLERS
         const serviceHandler = SERVICE_HANDLERS[serviceType];

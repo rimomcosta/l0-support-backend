@@ -23,7 +23,6 @@ console.log('apiToken in bashCommands:runCommands=====>', apiToken);
     }
 
     const results = [];
-
     try {
         for (const cmd of commands) {
             try {
@@ -46,6 +45,7 @@ console.log('apiToken in bashCommands:runCommands=====>', apiToken);
                     id: cmd.id,
                     title: cmd.title,
                     command: cmd.command,
+                    allowAi: cmd.allowAi,
                     results: [{
                         nodeId: 'bash',
                         output: stdout || null,
@@ -63,6 +63,7 @@ console.log('apiToken in bashCommands:runCommands=====>', apiToken);
                     id: cmd.id,
                     title: cmd.title,
                     command: cmd.command,
+                    allowAi: cmd.allowAi,
                     results: [{
                         nodeId: 'bash',
                         output: null,

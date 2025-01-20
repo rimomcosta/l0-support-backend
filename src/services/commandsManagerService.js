@@ -6,13 +6,14 @@ export class CommandService {
         try {
             const processedCommand = this.processCommandString(command.command);
             const [result] = await pool.execute(
-                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, auto_run, component_code, layout, locked, reviewed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, allow_ai, auto_run, component_code, layout, locked, reviewed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     command.title,
                     processedCommand,
                     command.description,
                     command.serviceType,
                     command.executeOnAllNodes ?? false,
+                    command.allowAi ?? false,
                     command.autoRun ?? true,
                     command.componentCode ?? null,
                     command.layout ?? null,
@@ -40,15 +41,15 @@ export class CommandService {
                 command.description,
                 command.serviceType,
                 command.executeOnAllNodes ?? false,
+                command.allowAi ?? false,
                 command.autoRun ?? true,
                 command.componentCode,
                 command.layout,
                 command.reviewed,
                 id
             ];
-
             await pool.execute(
-                'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, auto_run = ?, component_code = ?, layout = ?, reviewed = ? WHERE id = ?',
+                'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, allow_ai = ?, auto_run = ?, component_code = ?, layout = ?, reviewed = ? WHERE id = ?',
                 params
             );
 
@@ -103,6 +104,7 @@ export class CommandService {
                 description: row.description,
                 service_type: row.service_type,
                 execute_on_all_nodes: row.execute_on_all_nodes,
+                allow_ai: row.allow_ai,
                 auto_run: row.auto_run,
                 component_code: row.component_code,
                 layout: row.layout,
@@ -127,6 +129,7 @@ export class CommandService {
                 description: row.description,
                 service_type: row.service_type,
                 execute_on_all_nodes: row.execute_on_all_nodes,
+                allow_ai: row.allow_ai,
                 auto_run: row.auto_run,
                 component_code: row.component_code,
                 layout: row.layout,
@@ -152,6 +155,7 @@ export class CommandService {
                 description: row.description,
                 service_type: row.service_type,
                 execute_on_all_nodes: row.execute_on_all_nodes,
+                allow_ai: row.allow_ai,
                 auto_run: row.auto_run,
                 component_code: row.component_code,
                 layout: row.layout,

@@ -16,6 +16,7 @@ const defaultConfig = {
 
 // Format server data into readable format
 const formatServerData = (dashboardData) => {
+  console.log('Server Data for AI====-----:', JSON.stringify(dashboardData, null, 2));
   if (!dashboardData || typeof dashboardData !== 'object') {
     return '';
   }

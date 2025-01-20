@@ -4,14 +4,16 @@ import { executeCommand } from '../api/app/magentoCloudDirectAccess.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
 
 export class RabbitMQAdminService {
-    constructor(projectId, environment, apiToken) {
+    constructor(projectId, environment, apiToken, userId) {
         this.projectId = projectId;
         this.environment = environment;
         this.apiToken = apiToken;
+        this.userId = userId;
         this.magentoCloud = new MagentoCloudAdapter();
     }
 
     async executeCommand(command) {
+        console.log('userId from rabbitmqAdminService========================>', this.userId);
         try {
             // Extract RabbitMQ details from environment variable
             const rabbitmqHost = `$(echo $MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r .rabbitmq[0].host)`;
@@ -33,7 +35,8 @@ export class RabbitMQAdminService {
                 this.magentoCloud,
                 sshCommand,
                 { projectId: this.projectId, environment: this.environment },
-                this.apiToken // Pass the apiToken
+                this.apiToken,
+                this.userId
             );
 
             if (status === 'ERROR') {

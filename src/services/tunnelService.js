@@ -125,7 +125,7 @@ class TunnelManager {
 
             if (this.tunnelUsers.get(key).size === 0) {
                 logger.info('No more users using the tunnel. Initiating closure.', { key });
-                await this.closeTunnel(projectId, environment, apiToken);
+                await this.closeTunnel(projectId, environment, apiToken, userId);
             }
         }
     }
@@ -134,12 +134,13 @@ class TunnelManager {
      * Retrieves the tunnel info from Magento Cloud. If no tunnel is found or
      * the tunnel is unhealthy, returns null.
      */
-    async getTunnelInfo(projectId, environment, apiToken) {
+    async getTunnelInfo(projectId, environment, apiToken, userId) {
+        console.log('userId in tunnelService:getTunnelInfo=====>', userId);
         const tunnelKey = `${projectId}-${environment}`;
         try {
             const { stdout } = await this.magentoCloud.executeCommand(
                 `tunnel:info -p ${projectId} -e ${environment} -y`,
-                apiToken
+                apiToken, userId
             );
             const tunnelInfo = this.parseTunnelInfo(stdout);
 
@@ -151,7 +152,7 @@ class TunnelManager {
                         environment
                     });
                     try {
-                        await this.magentoCloud.executeCommand('tunnel:close -y', apiToken);
+                        await this.magentoCloud.executeCommand('tunnel:close -y', apiToken, userId);
                     } catch (closeError) {
                         logger.debug('Error closing unhealthy tunnel', {
                             error: closeError.message
@@ -286,10 +287,10 @@ class TunnelManager {
      * Waits for the tunnel to open by spawning "tunnel:open" and parsing its output.
      * This resolves with the tunnel info once all services are reported as ready.
      */
-    async waitForTunnelOpen(projectId, environment, apiToken) {
+    async waitForTunnelOpen(projectId, environment, apiToken, userId) {
         return new Promise((resolve, reject) => {
             const command = `tunnel:open -p ${projectId} -e ${environment} -y`;
-            const { tunnelProcess } = this.magentoCloud.executeCommandStream(command, apiToken);
+            const { tunnelProcess } = this.magentoCloud.executeCommandStream(command, apiToken, userId);
 
             let servicesFound = {};
             let allServicesReady = false;
@@ -335,7 +336,8 @@ class TunnelManager {
                     try {
                         const { stdout } = await this.magentoCloud.executeCommand(
                             `tunnel:info -p ${projectId} -e ${environment} -y`,
-                            apiToken
+                            apiToken,
+                            userId
                         );
                         const tunnelInfo = this.parseTunnelInfo(stdout);
                         resolve(tunnelInfo);
@@ -364,9 +366,9 @@ class TunnelManager {
      * The main entrypoint to ensure a tunnel is open for the specified project/env.
      * If already open and healthy, returns the existing info. Otherwise, tries to acquire a lock and open it.
      */
-    async openTunnel(projectId, environment, apiToken, userId) {
+    async openTunnel(projectId, environment, apiToken, userId, progressCallback) {
         console.log('apiToken in tunnelService:openTunnel=====>', apiToken);
-
+        console.log('userId in tunnelService:openTunnel=====>', userId);
         if (!userId) {
             throw new Error("userId is not provided");
         }
@@ -384,23 +386,28 @@ class TunnelManager {
         while (retryCount < maxRetries) {
             try {
                 // Quick check for existing tunnel
-                let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
+                if (progressCallback) progressCallback('checking_existing_tunnel');
+                let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken, userId);
                 if (tunnelInfo) {
+                    if (progressCallback) progressCallback('tunnel_exists');
                     await this.incrementTunnelUsage(projectId, environment, userId);
                     this.resetIdleTimer(projectId, environment, userId, apiToken);
                     return tunnelInfo;
                 }
 
                 // Acquire lock
+                if (progressCallback) progressCallback('acquiring_lock');
                 const lockId = await this.acquireLock(tunnelKey);
                 if (!lockId) {
+                    if (progressCallback) progressCallback('waiting_for_lock');
                     logger.debug('Waiting for tunnel creation by another process...', { projectId, environment });
 
                     // Wait for the other process to finish opening
                     const startTime = Date.now();
                     while (Date.now() - startTime < LOCK_WAIT_TIMEOUT) {
-                        tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
+                        tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken, userId);
                         if (tunnelInfo) {
+                            if (progressCallback) progressCallback('tunnel_opened_by_other_process');
                             await this.incrementTunnelUsage(projectId, environment, userId);
                             this.resetIdleTimer(projectId, environment, userId, apiToken);
                             return tunnelInfo;
@@ -419,11 +426,14 @@ class TunnelManager {
                         environment
                     });
 
-                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken);
+                    if (progressCallback) progressCallback('opening_tunnel');
+                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken, userId);
 
                     // Verify the new tunnel is healthy
+                    if (progressCallback) progressCallback('verifying_tunnel');
                     const isHealthy = await this.checkTunnelHealth(newTunnelInfo);
                     if (isHealthy) {
+                        if (progressCallback) progressCallback('tunnel_ready');
                         await this.incrementTunnelUsage(projectId, environment, userId);
                         this.resetIdleTimer(projectId, environment, userId, apiToken);
                         logger.info('Tunnel successfully created and verified', { projectId, environment });
@@ -497,7 +507,7 @@ class TunnelManager {
      * Closes the tunnel by acquiring the lock, calling "tunnel:close -y", and removing
      * relevant Redis keys and timers.
      */
-    async closeTunnel(projectId, environment, apiToken) {
+    async closeTunnel(projectId, environment, apiToken, userId) {
         console.log('apiToken in tunnelManager:closeTunnel=====>', apiToken);
         const tunnelKey = `${projectId}-${environment}`;
         const lockId = await this.acquireLock(tunnelKey);
@@ -507,7 +517,7 @@ class TunnelManager {
         }
 
         try {
-            await this.magentoCloud.executeCommand('tunnel:close -y', apiToken);
+            await this.magentoCloud.executeCommand('tunnel:close -y', apiToken, userId);
             await redisClient.del(`tunnel_status:${tunnelKey}`);
 
             // Using scanIterator for node-redis v4+
@@ -560,7 +570,7 @@ class TunnelManager {
             }
     
             // Attempt to retrieve the primary service
-            let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken);
+            let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken, userId);
     
             if (tunnelInfo && tunnelInfo[serviceName] && tunnelInfo[serviceName].length > 0) {
                 return { [serviceName]: tunnelInfo[serviceName] };
