@@ -208,6 +208,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries, apiTo
                     title: query.title,
                     query: query.query,
                     results: [], // Add the extra "results" array
+                    allowAi: query.allowAi,
                     summary: {  // Add the "summary" object
                         total: 1, // Always 1 for single-node queries
                         successful: 0,
@@ -268,6 +269,7 @@ async function executeQueriesWithStrategy(projectId, environment, queries, apiTo
                     id: query.id,
                     title: query.title,
                     query: query.query,
+                    allowAi: query.allowAi,
                     results: flattenedResults.filter(r => r.queryId === query.id),
                     summary: {
                         total: nodes.length,

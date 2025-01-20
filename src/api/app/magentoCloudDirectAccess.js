@@ -10,15 +10,15 @@ import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 function normalizeProjectFlag(command) {
     const parts = command.split('|');
     const magentoCommand = parts[0];
-    
+
     let normalized = magentoCommand
         .replace(/\s+--p\s+/, ' --project ')
         .replace(/\s+-project\s+/, ' -p ');
-    
+
     if (parts.length > 1) {
         normalized += ' | ' + parts.slice(1).join(' | ');
     }
-    
+
     return normalized;
 }
 
@@ -133,7 +133,7 @@ export async function executeCommands(req, res) {
         });
     }
 
-    try { 
+    try {
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }
@@ -142,21 +142,21 @@ export async function executeCommands(req, res) {
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
-        const context = { 
-            projectId, 
+        const context = {
+            projectId,
             environment: environment || null,
             instance: instance || null
         };
 
         const results = await Promise.all(commands.map(async (cmd) => {
             const { output, error, status } = await executeCommand(
-                magentoCloud, 
+                magentoCloud,
                 cmd.command,
                 context,
                 apiToken, // Pass apiToken to executeCommand
                 userId    // Pass userId to executeCommand
             );
-            
+
             return {
                 id: cmd.id,
                 title: cmd.title,
@@ -167,6 +167,7 @@ export async function executeCommands(req, res) {
                     error,
                     status
                 }],
+                allowAi: cmd.allowAi,
                 summary: {
                     total: 1,
                     successful: status === 'SUCCESS' ? 1 : 0,
@@ -224,8 +225,8 @@ export async function executeSSHCommand(req, res) {
         const magentoCloud = new MagentoCloudAdapter();
         await magentoCloud.validateExecutable();
 
-        const context = { 
-            projectId, 
+        const context = {
+            projectId,
             environment: environment || null,
             instance: null // SSH might not need instance
         };
@@ -240,7 +241,7 @@ export async function executeSSHCommand(req, res) {
 
         // Execute the SSH command as a stream
         const { tunnelProcess } = magentoCloud.executeCommandStream(processedCommand, apiToken, userId);
-        logger.debug('Executing Magento Cloud command for userId:magentoCloudDirectAccess:executeCommandStream',userId);
+        logger.debug('Executing Magento Cloud command for userId:magentoCloudDirectAccess:executeCommandStream', userId);
         // Set headers for streaming
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Transfer-Encoding', 'chunked');

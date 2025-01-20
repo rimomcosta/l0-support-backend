@@ -52,7 +52,8 @@ export async function runQueries(req, res) {
                 id: query.id,
                 title: query.title,
                 query: query.command,
-                results: []
+                results: [],
+                allowAi: query.allowAi
             };
 
             try {

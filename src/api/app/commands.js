@@ -24,6 +24,7 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
+                allowAi: Boolean(cmd.allow_ai),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
                 apiToken: apiToken,
                 userId: userId
@@ -37,6 +38,7 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command, // Use "command" for RabbitMQ
+                allowAi: Boolean(cmd.allow_ai),
                 apiToken: apiToken,
                 userId: userId
             }))
@@ -49,6 +51,7 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 command: cmd.command,
+                allowAi: Boolean(cmd.allow_ai),
                 apiToken: apiToken,
                 userId: userId
             }))
@@ -61,6 +64,7 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
+                allowAi: Boolean(cmd.allow_ai),
                 executeOnAllNodes: Boolean(cmd.execute_on_all_nodes),
                 apiToken: apiToken,
                 tunnelInfo: tunnelInfo,
@@ -75,6 +79,7 @@ const SERVICE_HANDLERS = {
                 id: cmd.id,
                 title: cmd.title,
                 query: cmd.command,
+                allowAi: Boolean(cmd.allow_ai),
                 apiToken: apiToken,
                 tunnelInfo: tunnelInfo,
                 userId: userId
@@ -92,6 +97,7 @@ const SERVICE_HANDLERS = {
                     id: cmd.id,
                     title: cmd.title,
                     command: config,
+                    allowAi: Boolean(cmd.allow_ai),
                     apiToken: apiToken,
                     tunnelInfo: tunnelInfo,
                     userId: userId
@@ -115,6 +121,7 @@ const SERVICE_HANDLERS = {
                     id: cmd.id,
                     title: cmd.title,
                     command: command,
+                    allowAi: Boolean(cmd.allow_ai),
                     apiToken: apiToken,
                     userId: userId
                 };
@@ -365,7 +372,7 @@ export async function executeAllCommands(req, res) {
                 return acc;
             }, {})
         };
-
+        // console.log('finalResults in commands:executeAllCommands===-------------===>', JSON.stringify(finalResults, null, 2));
         res.json(finalResults);
 
     } catch (error) {

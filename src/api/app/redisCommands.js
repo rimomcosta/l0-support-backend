@@ -26,7 +26,7 @@ export async function runQueries(req, res) {
     try {
         // Get Redis-specific tunnel info, passing userId
         const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'redis', apiToken, userId);
-        
+
         if (!tunnelInfo) {
             logger.error('Failed to retrieve tunnel information for Redis', {
                 projectId,
@@ -45,7 +45,8 @@ export async function runQueries(req, res) {
                 id: query.id,
                 title: query.title,
                 query: query.query,
-                results: []
+                results: [],
+                allowAi: query.allowAi,
             };
 
             try {
@@ -71,7 +72,7 @@ export async function runQueries(req, res) {
                     status: 'ERROR'
                 });
             }
-            
+
             queryResult.summary = {
                 total: queryResult.results.length,
                 successful: queryResult.results.filter(r => r.status === 'SUCCESS').length,

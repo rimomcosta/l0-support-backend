@@ -15,6 +15,7 @@ const tables = {
             description TEXT, 
             service_type ENUM('ssh', 'sql', 'redis', 'opensearch', 'magento_cloud', 'bash', 'rabbitmq') NOT NULL,
             execute_on_all_nodes BOOLEAN DEFAULT FALSE,
+            allow_ai BOOLEAN DEFAULT FALSE,
             auto_run BOOLEAN DEFAULT TRUE,
             component_code TEXT,
             layout VARCHAR(255) DEFAULT NULL,

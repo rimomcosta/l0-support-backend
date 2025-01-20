@@ -197,7 +197,8 @@ console.log('apiToken in sshCommands:runCommands=====>', apiToken);
         commands: commands.map(cmd => ({
             id: cmd.id,
             title: cmd.title,
-            command: cmd.command
+            command: cmd.command,
+            allowAi: cmd.allowAi
         }))
     });
 
@@ -267,6 +268,7 @@ console.log('apiToken in sshCommands:runCommands=====>', apiToken);
                     id: command.id,
                     title: command.title,
                     command: command.command,
+                    allowAi: command.allowAi,
                     results: node1Results.filter(r => r.commandId === command.id)
                 });
             });
@@ -305,6 +307,7 @@ console.log('apiToken in sshCommands:runCommands=====>', apiToken);
                 id: command.id,
                 title: command.title,
                 command: command.command,
+                allowAi: command.allowAi,
                 results: [{
                     commandId: command.id,
                     nodeId: 'validation-error',

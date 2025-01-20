@@ -30,7 +30,8 @@ console.log('userId in rabbitmqCommands:runCommands=====>', userId);
                 id: command.id,
                 title: command.title,
                 command: command.command,
-                results: []
+                results: [],
+                allowAi: command.allowAi
             };
 
             try {
