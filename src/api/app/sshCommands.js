@@ -116,14 +116,14 @@ async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, no
         const scriptContent = createScriptContent(commands);
 
         // Use a here-document to pass the script to `bash -s` via SSH.
-        // The 'EOF' delimiter is quoted to prevent shell expansion of variables inside it.
+        // The 'MAGENTO_SCRIPT' delimiter is quoted to prevent shell expansion of variables inside it.
         const sshPrefix = isSingleNode
             ? `ssh -p ${projectId} -e ${environment}`
             : `ssh -p ${projectId} -e ${environment} --instance ${nodeId}`;
 
-        const sshCommand = `${sshPrefix} "bash -s" <<'EOF'
+        const sshCommand = `${sshPrefix} "bash -s" <<'MAGENTO_SCRIPT'
 ${scriptContent}
-EOF`;
+MAGENTO_SCRIPT`;
 
         logger.debug("Executing SSH command via here-document:", {
             sshCommand,
