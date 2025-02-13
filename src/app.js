@@ -13,8 +13,12 @@ import { corsConfig } from './config/cors.js';
 import { sessionConfig } from './config/session.js';
 import routes from './routes.js';
 import { initializeTables } from './config/initDatabase.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export async function initializeApp() {
     try {
@@ -36,11 +40,19 @@ export async function initializeApp() {
         const redisStore = createSessionStore();
         const sessionParser = session({ store: redisStore, ...sessionConfig });
 
+        // Serve the React build
+        app.use(express.static(path.join(__dirname, '../../frontend/build')));
+
         // Use the sessionParser in app
         app.use(sessionParser);
         app.use(userContextMiddleware);
 
         routes(app);
+
+        // If you want client-side routing, serve index.html for all non-API routes
+        app.get('*', (req, res) => {
+            res.sendFile(path.join(__dirname, '../../frontend/build', 'index.html'));
+        });
 
         app.use(errorHandler);
 
