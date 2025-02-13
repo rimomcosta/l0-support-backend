@@ -50,7 +50,7 @@ class MagentoCloudAdapter {
     async ensureHomeDir(homeDir) {
         try {
             await mkdir(homeDir, { recursive: true, mode: 0o700 });
-            logger.debug(`Ensured Magento Cloud home directory exists: ${homeDir}`);
+            logger.debug(`Ensured Magento Cloud home directory exists---::: ${homeDir}`);
         } catch (err) {
             logger.error('Failed to create Magento Cloud home directory:', {
                 error: err.message,
@@ -62,7 +62,7 @@ class MagentoCloudAdapter {
     }
 
     /**
-     * Executes a Magento Cloud CLI command with dynamic environment variables.
+     * Executes a Magento Cloud CLI command with modified environment variables.
      * @param {string} command - The command to execute
      * @param {string} apiToken - The API token for authentication
      * @param {string} userId - The unique identifier for the user
@@ -82,16 +82,21 @@ class MagentoCloudAdapter {
         const homeDir = this.generateHomeDir(userId);
         await this.ensureHomeDir(homeDir);
 
+        // Destructure to exclude unwanted environment variables
+        const { MAGENTO_CLOUD_APPLICATION_NAME, MAGENTO_CLOUD_BRANCH, ...cleanEnv } = process.env;
+
         try {
             const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
                 env: {
-                    ...process.env,
-                    PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`, // To allow using PHP from PATH
+                    ...cleanEnv,
+                    PATH: `/usr/local/bin:/usr/bin:${cleanEnv.PATH}`, // To allow using PHP from PATH
                     MAGENTO_CLOUD_CLI_TOKEN: apiToken,
                     MAGENTO_CLOUD_HOME: homeDir
                 },
                 maxBuffer: 1024 * 1024 * 10 // 10MB buffer
             });
+            console.log('Command Output (stdout):1----->', stdout); // Log the command output
+            console.log('Command Output (stderr):1----->', stderr); // Log any errors
             return { stdout, stderr };
         } catch (error) {
             if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
@@ -139,16 +144,30 @@ class MagentoCloudAdapter {
             throw err;
         });
 
+        // Destructure to exclude unwanted environment variables
+        const { MAGENTO_CLOUD_APPLICATION_NAME, MAGENTO_CLOUD_BRANCH, ...cleanEnv } = process.env;
+
         const tunnelProcess = exec(`${this.executablePath} ${command}`, {
             env: {
-                ...process.env,
-                PATH: `/usr/local/bin:/usr/bin:${process.env.PATH}`, // To allow using PHP from PATH
+                ...cleanEnv,
+                PATH: `/usr/local/bin:/usr/bin:${cleanEnv.PATH}`, // To allow using PHP from PATH
                 MAGENTO_CLOUD_CLI_TOKEN: apiToken,
                 MAGENTO_CLOUD_HOME: homeDir
             },
             maxBuffer: 1024 * 1024 * 10 // 10MB buffer
         });
+        // Log the real-time output of the streamed process
+        tunnelProcess.stdout.on('data', (data) => {
+            console.log('Stream Output (stdout):2----->', data.toString());
+        });
 
+        tunnelProcess.stderr.on('data', (data) => {
+            console.log('Stream Output (stderr):2----->', data.toString());
+        });
+
+        tunnelProcess.on('close', (code) => {
+            console.log(`Stream Process exited with code ${code}`);
+        });
         return { tunnelProcess };
     }
 }
