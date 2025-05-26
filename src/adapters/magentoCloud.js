@@ -92,10 +92,15 @@ class MagentoCloudAdapter {
                     MAGENTO_CLOUD_CLI_TOKEN: apiToken,
                     MAGENTO_CLOUD_HOME: homeDir
                 },
-                maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+                maxBuffer: 10 * 1024 * 1024 // 10MB buffer
             });
-            console.log('Command Output (stdout):1----->', stdout); // Log the command output
-            console.log('Command Output (stderr):1----->', stderr); // Log any errors
+
+            logger.debug('Command executed successfully', {
+                commandType: command.split(' ')[0],
+                hasOutput: Boolean(stdout),
+                hasError: Boolean(stderr)
+            });
+
             return { stdout, stderr };
         } catch (error) {
             if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
@@ -152,15 +157,19 @@ class MagentoCloudAdapter {
                 MAGENTO_CLOUD_CLI_TOKEN: apiToken,
                 MAGENTO_CLOUD_HOME: homeDir
             },
-            maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+            maxBuffer: 10 * 1024 * 1024 // 10MB buffer
         });
-        // Log the real-time output of the streamed process
+        // Log output to console for debugging
         tunnelProcess.stdout.on('data', (data) => {
-            console.log('Stream Output (stdout):2----->', data.toString());
+            logger.debug('Stream output received', {
+                dataLength: data.toString().length
+            });
         });
 
         tunnelProcess.stderr.on('data', (data) => {
-            console.log('Stream Output (stderr):2----->', data.toString());
+            logger.debug('Stream error output received', {
+                dataLength: data.toString().length
+            });
         });
 
         tunnelProcess.on('close', (code) => {

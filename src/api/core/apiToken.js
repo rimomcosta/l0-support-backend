@@ -1,6 +1,7 @@
 // src/api/core/apiToken.js
 import { ApiTokenService } from '../../services/apiTokenService.js';
 import { logger } from '../../services/logger.js';
+import { logActivity } from '../../services/activityLogger.js';
 import { EncryptionService } from '../../services/encryptionService.js';
 
 /**
@@ -10,6 +11,7 @@ export async function encryptAndSaveApiToken(req, res) {
     try {
         const { apiToken, password } = req.body;
         const userId = req.session.user.id;
+        const userEmail = req.session.user.email;
 
         if (!apiToken) {
             return res.status(400).json({ error: 'API token is required' });
@@ -51,6 +53,9 @@ export async function encryptAndSaveApiToken(req, res) {
 
         await req.session.save(); // Ensure session is saved
 
+        // Log activity
+        logActivity.apiToken.saved(userId, userEmail);
+
         res.json({ success: true, message: 'API token saved and decrypted successfully' });
     } catch (error) {
         logger.error('Failed to save API token:', {
@@ -68,6 +73,7 @@ export async function decryptApiToken(req, res) {
     try {
         const { password } = req.body;
         const userId = req.session.user.id;
+        const userEmail = req.session.user.email;
 
         if (!password) {
             return res.status(400).json({ error: 'Password is required for decrypting the API token' });
@@ -105,6 +111,9 @@ export async function decryptApiToken(req, res) {
 
         await req.session.save(); // Ensure session is saved
 
+        // Log activity
+        logActivity.apiToken.decrypted(userId, userEmail);
+
         res.json({ success: true, message: 'API token decrypted successfully' });
     } catch (error) {
         logger.error('Failed to decrypt API token:', {
@@ -141,6 +150,7 @@ export async function getApiToken(req, res) {
 export async function revokeApiToken(req, res) {
     try {
         const userId = req.session.user.id;
+        const userEmail = req.session.user.email;
 
         // Delete the API token from the database
         await ApiTokenService.deleteApiToken(userId);
@@ -155,6 +165,9 @@ export async function revokeApiToken(req, res) {
         logger.info('API token revoked successfully:', {
             userId
         });
+
+        // Log activity
+        logActivity.apiToken.revoked(userId, userEmail);
 
         res.json({ success: true, message: 'API token revoked successfully' });
     } catch (error) {

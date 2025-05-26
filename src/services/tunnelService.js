@@ -2,6 +2,7 @@
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { logger } from './logger.js';
+import { logActivity } from './activityLogger.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
 import { redisClient } from './redisService.js';
 import { v4 as uuidv4 } from 'uuid'; // For unique lock identifiers
@@ -434,6 +435,10 @@ class TunnelManager {
                         await this.incrementTunnelUsage(projectId, environment, userId);
                         this.resetIdleTimer(projectId, environment, userId, apiToken);
                         logger.info('Tunnel successfully created and verified', { projectId, environment });
+                        
+                        // Log tunnel opened activity
+                        logActivity.tunnel.opened(userId, 'system', projectId, environment);
+                        
                         return newTunnelInfo;
                     }
                     throw new Error('New tunnel failed health check');
@@ -540,6 +545,11 @@ class TunnelManager {
             this.tunnelUsers.delete(tunnelKey);
 
             logger.info('Tunnel closed successfully', { projectId, environment });
+            
+            // Log tunnel closed activity
+            if (userId) {
+                logActivity.tunnel.closed(userId, 'system', projectId, environment);
+            }
         } catch (error) {
             logger.error('Failed to close tunnel:', { error: error.message, projectId, environment });
             throw error;

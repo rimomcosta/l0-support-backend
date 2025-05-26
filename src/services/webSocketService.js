@@ -1,6 +1,7 @@
 // src/services/webSocketService.js
 import { WebSocketServer } from 'ws';
 import { logger } from './logger.js';
+import { logActivity } from './activityLogger.js';
 import url from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import chatAgent from './ai/agents/chat.js';
@@ -34,6 +35,13 @@ export class WebSocketService {
                 clientId: ws.clientId
             });
 
+            // Log activity for WebSocket connection
+            if (ws.userID && ws.sessionID) {
+                // Get user email from session if available
+                const userEmail = req.session?.user?.email || 'unknown';
+                logActivity.websocket.connected(ws.userID, userEmail, ws.clientId);
+            }
+
             ws.on('error', (error) => {
                 logger.error('WebSocket error:', {
                     error: error.message,
@@ -46,6 +54,12 @@ export class WebSocketService {
                     userId: ws.userID,
                     clientId: ws.clientId
                 });
+
+                // Log activity for WebSocket disconnection
+                if (ws.userID) {
+                    const userEmail = 'unknown'; // We don't have session here
+                    logActivity.websocket.disconnected(ws.userID, userEmail, ws.clientId);
+                }
 
                 // Remove ws from that tab
                 const connections = connectionsByTabId.get(tabId);
@@ -93,6 +107,11 @@ export class WebSocketService {
                                 chatId,
                                 tabId: parsedMessage.tabId
                             }));
+
+                            // Log chat creation activity
+                            if (userId) {
+                                logActivity.chat.created(userId, 'unknown', chatId);
+                            }
                             break;
                         }
 
@@ -100,13 +119,19 @@ export class WebSocketService {
                             // If we do not have a controller for that chat, create it
                             let entry = abortControllers.get(parsedMessage.chatId);
                             if (!entry) {
-                                console.warn(`No AbortController found for chatId: ${parsedMessage.chatId}. Creating a new one so user can continue...`);
+                                logger.warn(`No AbortController found for chatId: ${parsedMessage.chatId}. Creating a new one.`);
                                 const newAbort = new AbortController();
                                 abortControllers.set(parsedMessage.chatId, {
                                     controller: newAbort,
                                     tabId: parsedMessage.tabId
                                 });
                                 entry = abortControllers.get(parsedMessage.chatId);
+                            }
+
+                            // Log chat message activity
+                            if (ws.userID) {
+                                const messageLength = parsedMessage.content?.length || 0;
+                                logActivity.chat.message(ws.userID, 'unknown', parsedMessage.chatId, messageLength);
                             }
 
                             // Now pass the entry's abortSignal to the chatAgent
@@ -119,7 +144,10 @@ export class WebSocketService {
                                 abortSignal: entry.controller.signal,
                                 dashboardData: parsedMessage.dashboardData // Pass the dashboard data
                             }).catch(err => {
-                                console.error('Error in handleUserMessage:', err);
+                                logger.error('Error in handleUserMessage:', {
+                                    error: err.message,
+                                    chatId: parsedMessage.chatId
+                                });
                                 ws.send(JSON.stringify({
                                     type: 'error',
                                     message: 'An error occurred while processing your message.',
@@ -143,7 +171,7 @@ export class WebSocketService {
                                     chatId
                                 }));
                             } else {
-                                console.warn(`No AbortController found for chatId: ${chatId}`);
+                                logger.warn(`No AbortController found for chatId: ${chatId}`);
                                 ws.send(JSON.stringify({
                                     type: 'error',
                                     message: 'No active chat session found to stop.',
@@ -154,10 +182,12 @@ export class WebSocketService {
                         }
 
                         default:
-                            console.warn('Unknown message type:', parsedMessage.type);
+                            logger.warn('Unknown message type:', { type: parsedMessage.type });
                     }
                 } catch (err) {
-                    console.error('Failed to process WebSocket message:', err);
+                    logger.error('Failed to process WebSocket message:', {
+                        error: err.message
+                    });
                     ws.send(JSON.stringify({
                         type: 'error',
                         message: 'Invalid message format.',

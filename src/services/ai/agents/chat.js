@@ -16,7 +16,6 @@ const defaultConfig = {
 
 // Format server data into readable format
 const formatServerData = (dashboardData) => {
-  console.log('Server Data for AI====-----:', JSON.stringify(dashboardData, null, 2));
   if (!dashboardData || typeof dashboardData !== 'object') {
     return '';
   }
@@ -50,6 +49,13 @@ const chatAgent = {
 
   async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData }) {
     try {
+      // Log dashboard data for debugging (sanitized)
+      logger.debug('Dashboard data received for AI processing', {
+        chatId,
+        hasData: Boolean(dashboardData),
+        dataKeys: dashboardData ? Object.keys(dashboardData) : []
+      });
+
       // 1) Save user message
       await ChatDao.saveMessage(chatId, 'user', content);
 

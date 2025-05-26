@@ -4,6 +4,7 @@
 import { CommandService } from '../../services/commandsManagerService.js';
 import { WebSocketService } from '../../services/webSocketService.js';
 import { logger } from '../../services/logger.js';
+import { logActivity } from '../../services/activityLogger.js';
 import { tunnelManager } from '../../services/tunnelService.js';
 import { ApiTokenService } from '../../services/apiTokenService.js';
 import * as sshCommands from './sshCommands.js';
@@ -203,6 +204,13 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
 
     try {
         await handler(request, responseHandler);
+        
+        // Log successful command execution
+        const userEmail = 'system'; // We don't have email in this context
+        commands.forEach(cmd => {
+            logActivity.command.executed(userId, userEmail, serviceType, projectId, environment, cmd.id);
+        });
+        
         return responseHandler.data;
     } catch (error) {
         logger.error(`Error executing ${serviceType} commands:`, {
@@ -211,6 +219,11 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
             environment,
             userId
         });
+        
+        // Log failed command execution
+        const userEmail = 'system';
+        logActivity.command.failed(userId, userEmail, serviceType, projectId, environment, error);
+        
         throw error;
     }
 }
@@ -370,7 +383,6 @@ export async function executeAllCommands(req, res) {
                 return acc;
             }, {})
         };
-        // console.log('finalResults in commands:executeAllCommands===-------------===>', JSON.stringify(finalResults, null, 2));
         res.json(finalResults);
 
     } catch (error) {

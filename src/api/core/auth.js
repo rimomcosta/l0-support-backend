@@ -2,6 +2,7 @@
 import { AuthService } from '../../services/authService.js';
 import { oidcClient } from '../../services/oidcService.js';
 import { logger } from '../../services/logger.js';
+import { logActivity } from '../../services/activityLogger.js';
 import jwt from 'jsonwebtoken';
 import { sessionConfig } from '../../config/session.js';
 
@@ -67,6 +68,9 @@ export async function callback(req, res) {
             timestamp: new Date().toISOString()
         });
 
+        // Log user login activity
+        logActivity.auth.login(user.user_id, userInfo.email, userInfo.userRole);
+
         const returnTo = req.session.auth.returnTo || `${process.env.CLIENT_ORIGIN}?auth=success`;
         delete req.session.auth.returnTo;
 
@@ -95,6 +99,7 @@ export function getUser(req, res) {
 
 export async function logout(req, res) {
     const userId = req.session?.user?.id;
+    const userEmail = req.session?.user?.email;
     const sessionId = req.sessionID;
 
     logger.debug('Logout initiated', {
@@ -129,6 +134,11 @@ export async function logout(req, res) {
             userId,
             sessionId
         });
+
+        // Log user logout activity
+        if (userId && userEmail) {
+            logActivity.auth.logout(userId, userEmail);
+        }
 
         res.clearCookie(sessionConfig.name, {
             path: '/',
