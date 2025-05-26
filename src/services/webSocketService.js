@@ -24,26 +24,6 @@ export class WebSocketService {
             ws.clientId = clientId;
             ws.tabId = tabId;
 
-            // Check for duplicate tab connections
-            const existingConnections = connectionsByTabId.get(tabId) || [];
-            const activeConnection = existingConnections.find(conn => 
-                conn.readyState === ws.OPEN && conn.clientId === clientId
-            );
-
-            if (activeConnection) {
-                // Send warning about duplicate connection
-                ws.send(JSON.stringify({
-                    type: 'duplicate_tab_warning',
-                    message: 'Another connection with this tab ID is already active',
-                    tabId: tabId
-                }));
-                logger.warn('Duplicate tab connection detected', {
-                    tabId,
-                    clientId,
-                    userId: ws.userID
-                });
-            }
-
             // Keep track of the connection
             if (!connectionsByTabId.has(tabId)) {
                 connectionsByTabId.set(tabId, []);
@@ -52,8 +32,7 @@ export class WebSocketService {
 
             logger.info('WebSocket connection established', {
                 userId: ws.userID,
-                clientId: ws.clientId,
-                tabId: ws.tabId
+                clientId: ws.clientId
             });
 
             // Log activity for WebSocket connection
@@ -62,14 +41,14 @@ export class WebSocketService {
                 const userEmail = req.session?.user?.email || 'unknown';
                 logActivity.websocket.connected(ws.userID, userEmail, ws.clientId);
             }
-            
-            // Send user info to client for validation
-            ws.send(JSON.stringify({
-                type: 'connection_established',
-                userId: ws.userID,
-                tabId: ws.tabId,
-                timestamp: new Date().toISOString()
-            }));
+
+            const userTabKey = `${ws.userID || 'unknown'}::${ws.tabId}`;
+            if (!global.activeUserTabs) global.activeUserTabs = new Map();
+            const oldWs = global.activeUserTabs.get(userTabKey);
+            if (oldWs && oldWs !== ws && oldWs.readyState === ws.OPEN) {
+                oldWs.close(4000, 'Duplicate tab detected, closing old connection.');
+            }
+            global.activeUserTabs.set(userTabKey, ws);
 
             ws.on('error', (error) => {
                 logger.error('WebSocket error:', {
@@ -110,6 +89,8 @@ export class WebSocketService {
                         logger.info(`Aborted stream for chatId=${cid} due to tab closure.`);
                     }
                 }
+
+                global.activeUserTabs.delete(userTabKey);
             });
 
             // **** CORE WEBSOCKET MESSAGE HANDLER ****
@@ -233,16 +214,14 @@ export class WebSocketService {
         return wss;
     }
 
-    static broadcastToTab(message, tabId, userId = null) {
+    static broadcastToTab(message, tabId) {
         if (!global.wss) {
             throw new Error('WebSocket server not initialized');
         }
         const connections = global.wss.connectionsByTabId.get(tabId);
         if (connections) {
             connections.forEach(client => {
-                // Only send to clients with matching userId if specified
-                if (client.readyState === client.OPEN && 
-                    (!userId || client.userID === userId)) {
+                if (client.readyState === client.OPEN) {
                     client.send(JSON.stringify({
                         ...message,
                         tabId,

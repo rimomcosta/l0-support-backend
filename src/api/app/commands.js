@@ -254,7 +254,7 @@ export async function executeAllCommands(req, res) {
             type: 'execution_started',
             timestamp: new Date().toISOString(),
             services: ['tunnel'] // Indicate that tunnel setup is starting
-        }, tabId, userId);
+        }, tabId);
 
         // Check if any service needs a tunnel
         const allCommands = await commandService.getAll();
@@ -276,7 +276,7 @@ export async function executeAllCommands(req, res) {
                         type: 'tunnel_status',
                         status,
                         timestamp: new Date().toISOString()
-                    }, tabId, userId);
+                    }, tabId);
                 });
 
                 if (!tunnelInfo) {
@@ -288,7 +288,7 @@ export async function executeAllCommands(req, res) {
                     type: 'service_complete',
                     serviceType: 'tunnel',
                     timestamp: new Date().toISOString()
-                }, tabId, userId);
+                }, tabId);
 
             } catch (error) {
                 logger.error('Failed to establish tunnel before executing services', {
@@ -303,7 +303,7 @@ export async function executeAllCommands(req, res) {
                     serviceType: 'tunnel',
                     timestamp: new Date().toISOString(),
                     error: error.message
-                }, tabId, userId);
+                }, tabId);
 
                 throw error;
             }
@@ -314,7 +314,7 @@ export async function executeAllCommands(req, res) {
             type: 'execution_progress',
             timestamp: new Date().toISOString(),
             services: Object.keys(commandsByService)
-        }, tabId, userId);
+        }, tabId);
 
         // Execute services in parallel
         const servicePromises = Object.entries(commandsByService).map(
@@ -419,10 +419,10 @@ export async function refreshService(req, res) {
         const expires = new Date(req.session.cookie._expires);
 
         if (now > expires) {
-            } else {
-            }
-    } else {
+        } else {
         }
+    } else {
+    }
 
     if (!serviceType || !projectId || !environment) {
         return res.status(400).json({ error: 'Service type, project ID, and environment are required' });
