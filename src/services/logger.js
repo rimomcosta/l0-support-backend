@@ -1,15 +1,28 @@
 import winston from 'winston';
+import { sanitizeLogData, getLogLevel } from '../config/logging.js';
+
+// Custom format that sanitizes sensitive data
+const sanitizeFormat = winston.format((info) => {
+    // Sanitize the entire info object
+    return sanitizeLogData(info);
+});
 
 export const logger = winston.createLogger({
-    level: 'debug',
+    level: getLogLevel(),
     format: winston.format.combine(
+        sanitizeFormat(),
         winston.format.timestamp(),
         winston.format.printf(({ level, message, timestamp, userId, sessionId, ...metadata }) => {
             let msg = `${timestamp} [${level}]`;
             if (userId) msg += ` [User: ${userId}]`;
             if (sessionId) msg += ` [Session: ${sessionId}]`;
             msg += `: ${message}`;
-            if (Object.keys(metadata).length > 0) msg += ` ${JSON.stringify(metadata)}`;
+            
+            // Only log metadata in development
+            if (process.env.NODE_ENV === 'development' && Object.keys(metadata).length > 0) {
+                msg += ` ${JSON.stringify(metadata)}`;
+            }
+            
             return msg;
         })
     ),
@@ -20,7 +33,21 @@ export const logger = winston.createLogger({
                 winston.format.simple()
             )
         }),
-        new winston.transports.File({ filename: 'error.log', level: 'error' }),
-        new winston.transports.File({ filename: 'debug.log', level: 'debug' })
+        // Only log to files in production
+        ...(process.env.NODE_ENV === 'production' ? [
+            new winston.transports.File({ 
+                filename: 'error.log', 
+                level: 'error',
+                maxsize: 10485760, // 10MB
+                maxFiles: 5,
+                tailable: true
+            }),
+            new winston.transports.File({ 
+                filename: 'combined.log',
+                maxsize: 10485760, // 10MB
+                maxFiles: 5,
+                tailable: true
+            })
+        ] : [])
     ]
 });

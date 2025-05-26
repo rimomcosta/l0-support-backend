@@ -4,10 +4,7 @@ export function validateApiToken(req, res, next) {
     if (!req.session?.decryptedApiToken) {
         logger.warn('API token validation failed', {
             userId: req.session?.user?.id,
-            path: req.path,
-            hasSession: !!req.session,
-            hasUser: !!req.session?.user,
-            hasToken: !!req.session?.decryptedApiToken
+            path: req.path
         });
         return res.status(401).json({ 
             error: 'API token not found or not decrypted. Please provide your decryption password.',

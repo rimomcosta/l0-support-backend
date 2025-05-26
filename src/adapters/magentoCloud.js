@@ -69,7 +69,6 @@ class MagentoCloudAdapter {
      * @returns {Object} - The stdout and stderr from the command
      */
     async executeCommand(command, apiToken, userId) {
-        console.log('userId in magentoCloudAdapter:executeCommand=====>', userId);
         if (!apiToken) {
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
@@ -124,7 +123,6 @@ class MagentoCloudAdapter {
      * @returns {Object} - The child process
      */
     executeCommandStream(command, apiToken, userId) {
-        console.log('userId in magentoCloudAdapter:executeCommandStream=====>', userId);
         if (!apiToken) {
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
@@ -166,8 +164,7 @@ class MagentoCloudAdapter {
         });
 
         tunnelProcess.on('close', (code) => {
-            console.log(`Stream Process exited with code ${code}`);
-        });
+            });
         return { tunnelProcess };
     }
 }

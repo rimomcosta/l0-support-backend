@@ -13,7 +13,6 @@ export class RabbitMQAdminService {
     }
 
     async executeCommand(command) {
-        console.log('userId from rabbitmqAdminService========================>', this.userId);
         try {
             // Extract RabbitMQ details from environment variable
             const rabbitmqHost = `$(echo $MAGENTO_CLOUD_RELATIONSHIPS | base64 -d | jq -r .rabbitmq[0].host)`;

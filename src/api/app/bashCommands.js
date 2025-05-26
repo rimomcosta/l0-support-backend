@@ -10,8 +10,7 @@ export async function runCommands(req, res) {
     const { commands } = req.body;
     const userId = req.session.user.id;
     const apiToken = req.session.decryptedApiToken; // Get apiToken from session
-console.log('apiToken in bashCommands:runCommands=====>', apiToken);
-    if (!Array.isArray(commands)) {
+if (!Array.isArray(commands)) {
         return res.status(400).json({
             error: 'Invalid request format',
             details: 'Commands must be an array'

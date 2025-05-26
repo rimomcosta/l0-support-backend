@@ -14,8 +14,6 @@ export async function runQueries(req, res) {
     const apiToken = req.session.decryptedApiToken;
     const userId = req.session.user.id; // Extract userId from session
 
-    console.log('apiToken in openSearchCommands:run=====>', apiToken);
-
     if (!Array.isArray(queries)) {
         return res.status(400).json({
             error: 'Invalid request format',

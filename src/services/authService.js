@@ -138,7 +138,6 @@ export class AuthService {
     }
 
     static async saveSession(session) {
-        console.log('Saving session:=====>', JSON.stringify(session, null, 2));
         return new Promise((resolve, reject) => {
             session.save((err) => {
                 if (err) reject(err);

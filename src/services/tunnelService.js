@@ -135,7 +135,6 @@ class TunnelManager {
      * the tunnel is unhealthy, returns null.
      */
     async getTunnelInfo(projectId, environment, apiToken, userId) {
-        console.log('userId in tunnelService:getTunnelInfo=====>', userId);
         const tunnelKey = `${projectId}-${environment}`;
         try {
             const { stdout } = await this.magentoCloud.executeCommand(
@@ -367,8 +366,6 @@ class TunnelManager {
      * If already open and healthy, returns the existing info. Otherwise, tries to acquire a lock and open it.
      */
     async openTunnel(projectId, environment, apiToken, userId, progressCallback) {
-        console.log('apiToken in tunnelService:openTunnel=====>', apiToken);
-        console.log('userId in tunnelService:openTunnel=====>', userId);
         if (!userId) {
             throw new Error("userId is not provided");
         }
@@ -508,7 +505,6 @@ class TunnelManager {
      * relevant Redis keys and timers.
      */
     async closeTunnel(projectId, environment, apiToken, userId) {
-        console.log('apiToken in tunnelManager:closeTunnel=====>', apiToken);
         const tunnelKey = `${projectId}-${environment}`;
         const lockId = await this.acquireLock(tunnelKey);
         if (!lockId) {
@@ -557,8 +553,6 @@ class TunnelManager {
      * This is used by your redisCommands, openSearchCommands, etc.
      */
     async getServiceTunnelInfo(projectId, environment, serviceName, apiToken, userId) {
-        console.log('apiToken in tunnelManager:getServiceTunnelInfo=====>', apiToken);
-    
         const alternativeServices = {
             opensearch: 'elasticsearch',
             elasticsearch: 'opensearch'

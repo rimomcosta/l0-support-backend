@@ -15,9 +15,10 @@ initializeApp()
             logger.info(`Server running on port ${port}`);
             logger.info(`Environment: ${process.env.NODE_ENV}`);
             logger.debug('Server configuration:', {
-                clientOrigin: process.env.CLIENT_ORIGIN,
-                apiUrl: process.env.REACT_APP_API_URL,
-                oktaRedirectUri: process.env.OKTA_REDIRECT_URI
+                port,
+                environment: process.env.NODE_ENV,
+                corsEnabled: true,
+                sessionEnabled: true
             });
         });
 

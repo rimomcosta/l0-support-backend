@@ -10,8 +10,6 @@ export async function runQueries(req, res) {
     const userId = req.session.user?.id; // Extract userId from session
 
     // Avoid logging sensitive information like apiToken
-    console.log('Executing Redis queries for user:', userId);
-
     if (!userId) {
         return res.status(401).json({ error: 'User ID not found in session' });
     }

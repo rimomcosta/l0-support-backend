@@ -125,7 +125,6 @@ export async function executeCommands(req, res) {
     const { commands } = req.body;
     const userId = req.session.user.id; // Get user ID
     const apiToken = req.session.decryptedApiToken;
-    console.log('apiToken in magentoCloudDirectAccess:executeCommands=====>', apiToken);
     if (!Array.isArray(commands)) {
         return res.status(400).json({
             error: 'Invalid request format',

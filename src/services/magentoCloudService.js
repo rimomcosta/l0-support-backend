@@ -64,15 +64,14 @@ export class MagentoCloudService {
     }
 
     async executeCommand(command, context, apiToken) {
-        console.log('step 23=====> executeCommand called with:', { command, context, apiToken });
         try {
             let processedCommand = this.replacePlaceholders(command, context);
             processedCommand = this.escapeQuotesForShell(processedCommand);
 
             logger.debug('Executing magento-cloud command:', {
-                originalCommand: command,
-                processedCommand,
-                context
+                commandType: command.split(' ')[0],
+                hasProject: !!context.projectId,
+                hasEnvironment: !!context.environment
             });
 
             if (!processedCommand) {
@@ -80,8 +79,6 @@ export class MagentoCloudService {
             }
 
             const { stdout, stderr } = await this.magentoCloud.executeCommand(processedCommand, apiToken);
-
-            console.log('step 24=====> Command execution result:', { stdout, stderr });
 
             return {
                 output: stdout || null,
@@ -91,8 +88,7 @@ export class MagentoCloudService {
         } catch (error) {
             logger.error('Command execution failed:', {
                 error: error.message,
-                command,
-                context
+                commandType: command.split(' ')[0]
             });
 
             return {
@@ -104,33 +100,21 @@ export class MagentoCloudService {
     }
 
     async executeMultipleCommands(commands, context, apiToken) {
-        console.log('step 17=====> executeMultipleCommands called with:', { commands, context, apiToken });
-
         // Validate that 'commands' is an array
         if (!Array.isArray(commands)) {
-            logger.error('executeMultipleCommands received invalid commands type:', { commands });
+            logger.error('executeMultipleCommands received invalid commands type');
             throw new Error('Commands should be an array');
         }
 
-        console.log('step 18=====> commands is an array with length:', commands.length);
-
         // Validate the Magento Cloud executable
         await this.magentoCloud.validateExecutable();
-        console.log('step 19=====> Magento Cloud executable validated successfully');
-
-        // Log the commands being executed
-        console.log('step 20=====> Commands to execute:', JSON.stringify(commands, null, 2));
 
         return Promise.all(commands.map(async (cmd, index) => {
-            console.log(`step 21=====> Executing command ${index + 1}:`, cmd);
-
             const { output, error, status } = await this.executeCommand(
                 cmd.command,
                 context,
                 apiToken
             );
-
-            console.log(`step 22=====> Command ${index + 1} executed with status:`, status);
 
             return {
                 id: cmd.id,

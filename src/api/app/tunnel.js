@@ -6,8 +6,7 @@ export async function openTunnel(req, res) {
     const { projectId, environment } = req.params;
     const apiToken = req.session.decryptedApiToken;
     const userId = req.session.user.id; // Extract userId from session
-    console.log('apiToken in tunnel:openTunnel=====>, ', '****MASKED****'); // Avoid logging sensitive tokens
-    console.log('userId in tunnel:openTunnel=====>, ', userId);
+    // Avoid logging sensitive tokens
     try {
         const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
 

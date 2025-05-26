@@ -4,7 +4,6 @@ import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 // import { ApiTokenService } from '../../services/apiTokenService.js'; // Import ApiTokenService
 
 async function listEnvironments(projectId, apiToken, userId) {
-    console.log('apiToken in environment:listEnvironments=====>', apiToken);
     const magentoCloud = new MagentoCloudAdapter();
     await magentoCloud.validateExecutable();
 
@@ -44,7 +43,6 @@ export async function getEnvironments(req, res) {
 
     try {
         const apiToken = req.session.decryptedApiToken;
-        console.log('apiToken in environment:getEnvironments=====>', apiToken);
         if (!apiToken) {
             return res.status(401).json({ error: 'API token not found for user' });
         }

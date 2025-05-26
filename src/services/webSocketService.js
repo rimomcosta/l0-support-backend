@@ -30,28 +30,21 @@ export class WebSocketService {
             connectionsByTabId.get(tabId).push(ws);
 
             logger.info('WebSocket connection established', {
-                sessionId: ws.sessionID,
                 userId: ws.userID,
-                clientId: ws.clientId,
-                tabId: ws.tabId
+                clientId: ws.clientId
             });
 
             ws.on('error', (error) => {
                 logger.error('WebSocket error:', {
                     error: error.message,
-                    sessionId: ws.sessionID,
-                    userId: ws.userID,
-                    clientId: ws.clientId,
-                    tabId: ws.tabId
+                    userId: ws.userID
                 });
             });
 
             ws.on('close', () => {
                 logger.info('WebSocket connection closed', {
-                    sessionId: ws.sessionID,
                     userId: ws.userID,
-                    clientId: ws.clientId,
-                    tabId: ws.tabId
+                    clientId: ws.clientId
                 });
 
                 // Remove ws from that tab
@@ -87,8 +80,6 @@ export class WebSocketService {
                             const userId = ws.userID || null;
                             const chatId = await chatAgent.createNewChatSession(userId);
 
-                            console.log('Created new chatId:', chatId, 'for tab:', parsedMessage.tabId);
-
                             // Create an AbortController for this chat
                             const abortController = new AbortController();
                             abortControllers.set(chatId, {
@@ -106,9 +97,6 @@ export class WebSocketService {
                         }
 
                         case 'chat_message': {
-                            console.log('Received chat_message for chatId:', parsedMessage.chatId);
-                            console.log('User content:', parsedMessage.content);
-
                             // If we do not have a controller for that chat, create it
                             let entry = abortControllers.get(parsedMessage.chatId);
                             if (!entry) {
@@ -143,13 +131,9 @@ export class WebSocketService {
 
                         case 'stop_stream': {
                             const { chatId } = parsedMessage;
-                            console.log('Stop stream requested for chatId:', chatId);
-
                             const entry = abortControllers.get(chatId);
                             if (entry) {
                                 entry.controller.abort();
-                                console.log('AbortController aborted for chatId:', chatId);
-
                                 // Optionally remove it here if you prefer to disallow further messages:
                                 // abortControllers.delete(chatId);
 

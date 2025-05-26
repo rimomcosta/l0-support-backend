@@ -19,8 +19,7 @@ export async function login(req, res) {
         await AuthService.saveSession(req.session);
 
         logger.debug('Auth flow initiated', {
-            timestamp: new Date().toISOString(),
-            hasRequiredParams: Boolean(authParams.state && authParams.nonce && authParams.codeChallenge)
+            timestamp: new Date().toISOString()
         });
 
         const authUrl = await AuthService.generateAuthUrl(authParams);
@@ -65,8 +64,7 @@ export async function callback(req, res) {
 
         logger.info('Authentication successful', {
             userId: user.user_id,
-            email: userInfo.email,
-            role: userInfo.userRole
+            timestamp: new Date().toISOString()
         });
 
         const returnTo = req.session.auth.returnTo || `${process.env.CLIENT_ORIGIN}?auth=success`;
@@ -76,7 +74,6 @@ export async function callback(req, res) {
     } catch (error) {
         logger.error('Authentication failed', {
             error: error.message,
-            stack: error.stack,
             timestamp: new Date().toISOString()
         });
         res.redirect(`${process.env.CLIENT_ORIGIN}?auth=error&message=${encodeURIComponent(error.message)}`);
@@ -87,10 +84,7 @@ export function getUser(req, res) {
     logger.debug('User session check', {
         timestamp: new Date().toISOString(),
         isAuthenticated: Boolean(req.session?.user),
-        userId: req.session?.user?.id,
-        userRole: req.session?.user?.role,
-        isAdmin: req.session?.user?.isAdmin,
-        isUser: req.session?.user?.isUser
+        userId: req.session?.user?.id
     });
 
     if (!req.session.user) {

@@ -65,7 +65,6 @@ function parseCommandOutput(output, commands) {
 }
 
 async function executeWithRetry(magentoCloud, command, apiToken, userId, options = { maxRetries: 3, delay: 1000 }) {
-    console.log('apiToken in sshCommands:executeWithRetry=====>', apiToken);
     let lastError;
 
     for (let attempt = 1; attempt <= options.maxRetries; attempt++) {
@@ -110,7 +109,6 @@ async function executeWithRetry(magentoCloud, command, apiToken, userId, options
 }
 
 async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode, apiToken, userId) { // Add apiToken
-    console.log('apiToken in sshCommands:executeSSHCommandsOnNode=====>', apiToken);
     try {
         // Create the script content with all commands.
         const scriptContent = createScriptContent(commands);
@@ -189,8 +187,7 @@ export async function runCommands(req, res) {
     const { commands } = req.body;
     const userId = req.session.user.id; // Get userId
     const apiToken = req.session.decryptedApiToken;
-console.log('apiToken in sshCommands:runCommands=====>', apiToken);
-    logger.info('Received SSH commands:', {
+logger.info('Received SSH commands:', {
         projectId,
         environment,
         userId,

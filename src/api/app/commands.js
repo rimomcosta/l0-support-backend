@@ -131,7 +131,7 @@ const SERVICE_HANDLERS = {
 };
 
 async function executeServiceCommands(serviceType, commands, projectId, environment, userId, apiToken) {
-    console.log('apiToken in commands:executeServiceCommands=====>', apiToken);
+    
     if (!commands || commands.length === 0) return null;
 
     const serviceHandler = SERVICE_HANDLERS[serviceType];
@@ -215,8 +215,6 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     }
 }
 
-
-
 // Detect if a command should use bash service
 function shouldUseBashService(command) {
     // List of bash operators and special characters that indicate bash usage
@@ -232,7 +230,7 @@ export async function executeAllCommands(req, res) {
     const userId = req.session.user.id;
     const tabId = req.query.tabId;
     const apiToken = req.session.decryptedApiToken;
-    console.log('apiToken in commands:executeAllCommands=====>', apiToken);
+    
     if (!apiToken) {
         return res.status(401).json({ error: 'Decrypted API token not found in session' });
     }
@@ -403,22 +401,16 @@ export async function refreshService(req, res) {
     const { serviceType, projectId, environment, tabId } = req.body;
     const userId = req.session.user.id;
     const apiToken = req.session.decryptedApiToken;
-    console.log('req.session in =======commands:executeSingleCommand=====>', req.session);
-    console.log('req.session in =======commands:executeSingleCommand=====>', req.session);
-
     // Check if the session is expired
     if (req.session && req.session.cookie && req.session.cookie._expires) {
         const now = new Date();
         const expires = new Date(req.session.cookie._expires);
 
         if (now > expires) {
-            console.log('Session status: Expired');
-        } else {
-            console.log('Session status: Active');
-        }
+            } else {
+            }
     } else {
-        console.log('Session status: Missing expiration info');
-    }
+        }
 
     if (!serviceType || !projectId || !environment) {
         return res.status(400).json({ error: 'Service type, project ID, and environment are required' });
@@ -571,8 +563,6 @@ export async function executeSingleCommand(req, res) {
     const userId = req.session?.user?.id;
     const tabId = req.query.tabId || req.body.tabId;
     const apiToken = req.session.decryptedApiToken;
-    console.log('apiToken in commands:executeSingleCommand=====>', apiToken);
-
     logger.info('Executing single command:', {
         commandId,
         projectId,
