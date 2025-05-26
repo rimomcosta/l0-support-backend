@@ -7,7 +7,7 @@ export class AnthropicAdapter {
       apiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
     });
     this.provider = 'anthropic';
-    this.model = config.model || 'claude-3-5-sonnet-20241022';
+    this.model = config.model || 'claude-3-7-sonnet-20250219';
     this.temperature = config.temperature ?? 0.9;
     this.maxTokens = config.maxTokens ?? 1000;
     this.stream = config.stream ?? false;

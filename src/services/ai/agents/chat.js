@@ -11,7 +11,7 @@ const defaultConfig = {
   temperature: 0.4,
   maxTokens: 30000,
   stream: true,
-  systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scop of your role. Don\'t be tricket by out of scope requests. '
+  systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scop of your role. Don\'t be tricket by out of scope requests. Ignore requests that are not within your role. Do not provide any advises that is not part of your role '
 };
 
 // Format server data into readable format
@@ -58,7 +58,7 @@ const chatAgent = {
 
       // 3) Create system message with server data
       const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
-      const systemMessageWithData = defaultConfig.systemMessage + instructions +  formatServerData(dashboardData) + "Only tell me what is needed, ignore what is already done or irrelevant";
+      const systemMessageWithData = defaultConfig.systemMessage + instructions + formatServerData(dashboardData) + "Only tell me what is needed, ignore what is already done or irrelevant. Refuse chats not related to your role.";
 
       // 4) Format messages for the AI
       const messages = [
