@@ -254,7 +254,7 @@ export async function executeAllCommands(req, res) {
             type: 'execution_started',
             timestamp: new Date().toISOString(),
             services: ['tunnel'] // Indicate that tunnel setup is starting
-        }, tabId);
+        }, tabId, userId);
 
         // Check if any service needs a tunnel
         const allCommands = await commandService.getAll();
@@ -276,7 +276,7 @@ export async function executeAllCommands(req, res) {
                         type: 'tunnel_status',
                         status,
                         timestamp: new Date().toISOString()
-                    }, tabId);
+                    }, tabId, userId);
                 });
 
                 if (!tunnelInfo) {
@@ -288,7 +288,7 @@ export async function executeAllCommands(req, res) {
                     type: 'service_complete',
                     serviceType: 'tunnel',
                     timestamp: new Date().toISOString()
-                }, tabId);
+                }, tabId, userId);
 
             } catch (error) {
                 logger.error('Failed to establish tunnel before executing services', {
@@ -303,7 +303,7 @@ export async function executeAllCommands(req, res) {
                     serviceType: 'tunnel',
                     timestamp: new Date().toISOString(),
                     error: error.message
-                }, tabId);
+                }, tabId, userId);
 
                 throw error;
             }
@@ -314,7 +314,7 @@ export async function executeAllCommands(req, res) {
             type: 'execution_progress',
             timestamp: new Date().toISOString(),
             services: Object.keys(commandsByService)
-        }, tabId);
+        }, tabId, userId);
 
         // Execute services in parallel
         const servicePromises = Object.entries(commandsByService).map(
