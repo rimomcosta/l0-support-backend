@@ -24,9 +24,18 @@ export async function encryptAndSaveApiToken(req, res) {
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-        const salt = user.salt;
+        
+        let salt = user.salt;
+        
+        // If user doesn't have a salt (e.g., first time setting API token), generate one
+        if (!salt) {
+            salt = EncryptionService.generateSalt();
+            // Update the user with the new salt
+            await ApiTokenService.updateUserSalt(userId, salt);
+            logger.info('Generated new salt for user', { userId });
+        }
 
-        // Encrypt the API token using the provided password and retrieved salt
+        // Encrypt the API token using the provided password and salt
         const encryptedApiToken = EncryptionService.encrypt(apiToken, password, salt);
 
         // Save the encrypted API token
@@ -123,5 +132,36 @@ export async function getApiToken(req, res) {
             userId: req.session?.user?.id
         });
         res.status(500).json({ error: 'Failed to check API token' });
+    }
+}
+
+/**
+ * Revokes (deletes) the user's API token.
+ */
+export async function revokeApiToken(req, res) {
+    try {
+        const userId = req.session.user.id;
+
+        // Delete the API token from the database
+        await ApiTokenService.deleteApiToken(userId);
+
+        // Clear the decrypted API token from session
+        delete req.session.decryptedApiToken;
+        delete req.session.hasApiToken;
+        delete req.session.isApiTokenDecrypted;
+
+        await req.session.save(); // Ensure session is saved
+
+        logger.info('API token revoked successfully:', {
+            userId
+        });
+
+        res.json({ success: true, message: 'API token revoked successfully' });
+    } catch (error) {
+        logger.error('Failed to revoke API token:', {
+            error: error.message,
+            userId: req.session?.user?.id
+        });
+        res.status(500).json({ error: 'Failed to revoke API token' });
     }
 }

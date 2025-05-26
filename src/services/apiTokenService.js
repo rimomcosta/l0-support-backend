@@ -98,13 +98,28 @@ export class ApiTokenService {
     }
 
     static async deleteApiToken(userId) {
-        const query = 'UPDATE users SET api_token = NULL, salt = NULL WHERE user_id = ?';
+        const query = 'UPDATE users SET api_token = NULL WHERE user_id = ?';
         try {
             const [result] = await pool.execute(query, [userId]);
             logger.info('API token deleted', { userId });
             return result;
         } catch (error) {
             logger.error('Failed to delete API token:', {
+                error: error.message,
+                userId
+            });
+            throw error;
+        }
+    }
+
+    static async updateUserSalt(userId, salt) {
+        const query = 'UPDATE users SET salt = ? WHERE user_id = ?';
+        try {
+            const [result] = await pool.execute(query, [salt, userId]);
+            logger.info('User salt updated', { userId });
+            return result;
+        } catch (error) {
+            logger.error('Failed to update user salt:', {
                 error: error.message,
                 userId
             });

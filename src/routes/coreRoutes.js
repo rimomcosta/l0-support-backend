@@ -20,5 +20,12 @@ router.get('/health', health.checkHealth);
 router.post('/auth/api-token', requireAuth, apiToken.encryptAndSaveApiToken);
 router.get('/auth/api-token', requireAuth, apiToken.getApiToken);
 router.post('/auth/api-token-decrypt', requireAuth, apiToken.decryptApiToken);
+router.delete('/auth/api-token', requireAuth, apiToken.revokeApiToken);
+
+// Handle OPTIONS for API token routes
+router.options('/auth/api-token', (req, res) => {
+    res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.sendStatus(204);
+});
 
 export default router;
