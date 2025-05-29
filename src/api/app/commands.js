@@ -419,10 +419,10 @@ export async function refreshService(req, res) {
         const expires = new Date(req.session.cookie._expires);
 
         if (now > expires) {
-            } else {
-            }
-    } else {
+        } else {
         }
+    } else {
+    }
 
     if (!serviceType || !projectId || !environment) {
         return res.status(400).json({ error: 'Service type, project ID, and environment are required' });

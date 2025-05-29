@@ -42,6 +42,14 @@ export class WebSocketService {
                 logActivity.websocket.connected(ws.userID, userEmail, ws.clientId);
             }
 
+            const userTabKey = `${ws.userID || 'unknown'}::${ws.tabId}`;
+            if (!global.activeUserTabs) global.activeUserTabs = new Map();
+            const oldWs = global.activeUserTabs.get(userTabKey);
+            if (oldWs && oldWs !== ws && oldWs.readyState === ws.OPEN) {
+                oldWs.close(4000, 'Duplicate tab detected, closing old connection.');
+            }
+            global.activeUserTabs.set(userTabKey, ws);
+
             ws.on('error', (error) => {
                 logger.error('WebSocket error:', {
                     error: error.message,
@@ -81,6 +89,8 @@ export class WebSocketService {
                         logger.info(`Aborted stream for chatId=${cid} due to tab closure.`);
                     }
                 }
+
+                global.activeUserTabs.delete(userTabKey);
             });
 
             // **** CORE WEBSOCKET MESSAGE HANDLER ****
