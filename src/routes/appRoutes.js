@@ -13,8 +13,12 @@ import * as bashCommands from '../api/app/bashCommands.js';
 import { openTunnel } from '../api/app/tunnel.js';
 import * as ai from '../api/app/ai.js';
 import { getChatMessages } from '../api/app/chatApi.js';
+import dashboardLayoutRoutes from './dashboardLayoutRoutes.js';
 
 const router = express.Router();
+
+// Dashboard layout routes
+router.use('/', dashboardLayoutRoutes);
 
 router.get('/:projectId/environments', conditionalAuth, environment.getEnvironments);
 router.get('/:projectId/:environment/nodes', conditionalAuth, nodes.getNodes);
