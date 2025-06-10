@@ -1,83 +1,91 @@
+// src/routes/dashboardLayoutRoutes.js
 import express from 'express';
 import { pool } from '../config/database.js';
 import { logger } from '../services/logger.js';
-import { conditionalAuth } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Get dashboard layout for a project/environment
-router.get('/dashboard-layouts', conditionalAuth, async (req, res) => {
+// GET dashboard layout for the authenticated user
+router.get('/dashboard-layouts', requireAuth, async (req, res) => {
   try {
-    const { projectId, environment } = req.query;
-    const userId = req.user?.userId || 'anonymous';
-
-    if (!projectId || !environment) {
-      return res.status(400).json({ error: 'projectId and environment are required' });
-    }
-
+    const userId = req.session.user.id;
     const [rows] = await pool.execute(
-      'SELECT layouts FROM dashboard_layouts WHERE project_id = ? AND environment = ? AND user_id = ?',
-      [projectId, environment, userId]
+      'SELECT layouts FROM dashboard_layouts WHERE user_id = ?',
+      [userId]
     );
 
-    if (rows.length === 0) {
-      return res.json({ layouts: null });
+    // If no layout is found in the DB, return a default empty structure.
+    if (rows.length === 0 || !rows[0].layouts) {
+      return res.json({
+        layouts: null,
+        pinnedItems: [],
+        collapsedItems: {},
+        userModifiedMap: {}
+      });
     }
 
-    return res.json({ layouts: rows[0].layouts });
+    // The 'layouts' column is a JSON type, mysql2 driver automatically parses it.
+    // The `layoutData` variable now holds the complete object: { layouts: {...}, pinnedItems: [...], ... }
+    const layoutData = rows[0].layouts;
+
+    // Directly return the properties of the stored object.
+    return res.json({
+      layouts: layoutData.layouts || null,
+      pinnedItems: layoutData.pinnedItems || [],
+      collapsedItems: layoutData.collapsedItems || {},
+      userModifiedMap: layoutData.userModifiedMap || {}
+    });
+
   } catch (error) {
-    logger.error('Error fetching dashboard layout:', error);
+    logger.error(`[GET LAYOUT - USER: ${req.session.user.id}] Error fetching layout:`, { errorMessage: error.message });
     res.status(500).json({ error: 'Failed to fetch dashboard layout' });
   }
 });
 
-// Save dashboard layout for a project/environment
-router.post('/dashboard-layouts', conditionalAuth, async (req, res) => {
+// POST (Save) dashboard layout for the authenticated user
+router.post('/dashboard-layouts', requireAuth, async (req, res) => {
   try {
-    const { projectId, environment, layouts } = req.body;
-    const userId = req.user?.userId || 'anonymous';
+    const { layouts, pinnedItems = [], collapsedItems = {}, userModifiedMap = {} } = req.body;
+    const userId = req.session.user.id;
 
-    if (!projectId || !environment || !layouts) {
-      return res.status(400).json({ error: 'projectId, environment, and layouts are required' });
+    if (!layouts) {
+      return res.status(400).json({ error: 'Layouts data is required' });
     }
 
-    // Use INSERT ... ON DUPLICATE KEY UPDATE to handle both insert and update
+    // Consolidate the entire state into one object to be stored in the JSON column.
+    const layoutDataToStore = { layouts, pinnedItems, collapsedItems, userModifiedMap };
+    const stringifiedLayoutData = JSON.stringify(layoutDataToStore);
+
     await pool.execute(
-      `INSERT INTO dashboard_layouts (project_id, environment, user_id, layouts) 
-       VALUES (?, ?, ?, ?) 
+      `INSERT INTO dashboard_layouts (user_id, layouts) 
+       VALUES (?, ?) 
        ON DUPLICATE KEY UPDATE 
        layouts = VALUES(layouts), 
        updated_at = CURRENT_TIMESTAMP`,
-      [projectId, environment, userId, JSON.stringify(layouts)]
+      [userId, stringifiedLayoutData]
     );
 
-    res.json({ success: true });
+    res.json({ success: true, message: 'Dashboard layout saved successfully.' });
   } catch (error) {
-    logger.error('Error saving dashboard layout:', error);
+    logger.error(`[SAVE LAYOUT - USER: ${req.session?.user?.id}] Error saving dashboard layout:`, { errorMessage: error.message });
     res.status(500).json({ error: 'Failed to save dashboard layout' });
   }
 });
 
-// Delete dashboard layout for a project/environment
-router.delete('/dashboard-layouts', conditionalAuth, async (req, res) => {
+// DELETE dashboard layout for the authenticated user
+router.delete('/dashboard-layouts', requireAuth, async (req, res) => {
   try {
-    const { projectId, environment } = req.query;
-    const userId = req.user?.userId || 'anonymous';
-
-    if (!projectId || !environment) {
-      return res.status(400).json({ error: 'projectId and environment are required' });
-    }
-
+    const userId = req.session.user.id;
     await pool.execute(
-      'DELETE FROM dashboard_layouts WHERE project_id = ? AND environment = ? AND user_id = ?',
-      [projectId, environment, userId]
+      'DELETE FROM dashboard_layouts WHERE user_id = ?',
+      [userId]
     );
-
-    res.json({ success: true });
+    res.json({ success: true, message: 'Dashboard layout reset successfully.' });
   } catch (error) {
-    logger.error('Error deleting dashboard layout:', error);
+    logger.error(`[DELETE LAYOUT - USER: ${req.session.user.id}] Error deleting dashboard layout:`, { errorMessage: error.message });
     res.status(500).json({ error: 'Failed to delete dashboard layout' });
   }
 });
 
-export default router; 
+export default router;
