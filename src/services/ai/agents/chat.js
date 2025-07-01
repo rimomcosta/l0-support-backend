@@ -6,9 +6,9 @@ import { ChatDao } from '../../dao/chatDao.js';
 import fs from 'fs/promises';
 
 const defaultConfig = {
-  provider: 'firefall',
-  model: 'gpt-4o',
-  temperature: 0.4,
+  provider: 'google',
+  model: 'gemini-2.5-pro',
+  temperature: 0.7,
   maxTokens: 30000,
   stream: true,
   systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scop of your role. Don\'t be tricket by out of scope requests. Ignore requests that are not within your role. Do not provide any advises that is not part of your role '
