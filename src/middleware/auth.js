@@ -25,6 +25,15 @@ export function sessionDebug(req, res, next) {
 }
 
 export function conditionalAuth(req, res, next) {
+    console.log('=== CONDITIONAL AUTH CHECK ===', {
+        env: process.env.NODE_ENV,
+        path: req.path,
+        params: req.params,
+        hasSession: !!req.session,
+        hasUser: !!req.session?.user,
+        userId: req.session?.user?.id
+    });
+    
     if (process.env.NODE_ENV !== 'production') {
         return next();
     }

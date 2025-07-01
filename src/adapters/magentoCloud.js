@@ -77,6 +77,15 @@ class MagentoCloudAdapter {
             throw new Error("User ID is required to generate Magento Cloud home directory.");
         }
 
+        // Add logging for debugging
+        logger.info('Executing Magento Cloud command', {
+            command: command,
+            userId: userId,
+            hasApiToken: !!apiToken,
+            // Extract project ID from command if present
+            projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown'
+        });
+
         // Generate and ensure the home directory exists
         const homeDir = this.generateHomeDir(userId);
         await this.ensureHomeDir(homeDir);
@@ -98,7 +107,8 @@ class MagentoCloudAdapter {
             logger.debug('Command executed successfully', {
                 commandType: command.split(' ')[0],
                 hasOutput: Boolean(stdout),
-                hasError: Boolean(stderr)
+                hasError: Boolean(stderr),
+                projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown'
             });
 
             return { stdout, stderr };
@@ -112,7 +122,10 @@ class MagentoCloudAdapter {
             } else {
                 logger.error('Magento Cloud command execution failed:', {
                     error: error.message,
+                    stderr: error.stderr,
+                    stdout: error.stdout,
                     command,
+                    projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown',
                     timestamp: new Date().toISOString()
                 });
                 throw error;

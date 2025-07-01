@@ -375,6 +375,14 @@ class TunnelManager {
             throw new Error('API token not found for user');
         }
 
+        logger.info('openTunnel called', {
+            projectId,
+            environment,
+            userId,
+            hasApiToken: !!apiToken,
+            apiTokenLength: apiToken ? apiToken.length : 0
+        });
+
         const tunnelKey = `${projectId}-${environment}`;
         const maxRetries = 3;
         let retryCount = 0;

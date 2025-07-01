@@ -34,7 +34,22 @@ router.post('/commands', conditionalAuth, commands.createCommand);
 router.put('/commands/:id', conditionalAuth, commands.updateCommand);
 router.put('/commands/toggle/:id', conditionalAuth, commands.toggleCommand);
 router.delete('/command/:id', conditionalAuth, commands.deleteCommand);
-router.get('/:projectId/:environment/commands', conditionalAuth, commands.executeAllCommands);
+router.get('/:projectId/:environment/commands', 
+    (req, res, next) => {
+        console.log('=== COMMANDS ROUTE HIT ===', {
+            projectId: req.params.projectId,
+            environment: req.params.environment,
+            url: req.url,
+            path: req.path,
+            method: req.method,
+            hasSession: !!req.session,
+            hasUser: !!req.session?.user
+        });
+        next();
+    },
+    conditionalAuth, 
+    commands.executeAllCommands
+);
 // New route for single command execution
 router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);

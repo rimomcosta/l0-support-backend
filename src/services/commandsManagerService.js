@@ -199,8 +199,18 @@ export class CommandService {
 
     async getAll() {
         try {
+            logger.debug('Fetching all commands from database');
             const [rows] = await pool.execute('SELECT * FROM commands ORDER BY id ASC');
-            return rows.map(row => ({
+            logger.debug('Raw commands fetched', {
+                count: rows.length,
+                sampleCommand: rows.length > 0 ? {
+                    id: rows[0].id,
+                    title: rows[0].title,
+                    service_type: rows[0].service_type
+                } : null
+            });
+            
+            const commands = rows.map(row => ({
                 id: row.id,
                 title: row.title,
                 command: row.command,
@@ -215,9 +225,18 @@ export class CommandService {
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
+            
+            logger.debug('Commands mapped successfully', {
+                count: commands.length
+            });
+            
+            return commands;
 
         } catch (error) {
-            logger.error('Failed to get commands:', error);
+            logger.error('Failed to get commands:', {
+                error: error.message,
+                stack: error.stack
+            });
             throw error;
         }
     }
