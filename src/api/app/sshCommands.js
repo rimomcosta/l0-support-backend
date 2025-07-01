@@ -30,11 +30,35 @@ function parseCommandOutput(output, commands) {
         if (line.startsWith('id: ')) {
             // Save previous command's output if exists
             if (currentCommand) {
+                let finalOutput = currentOutput.join('\n').trim();
+                
+                // Special handling for command ID 22 (cron schedule)
+                if (currentCommand.id === 22 && finalOutput) {
+                    // Try to extract JSON from the output
+                    const jsonStart = finalOutput.indexOf('{');
+                    const jsonEnd = finalOutput.lastIndexOf('}');
+                    
+                    if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
+                        const jsonString = finalOutput.substring(jsonStart, jsonEnd + 1);
+                        try {
+                            // Validate it's proper JSON
+                            JSON.parse(jsonString);
+                            finalOutput = jsonString;
+                        } catch (e) {
+                            logger.warn('Failed to extract valid JSON from cron command output', {
+                                commandId: currentCommand.id,
+                                error: e.message,
+                                outputSample: finalOutput.substring(0, 200)
+                            });
+                        }
+                    }
+                }
+                
                 results.push({
                     commandId: currentCommand.id,
-                    output: currentOutput.join('\n').trim(),
+                    output: finalOutput,
                     error: null,
-                    status: currentOutput.join('\n').trim() ? "SUCCESS" : "ERROR"
+                    status: finalOutput ? "SUCCESS" : "ERROR"
                 });
                 currentOutput = [];
             }
@@ -53,11 +77,35 @@ function parseCommandOutput(output, commands) {
 
     // Don't forget the last command
     if (currentCommand) {
+        let finalOutput = currentOutput.join('\n').trim();
+        
+        // Special handling for command ID 22 (cron schedule)
+        if (currentCommand.id === 22 && finalOutput) {
+            // Try to extract JSON from the output
+            const jsonStart = finalOutput.indexOf('{');
+            const jsonEnd = finalOutput.lastIndexOf('}');
+            
+            if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
+                const jsonString = finalOutput.substring(jsonStart, jsonEnd + 1);
+                try {
+                    // Validate it's proper JSON
+                    JSON.parse(jsonString);
+                    finalOutput = jsonString;
+                } catch (e) {
+                    logger.warn('Failed to extract valid JSON from cron command output', {
+                        commandId: currentCommand.id,
+                        error: e.message,
+                        outputSample: finalOutput.substring(0, 200)
+                    });
+                }
+            }
+        }
+        
         results.push({
             commandId: currentCommand.id,
-            output: currentOutput.join('\n').trim(),
+            output: finalOutput,
             error: null,
-            status: currentOutput.join('\n').trim() ? "SUCCESS" : "ERROR"
+            status: finalOutput ? "SUCCESS" : "ERROR"
         });
     }
 
@@ -138,6 +186,20 @@ MAGENTO_SCRIPT`;
         );
 
         const output = stdout + stderr;
+        
+        // Debug logging for cron command (ID 22)
+        const hasCronCommand = commands.some(cmd => cmd.id === 22);
+        if (hasCronCommand) {
+            logger.info('Cron command raw output', {
+                projectId,
+                environment,
+                nodeId: isSingleNode ? 'single-node' : nodeId,
+                outputLength: output.length,
+                outputSample: output.substring(0, 500) + '...',
+                lastChars: '...' + output.substring(output.length - 500)
+            });
+        }
+        
         const results = parseCommandOutput(output, commands).map(result => ({
             ...result,
             nodeId: isSingleNode ? 'single-node' : nodeId
