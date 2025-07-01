@@ -113,6 +113,44 @@ class MagentoCloudAdapter {
 
             return { stdout, stderr };
         } catch (error) {
+            // Check for authentication errors in stderr
+            const stderr = error.stderr || '';
+            const stdout = error.stdout || '';
+            const combinedOutput = stderr + stdout;
+            
+            // Common authentication error patterns
+            const authErrorPatterns = [
+                'Invalid API token',
+                'authentication',
+                'unauthorized',
+                '401',
+                'Access denied',
+                'Permission denied',
+                'API token has been revoked',
+                'API token is invalid',
+                'Authentication required'
+            ];
+            
+            const isAuthError = authErrorPatterns.some(pattern => 
+                combinedOutput.toLowerCase().includes(pattern.toLowerCase())
+            );
+            
+            if (isAuthError) {
+                logger.error('Authentication error detected', {
+                    command: command.split(' ')[0],
+                    projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown',
+                    userId,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Create a more informative error for authentication issues
+                const authError = new Error('Authentication failed: Invalid or revoked API token');
+                authError.code = 'AUTH_FAILED';
+                authError.stderr = stderr;
+                authError.stdout = stdout;
+                throw authError;
+            }
+            
             if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
                 logger.info('Magento Cloud command execution (tunnel:info) returned no tunnel info (expected when tunnel is closed).', {
                     command,

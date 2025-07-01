@@ -1,7 +1,7 @@
 // src/api/app/environment.js
 import { logger } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
-// import { ApiTokenService } from '../../services/apiTokenService.js'; // Import ApiTokenService
+import { isAuthenticationError } from '../../middleware/errorHandler.js';
 
 async function listEnvironments(projectId, apiToken, userId) {
     const magentoCloud = new MagentoCloudAdapter();
@@ -11,10 +11,7 @@ async function listEnvironments(projectId, apiToken, userId) {
     const { stdout, stderr } = await magentoCloud.executeCommand(`environment:list -p ${projectId} --format=csv`, apiToken, userId);
     const output = stdout + stderr;
 
-    // Debug logging for problematic project
-    if (projectId === 'v4xd4x7rbiybi') {
-        logger.info('Raw environment output for v4xd4x7rbiybi:', { output });
-    }
+
 
     const lines = output.split('\n').filter(line => line.trim());
     
@@ -31,17 +28,7 @@ async function listEnvironments(projectId, apiToken, userId) {
         // Parse CSV - handle quoted fields
         const cells = line.split(',').map(cell => cell.trim());
 
-        // Debug logging for problematic project
-        if (projectId === 'v4xd4x7rbiybi' && cells.length >= 4) {
-            logger.info('Parsing environment line:', { 
-                line,
-                cells,
-                id: cells[0],
-                title: cells[1],
-                status: cells[2],
-                type: cells[3]
-            });
-        }
+
 
         if (cells.length >= 4 && cells[2] === 'Active') {
             environments.push({
@@ -78,6 +65,22 @@ export async function getEnvironments(req, res) {
 
         res.json(environments);
     } catch (error) {
+        // Check if this is an authentication error
+        if (isAuthenticationError(error)) {
+            logger.warn('API token authentication failed', {
+                projectId,
+                userId,
+                errorMessage: error.message,
+                timestamp: new Date().toISOString()
+            });
+
+            return res.status(401).json({
+                error: 'Authentication failed',
+                message: 'Your API token appears to be invalid or revoked. Please update your API token.',
+                code: 'TOKEN_INVALID'
+            });
+        }
+
         logger.error('Environment fetch failed', {
             error: error.message,
             projectId,
