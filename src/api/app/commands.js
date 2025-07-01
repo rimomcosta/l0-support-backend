@@ -293,6 +293,21 @@ export async function executeAllCommands(req, res) {
         const tabId = req.query.tabId;
         const apiToken = req.session.decryptedApiToken;
         
+        // Validate session is still active
+        if (!req.session || !req.session.user) {
+            logger.error('Invalid session in executeAllCommands', {
+                projectId,
+                environment,
+                hasSession: !!req.session,
+                hasUser: !!req.session?.user
+            });
+            return res.status(401).json({ 
+                error: 'Session expired', 
+                code: 'SESSION_EXPIRED',
+                message: 'Your session has expired. Please log in again.' 
+            });
+        }
+        
         // Add detailed logging for debugging
         logger.info('executeAllCommands called', {
             projectId,
@@ -314,11 +329,21 @@ export async function executeAllCommands(req, res) {
         }
 
         // Send initial status to client using tabId, including tunnel setup
-        WebSocketService.broadcastToTab({
-            type: 'execution_started',
-            timestamp: new Date().toISOString(),
-            services: ['tunnel'] // Indicate that tunnel setup is starting
-        }, tabId);
+        try {
+            WebSocketService.broadcastToTab({
+                type: 'execution_started',
+                timestamp: new Date().toISOString(),
+                services: ['tunnel'] // Indicate that tunnel setup is starting
+            }, tabId);
+        } catch (wsError) {
+            logger.error('Failed to send WebSocket message', {
+                error: wsError.message,
+                projectId,
+                environment,
+                tabId
+            });
+            // Continue execution even if WebSocket fails
+        }
 
         // Check if any service needs a tunnel
         const allCommands = await commandService.getAll();
