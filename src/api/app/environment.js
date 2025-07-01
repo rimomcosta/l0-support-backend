@@ -30,7 +30,7 @@ async function listEnvironments(projectId, apiToken, userId) {
 
 
 
-        if (cells.length >= 4 && cells[2] === 'Active') {
+        if (cells.length >= 4 && (cells[2] === 'Active' || cells[2] === 'In progress')) {
             environments.push({
                 id: cells[0],
                 title: cells[1],
