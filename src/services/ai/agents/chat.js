@@ -23,16 +23,25 @@ const formatServerData = (dashboardData) => {
   let formattedData = '\n\nServer Data:\n';
 
   Object.entries(dashboardData).forEach(([serviceName, commands]) => {
+    if (!commands || typeof commands !== 'object') return;
+    
     formattedData += `\n${serviceName.toUpperCase()} Service:\n`;
 
     Object.entries(commands).forEach(([commandTitle, commandData]) => {
+      if (!commandData || typeof commandData !== 'object') return;
+      
       formattedData += `  ${commandTitle}:\n`;
-      formattedData += `    Description: ${commandData.description}\n`;
-      formattedData += `    Outputs:\n`;
-
-      Object.entries(commandData.outputs).forEach(([nodeId, output]) => {
-        formattedData += `      ${nodeId}:\n        ${output.replace(/\n/g, '\n        ')}\n`;
-      });
+      formattedData += `    Description: ${commandData.description || 'No description'}\n`;
+      
+      if (commandData.outputs && typeof commandData.outputs === 'object') {
+        formattedData += `    Outputs:\n`;
+        Object.entries(commandData.outputs).forEach(([nodeId, output]) => {
+          const outputStr = String(output || '').trim();
+          if (outputStr) {
+            formattedData += `      ${nodeId}:\n        ${outputStr.replace(/\n/g, '\n        ')}\n`;
+          }
+        });
+      }
 
       formattedData += '\n';
     });
