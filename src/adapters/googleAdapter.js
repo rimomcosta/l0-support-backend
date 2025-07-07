@@ -61,7 +61,7 @@ export class GoogleAdapter {
     }
   }
 
-  async generateStream({ model, messages, systemMessage, temperature, maxTokens }) {
+  async generateStream({ model, messages, systemMessage, temperature, maxTokens, signal }) {
     try {
       const finalSystemMessage = systemMessage || this.systemMessage || 'You are a helpful assistant.';
       
@@ -89,6 +89,23 @@ export class GoogleAdapter {
         }
       };
 
+      // Log AI payload if enabled
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI REQUEST PAYLOAD ===');
+        console.log('Model:', model || this.modelName);
+        console.log('Temperature:', temperature ?? this.temperature);
+        console.log('Max Tokens:', maxTokens ?? this.maxTokens);
+        console.log('System Message:', finalSystemMessage);
+        console.log('Messages:');
+        messages?.forEach((msg, idx) => {
+          console.log(`  [${idx}] ${msg.role}: ${msg.content.substring(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
+        });
+        console.log('Full Conversation Text:');
+        console.log(conversationText);
+        console.log('Raw Payload:', JSON.stringify(payload, null, 2));
+        console.log('=== END AI REQUEST ===\n');
+      }
+
       const url = `${this.baseUrl}/models/${model || this.modelName}:streamGenerateContent?key=${this.apiKey}`;
       const resp = await fetch(url, {
         method: 'POST',
@@ -98,26 +115,46 @@ export class GoogleAdapter {
 
       if (!resp.ok || !resp.body) {
         const errText = await resp.text().catch(() => 'Unknown error');
+        if (process.env.ENABLE_AI_OUTPUT === 'true') {
+          console.log('\n === AI REQUEST FAILED ===');
+          console.log('Status:', resp.status);
+          console.log('Error:', errText);
+          console.log('=== END AI ERROR ===\n');
+        }
         throw new Error(`Google Gemini streaming request failed: ${errText}`);
       }
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder('utf-8');
 
-      return { stream: this._createStreamIterator(reader, decoder) };
+      return { stream: this._createStreamIterator(reader, decoder, signal) };
     } catch (error) {
       logger.error('Error generating stream with Google:', { error: error.message });
       throw error;
     }
   }
 
-  async *_createStreamIterator(reader, decoder) {
+  async *_createStreamIterator(reader, decoder, signal) {
     let buffer = '';
     let done = false;
     let insideArray = false;
+    let fullResponse = '';
+    let isFirstChunk = true;
 
     try {
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI RESPONSE STREAM START ===');
+      }
+
       while (!done) {
+        // Check for abort signal
+        if (signal?.aborted) {
+          if (process.env.ENABLE_AI_OUTPUT === 'true') {
+            console.log('\n === AI STREAM ABORTED ===\n');
+          }
+          break;
+        }
+
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
 
@@ -135,13 +172,33 @@ export class GoogleAdapter {
           if (parsed.candidates?.length > 0) {
             const text = parsed.candidates[0]?.content?.parts?.[0]?.text;
             if (text) {
+              if (process.env.ENABLE_AI_OUTPUT === 'true') {
+                if (isFirstChunk) {
+                  console.log('First chunk received:', text);
+                  isFirstChunk = false;
+                }
+                fullResponse += text;
+              }
               yield text;
             }
           }
         }
       }
+
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI RESPONSE COMPLETE ===');
+        console.log('Full Response Length:', fullResponse.length);
+        console.log('Full Response:');
+        console.log(fullResponse);
+        console.log('=== END AI RESPONSE ===\n');
+      }
     } catch (error) {
       logger.error('Error in stream iterator:', { error: error.message });
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI STREAM ERROR ===');
+        console.log('Error:', error.message);
+        console.log('=== END AI STREAM ERROR ===\n');
+      }
       throw error;
     } finally {
       reader.releaseLock();

@@ -30,7 +30,7 @@ export class AnthropicAdapter {
     }
   }
 
-  async generateStream({ model, messages, systemMessage, temperature, maxTokens }) {
+  async generateStream({ model, messages, systemMessage, temperature, maxTokens, signal }) {
     try {
       // Convert messages array to Anthropic's format, keeping all content
       const formattedMessages = messages
@@ -39,6 +39,21 @@ export class AnthropicAdapter {
           role: msg.role === 'assistant' ? 'assistant' : 'user',
           content: msg.content
         }));
+
+      // Log AI payload if enabled
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI REQUEST PAYLOAD (Anthropic) ===');
+        console.log('Model:', model || this.model);
+        console.log('Temperature:', temperature ?? this.temperature);
+        console.log('Max Tokens:', maxTokens ?? this.maxTokens);
+        console.log('System Message:', systemMessage);
+        console.log('Messages:');
+        formattedMessages.forEach((msg, idx) => {
+          console.log(`  [${idx}] ${msg.role}: ${msg.content.substring(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
+        });
+        console.log('Full Messages:', JSON.stringify(formattedMessages, null, 2));
+        console.log('=== END AI REQUEST ===\n');
+      }
 
       const stream = await this.anthropic.messages.create({
         model: model || this.model,
@@ -50,22 +65,62 @@ export class AnthropicAdapter {
       });
 
       return {
-        stream: this._createStreamIterator(stream)
+        stream: this._createStreamIterator(stream, signal)
       };
     } catch (error) {
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI REQUEST FAILED (Anthropic) ===');
+        console.log('Error:', error.message);
+        console.log('=== END AI ERROR ===\n');
+      }
       logger.error('Error generating stream with Anthropic:', { error: error.message });
       throw error;
     }
   }
 
-  async *_createStreamIterator(stream) {
+  async *_createStreamIterator(stream, signal) {
+    let fullResponse = '';
+    let isFirstChunk = true;
+
     try {
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI RESPONSE STREAM START (Anthropic) ===');
+      }
+
       for await (const chunk of stream) {
+        // Check for abort signal
+        if (signal?.aborted) {
+          if (process.env.ENABLE_AI_OUTPUT === 'true') {
+            console.log('\n === AI STREAM ABORTED (Anthropic) ===\n');
+          }
+          break;
+        }
+
         if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
+          if (process.env.ENABLE_AI_OUTPUT === 'true') {
+            if (isFirstChunk) {
+              console.log('First chunk received:', chunk.delta.text);
+              isFirstChunk = false;
+            }
+            fullResponse += chunk.delta.text;
+          }
           yield chunk.delta.text;
         }
       }
+
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI RESPONSE COMPLETE (Anthropic) ===');
+        console.log('Full Response Length:', fullResponse.length);
+        console.log('Full Response:');
+        console.log(fullResponse);
+        console.log('=== END AI RESPONSE ===\n');
+      }
     } catch (error) {
+      if (process.env.ENABLE_AI_OUTPUT === 'true') {
+        console.log('\n === AI STREAM ERROR (Anthropic) ===');
+        console.log('Error:', error.message);
+        console.log('=== END AI STREAM ERROR ===\n');
+      }
       logger.error('Error in stream iterator:', { error: error.message });
       throw error;
     }
