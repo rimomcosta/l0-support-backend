@@ -56,7 +56,7 @@ const chatAgent = {
     return chatId;
   },
 
-  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData }) {
+  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData, projectId, environment }) {
     try {
       // Log dashboard data for debugging (sanitized)
       logger.debug('Dashboard data received for AI processing', {
@@ -73,15 +73,35 @@ const chatAgent = {
 
       // 3) Create system message with server data
       const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
-      const systemMessageWithData = defaultConfig.systemMessage + instructions + formatServerData(dashboardData) + "Only tell me what is needed, ignore what is already done or irrelevant. Refuse chats not related to your role.";
+
+      // Build base system message (without server data)
+      const systemMessageFinal =
+        defaultConfig.systemMessage +
+        instructions +
+        'Only tell me what is needed, ignore what is already done or irrelevant. Refuse chats not related to your role.';
+
+      // Prepare server data text (or fallback note)
+      let serverDataText = '';
+      if (dashboardData && Object.keys(dashboardData).length > 0) {
+        serverDataText = '\n\nServer data available:\n' + formatServerData(dashboardData);
+      } else if (!projectId || !environment) {
+        serverDataText = '\n\nNo server data is attached. Ask the user to load a Project ID, select an environment, and then click the "Attach Server Data" button.';
+      }
 
       // 4) Format messages for the AI
-      const messages = [
-        ...conversation.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        }))
-      ];
+      // Build messages array and append server data to the most recent user message
+      const messages = conversation.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
+      // Append server data text to the last user message (i.e., the one just sent)
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          messages[i].content = messages[i].content + serverDataText;
+          break;
+        }
+      }
 
       // 5) Get adapter with config
       const adapter = aiService.getAdapter(defaultConfig.provider, {
@@ -89,7 +109,7 @@ const chatAgent = {
         temperature: temperature ?? defaultConfig.temperature,
         maxTokens: maxTokens ?? defaultConfig.maxTokens,
         stream: true,
-        systemMessage: systemMessageWithData // Pass complete system message with data
+        systemMessage: systemMessageFinal // System message without server data
       });
 
       // 6) Generate stream
@@ -97,7 +117,7 @@ const chatAgent = {
         model: defaultConfig.model,
         temperature: temperature ?? defaultConfig.temperature,
         maxTokens: maxTokens ?? defaultConfig.maxTokens,
-        systemMessage: systemMessageWithData,
+        systemMessage: systemMessageFinal,
         messages: messages,
         signal: abortSignal
       });

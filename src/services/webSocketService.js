@@ -152,7 +152,9 @@ export class WebSocketService {
                                 maxTokens: parsedMessage.maxTokens,
                                 tabId: parsedMessage.tabId,
                                 abortSignal: entry.controller.signal,
-                                dashboardData: parsedMessage.dashboardData // Pass the dashboard data
+                                dashboardData: parsedMessage.dashboardData, // Pass the dashboard data
+                                projectId: parsedMessage.projectId,
+                                environment: parsedMessage.environment
                             }).catch(err => {
                                 logger.error('Error in handleUserMessage:', {
                                     error: err.message,
