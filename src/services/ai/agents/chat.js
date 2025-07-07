@@ -151,21 +151,13 @@ const chatAgent = {
             content: chunk.text
           }, tabId);
         } else if (chunk.type === 'content') {
-          // When we start getting content, send thinking as a separate message if we have it
+          // When we start getting content, finalize thinking if we have it
           if (!hasStartedContent && fullThinkingContent) {
-            const thinkingMessage = {
-              role: 'thinking',
-              content: fullThinkingContent,
-              timestamp: new Date(),
-              id: Date.now()
-            };
-            
-            await ChatDao.saveMessage(chatId, 'thinking', fullThinkingContent);
-            
+            // Send thinking complete signal immediately without saving yet
             WebSocketService.broadcastToTab({
               type: 'thinking_complete',
               chatId,
-              message: thinkingMessage
+              thinkingContent: fullThinkingContent
             }, tabId);
             
             hasStartedContent = true;
@@ -183,33 +175,38 @@ const chatAgent = {
 
       // 8) Handle completion
       if (!abortSignal?.aborted) {
-        // Save thinking as a separate message if we haven't already and we have thinking content
-        if (!hasStartedContent && fullThinkingContent) {
-          const thinkingMessage = {
-            role: 'thinking',
-            content: fullThinkingContent,
-            timestamp: new Date(),
-            id: Date.now()
-          };
+        try {
+          // Save thinking message first if we have thinking content
+          if (fullThinkingContent) {
+            await ChatDao.saveMessage(chatId, 'thinking', fullThinkingContent);
+            
+            // If we haven't sent the thinking complete event yet, send it now
+            if (!hasStartedContent) {
+              WebSocketService.broadcastToTab({
+                type: 'thinking_complete',
+                chatId,
+                thinkingContent: fullThinkingContent
+              }, tabId);
+            }
+          }
           
-          await ChatDao.saveMessage(chatId, 'thinking', fullThinkingContent);
+          // Save assistant reply only if we have actual content
+          if (fullAssistantReply && fullAssistantReply.trim().length > 0) {
+            await ChatDao.saveMessage(chatId, 'assistant', fullAssistantReply);
+          }
           
           WebSocketService.broadcastToTab({
-            type: 'thinking_complete',
-            chatId,
-            message: thinkingMessage
+            type: 'end',
+            chatId
+          }, tabId);
+        } catch (error) {
+          logger.error('Error saving messages at completion:', error);
+          // Don't send error to frontend for save issues, just log them
+          WebSocketService.broadcastToTab({
+            type: 'end',
+            chatId
           }, tabId);
         }
-        
-        // Save assistant reply if we have content
-        if (fullAssistantReply) {
-          await ChatDao.saveMessage(chatId, 'assistant', fullAssistantReply);
-        }
-        
-        WebSocketService.broadcastToTab({
-          type: 'end',
-          chatId
-        }, tabId);
       } else {
         WebSocketService.broadcastToTab({
           type: 'stream_stopped',
