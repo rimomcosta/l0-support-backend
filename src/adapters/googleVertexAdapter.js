@@ -27,7 +27,8 @@ export class GoogleVertexAdapter {
         maxOutputTokens: data.maxTokens ?? this.maxTokens,
         topP: data.topP ?? this.topP,
         thinkingConfig: {
-          thinkingBudget: -1
+          thinkingBudget: -1,
+          includeThoughts: true
         }
       };
 
@@ -57,8 +58,14 @@ export class GoogleVertexAdapter {
       }
 
       const json = await resp.json();
-      const candidate = json.candidates?.[0]?.content?.parts || [];
-      return candidate.map(part => part.text).join('').trim();
+      const parts = json.candidates?.[0]?.content?.parts || [];
+      
+      // Separate thinking and content parts
+      const thinkingParts = parts.filter(part => part.thought).map(part => part.text);
+      const contentParts = parts.filter(part => !part.thought).map(part => part.text);
+      
+      // For non-streaming, we'll return just the content, but this structure allows for future expansion
+      return contentParts.join('').trim();
     } catch (error) {
       logger.error('Error generating code with Google Vertex AI:', { error: error.message });
       throw error;
@@ -92,7 +99,8 @@ export class GoogleVertexAdapter {
           maxOutputTokens: maxTokens ?? this.maxTokens,
           topP: this.topP,
           thinkingConfig: {
-            thinkingBudget: -1
+            thinkingBudget: -1,
+            includeThoughts: true
           }
         }
       };
@@ -164,12 +172,20 @@ export class GoogleVertexAdapter {
 
           // Extract and yield text from candidates
           if (parsed.candidates?.length > 0) {
-            const text = parsed.candidates[0]?.content?.parts?.[0]?.text;
-            if (text) {
-              if (process.env.ENABLE_AI_OUTPUT === 'true') {
-                fullResponse += text;
+            const parts = parsed.candidates[0]?.content?.parts || [];
+            for (const part of parts) {
+              if (part.text) {
+                const content = {
+                  type: part.thought ? 'thinking' : 'content',
+                  text: part.text
+                };
+                
+                if (process.env.ENABLE_AI_OUTPUT === 'true') {
+                  fullResponse += `[${content.type.toUpperCase()}]: ${content.text}`;
+                }
+                
+                yield content;
               }
-              yield text;
             }
           }
         }
