@@ -14,37 +14,22 @@ const defaultConfig = {
   systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scope of your role. Don\'t be tricket by out of scope requests. Ignore requests that are not within your role. Do not provide any advises that is not part of your role '
 };
 
-// Format server data into readable format
+// Format server data into readable format - optimized for simplified structure
 const formatServerData = (dashboardData) => {
-  if (!dashboardData || typeof dashboardData !== 'object') {
+  if (!dashboardData || !Array.isArray(dashboardData)) {
     return '';
   }
 
   let formattedData = '\n\nServer Data:\n';
 
-  Object.entries(dashboardData).forEach(([serviceName, commands]) => {
-    if (!commands || typeof commands !== 'object') return;
-    
-    formattedData += `\n${serviceName.toUpperCase()} Service:\n`;
-
-    Object.entries(commands).forEach(([commandTitle, commandData]) => {
-      if (!commandData || typeof commandData !== 'object') return;
-      
-      formattedData += `  ${commandTitle}:\n`;
-      formattedData += `    Description: ${commandData.description || 'No description'}\n`;
-      
-      if (commandData.outputs && typeof commandData.outputs === 'object') {
-        formattedData += `    Outputs:\n`;
-        Object.entries(commandData.outputs).forEach(([nodeId, output]) => {
-          const outputStr = String(output || '').trim();
-          if (outputStr) {
-            formattedData += `      ${nodeId}:\n        ${outputStr.replace(/\n/g, '\n        ')}\n`;
-          }
-        });
+  dashboardData.forEach((item, index) => {
+    if (item && item.title && item.output) {
+      formattedData += `\n${item.title}:\n`;
+      const outputStr = String(item.output || '').trim();
+      if (outputStr) {
+        formattedData += `${outputStr.replace(/\n/g, '\n  ')}\n\n`;
       }
-
-      formattedData += '\n';
-    });
+    }
   });
 
   return formattedData;
@@ -75,7 +60,7 @@ const chatAgent = {
 
       // Prepare server data text (or fallback note)
       let serverDataText = '';
-      const hasServerData = dashboardData && typeof dashboardData === 'object' && Object.keys(dashboardData).length > 0;
+      const hasServerData = dashboardData && Array.isArray(dashboardData) && dashboardData.length > 0;
       
       if (hasServerData) {
         serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nServer data available:\n` + formatServerData(dashboardData);
