@@ -1,18 +1,18 @@
-// src/adapters/googleAdapter.js
 import { logger } from '../services/logger.js';
 
-export class GoogleAdapter {
+export class GoogleVertexAdapter {
   constructor(config = {}) {
     this.apiKey = config.apiKey || process.env.GEMINI_API_KEY;
     if (!this.apiKey) {
-      logger.error('GoogleAdapter: Missing API key');
-      throw new Error('Google API key is required');
+      logger.error('GoogleVertexAdapter: Missing API key');
+      throw new Error('Google Vertex AI API key is required');
     }
 
     this.provider = 'google';
-    this.modelName = config.model || 'gemini-1.5-flash';
-    this.temperature = config.temperature ?? 0.9;
-    this.maxTokens = config.maxTokens ?? 1000;
+    this.modelName = config.model || 'gemini-2.5-pro';
+    this.temperature = config.temperature ?? 0.7;
+    this.maxTokens = config.maxTokens ?? 65536;
+    this.topP = config.topP ?? 0.95;
     this.stream = config.stream ?? false;
     this.systemMessage = config.systemMessage;
 
@@ -25,9 +25,13 @@ export class GoogleAdapter {
       const generationConfig = {
         temperature: data.temperature ?? this.temperature,
         maxOutputTokens: data.maxTokens ?? this.maxTokens,
+        topP: data.topP ?? this.topP,
+        thinkingConfig: {
+          thinkingBudget: -1
+        }
       };
 
-      // Google requires combining system message and prompt
+      // Google Vertex AI requires combining system message and prompt
       const combinedPrompt = `${systemMessage}\n\n${data.prompt}`;
 
       const url = `${this.baseUrl}/models/${this.modelName}:generateContent?key=${this.apiKey}`;
@@ -49,14 +53,14 @@ export class GoogleAdapter {
 
       if (!resp.ok) {
         const errText = await resp.text();
-        throw new Error(`Google Gemini request failed: ${errText}`);
+        throw new Error(`Google Vertex AI request failed: ${errText}`);
       }
 
       const json = await resp.json();
       const candidate = json.candidates?.[0]?.content?.parts || [];
       return candidate.map(part => part.text).join('').trim();
     } catch (error) {
-      logger.error('Error generating code with Google:', { error: error.message });
+      logger.error('Error generating code with Google Vertex AI:', { error: error.message });
       throw error;
     }
   }
@@ -85,24 +89,27 @@ export class GoogleAdapter {
         ],
         generationConfig: {
           temperature: temperature ?? this.temperature,
-          maxOutputTokens: maxTokens ?? this.maxTokens
+          maxOutputTokens: maxTokens ?? this.maxTokens,
+          topP: this.topP,
+          thinkingConfig: {
+            thinkingBudget: -1
+          }
         }
       };
 
       // Log AI payload if enabled
       if (process.env.ENABLE_AI_OUTPUT === 'true') {
-        console.log('\n === AI REQUEST PAYLOAD ===');
-        console.log('Model:', model || this.modelName);
-        console.log('Temperature:', temperature ?? this.temperature);
-        console.log('Max Tokens:', maxTokens ?? this.maxTokens);
-        console.log('System Message:', finalSystemMessage);
-        console.log('Messages:');
-        messages?.forEach((msg, idx) => {
-          console.log(`  [${idx}] ${msg.role}: ${msg.content.substring(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
-        });
-        console.log('Full Conversation Text:');
-        console.log(conversationText);
-        console.log('Raw Payload:', JSON.stringify(payload, null, 2));
+        console.log('\n === AI REQUEST ===');
+        console.log('SYSTEM MESSAGE:');
+        console.log(finalSystemMessage);
+        console.log('\nCONVERSATION:');
+        if (messages && messages.length > 0) {
+          messages.forEach(msg => {
+            console.log(`${msg.role.toUpperCase()}: ${msg.content}`);
+          });
+        } else {
+          console.log('(no conversation history)');
+        }
         console.log('=== END AI REQUEST ===\n');
       }
 
@@ -115,13 +122,7 @@ export class GoogleAdapter {
 
       if (!resp.ok || !resp.body) {
         const errText = await resp.text().catch(() => 'Unknown error');
-        if (process.env.ENABLE_AI_OUTPUT === 'true') {
-          console.log('\n === AI REQUEST FAILED ===');
-          console.log('Status:', resp.status);
-          console.log('Error:', errText);
-          console.log('=== END AI ERROR ===\n');
-        }
-        throw new Error(`Google Gemini streaming request failed: ${errText}`);
+        throw new Error(`Google Vertex AI streaming request failed: ${errText}`);
       }
 
       const reader = resp.body.getReader();
@@ -129,7 +130,7 @@ export class GoogleAdapter {
 
       return { stream: this._createStreamIterator(reader, decoder, signal) };
     } catch (error) {
-      logger.error('Error generating stream with Google:', { error: error.message });
+      logger.error('Error generating stream with Google Vertex AI:', { error: error.message });
       throw error;
     }
   }
@@ -142,16 +143,9 @@ export class GoogleAdapter {
     let isFirstChunk = true;
 
     try {
-      if (process.env.ENABLE_AI_OUTPUT === 'true') {
-        console.log('\n === AI RESPONSE STREAM START ===');
-      }
-
       while (!done) {
         // Check for abort signal
         if (signal?.aborted) {
-          if (process.env.ENABLE_AI_OUTPUT === 'true') {
-            console.log('\n === AI STREAM ABORTED ===\n');
-          }
           break;
         }
 
@@ -173,10 +167,6 @@ export class GoogleAdapter {
             const text = parsed.candidates[0]?.content?.parts?.[0]?.text;
             if (text) {
               if (process.env.ENABLE_AI_OUTPUT === 'true') {
-                if (isFirstChunk) {
-                  console.log('First chunk received:', text);
-                  isFirstChunk = false;
-                }
                 fullResponse += text;
               }
               yield text;
@@ -185,20 +175,13 @@ export class GoogleAdapter {
         }
       }
 
-      if (process.env.ENABLE_AI_OUTPUT === 'true') {
-        console.log('\n === AI RESPONSE COMPLETE ===');
-        console.log('Full Response Length:', fullResponse.length);
-        console.log('Full Response:');
+      if (process.env.ENABLE_AI_OUTPUT === 'true' && fullResponse) {
+        console.log('\n === AI RESPONSE ===');
         console.log(fullResponse);
         console.log('=== END AI RESPONSE ===\n');
       }
     } catch (error) {
       logger.error('Error in stream iterator:', { error: error.message });
-      if (process.env.ENABLE_AI_OUTPUT === 'true') {
-        console.log('\n === AI STREAM ERROR ===');
-        console.log('Error:', error.message);
-        console.log('=== END AI STREAM ERROR ===\n');
-      }
       throw error;
     } finally {
       reader.releaseLock();
@@ -227,4 +210,4 @@ export class GoogleAdapter {
     }
     return null;
   }
-}
+} 

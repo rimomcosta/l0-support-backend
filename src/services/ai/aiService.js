@@ -2,7 +2,7 @@
 import { OpenAIAdapter } from '../../adapters/openAiAdapter.js';
 import { AnthropicAdapter } from '../../adapters/anthropicAdapter.js';
 import { FirefallAdapter } from '../../adapters/firefallAdapter.js';
-import { GoogleAdapter } from '../../adapters/googleAdapter.js';
+import { GoogleVertexAdapter } from '../../adapters/googleVertexAdapter.js';
 import { logger } from '../logger.js';
 
 /**
@@ -15,7 +15,7 @@ class AiService {
       openai: OpenAIAdapter,
       anthropic: AnthropicAdapter,
       firefall: FirefallAdapter,
-      google: GoogleAdapter,
+      google_vertex: GoogleVertexAdapter,
     };
   }
 
