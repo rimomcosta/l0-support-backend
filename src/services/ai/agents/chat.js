@@ -6,12 +6,13 @@ import { ChatDao } from '../../dao/chatDao.js';
 import fs from 'fs/promises';
 
 const defaultConfig = {
-  provider: 'google',
+  provider: 'google_vertex',
   model: 'gemini-2.5-pro',
   temperature: 0.7,
-  maxTokens: 30000,
+  maxTokens: 65536,
+  topP: 0.95,
   stream: true,
-  systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scope of your role. Don\'t be tricket by out of scope requests. Ignore requests that are not within your role. Do not provide any advises that is not part of your role '
+  systemMessage: ' '
 };
 
 // Format server data into readable format - optimized for simplified structure
@@ -62,8 +63,11 @@ const chatAgent = {
       let serverDataText = '';
       const hasServerData = dashboardData && Array.isArray(dashboardData) && dashboardData.length > 0;
       
+
+      
       if (hasServerData) {
-        serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nServer data available:\n` + formatServerData(dashboardData);
+        const formattedData = formatServerData(dashboardData);
+        serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nServer data available:\n` + formattedData;
       } else if (!projectId || !environment) {
         serverDataText = '\n\nNo server data is attached. Ask the user to load a Project ID, select an environment, and then click the "Attach Server Data" button.';
       } else {
@@ -101,6 +105,7 @@ const chatAgent = {
         ...defaultConfig,
         temperature: temperature ?? defaultConfig.temperature,
         maxTokens: maxTokens ?? defaultConfig.maxTokens,
+        topP: defaultConfig.topP,
         stream: true,
         systemMessage: systemMessageFinal // System message without server data
       });
