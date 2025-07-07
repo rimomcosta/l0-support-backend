@@ -62,6 +62,15 @@ const chatAgent = {
       let serverDataText = '';
       const hasServerData = dashboardData && Array.isArray(dashboardData) && dashboardData.length > 0;
       
+      // Debug logging
+      console.log('Backend received dashboardData:', {
+        type: typeof dashboardData,
+        isArray: Array.isArray(dashboardData),
+        length: dashboardData ? dashboardData.length : 0,
+        hasServerData,
+        sample: dashboardData ? dashboardData.slice(0, 2) : null
+      });
+      
       if (hasServerData) {
         serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nServer data available:\n` + formatServerData(dashboardData);
       } else if (!projectId || !environment) {
