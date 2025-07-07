@@ -70,6 +70,7 @@ export async function initializeApp() {
             timestamp: new Date().toISOString(),
             nodeEnv: process.env.NODE_ENV
         });
+        console.error('Application initialization failed:', error);
         throw error;
     }
 }

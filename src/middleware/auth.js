@@ -25,7 +25,33 @@ export function sessionDebug(req, res, next) {
 }
 
 export function conditionalAuth(req, res, next) {
+    console.log('=== CONDITIONAL AUTH CHECK ===', {
+        env: process.env.NODE_ENV,
+        path: req.path,
+        params: req.params,
+        hasSession: !!req.session,
+        hasUser: !!req.session?.user,
+        userId: req.session?.user?.id
+    });
+    
     if (process.env.NODE_ENV !== 'production') {
+        // In development mode, create a mock admin session if none exists
+        if (!req.session?.user) {
+            req.session.user = {
+                id: 'dev-admin-user',
+                email: 'dev-admin@example.com',
+                name: 'Development Admin',
+                role: 'admin',
+                isAdmin: true,
+                isUser: true,
+                groups: ['GRP-L0SUPPORT-ADMIN', 'GRP-L0SUPPORT-USER']
+            };
+            
+            logger.info('Development mode: Created mock admin session', {
+                userId: req.session.user.id,
+                email: req.session.user.email
+            });
+        }
         return next();
     }
     return requireAuth(req, res, next);

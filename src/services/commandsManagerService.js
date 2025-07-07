@@ -7,19 +7,18 @@ export class CommandService {
         try {
             const processedCommand = this.processCommandString(command.command);
             const [result] = await pool.execute(
-                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, allow_ai, auto_run, component_code, layout, locked, reviewed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO commands (title, command, description, service_type, execute_on_all_nodes, allow_ai, auto_run, component_code, locked, reviewed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     command.title,
                     processedCommand,
                     command.description,
                     command.serviceType,
-                    command.executeOnAllNodes ?? false,
-                    command.allowAi ?? false,
-                    command.autoRun ?? true,
-                    command.componentCode ?? null,
-                    command.layout ?? null,
-                    command.locked ?? false,
-                    false  // reviewed always starts as false
+                    command.executeOnAllNodes ? 1 : 0,
+                    command.allowAi ? 1 : 0,
+                    command.autoRun ? 1 : 0,
+                    command.componentCode || null,
+                    command.locked ? 1 : 0,
+                    command.reviewed ? 1 : 0
                 ]
             );
             return result.insertId;
@@ -41,16 +40,15 @@ export class CommandService {
                 processedCommand,
                 command.description,
                 command.serviceType,
-                command.executeOnAllNodes ?? false,
-                command.allowAi ?? false,
-                command.autoRun ?? true,
-                command.componentCode,
-                command.layout,
-                command.reviewed,
+                command.executeOnAllNodes ? 1 : 0,
+                command.allowAi ? 1 : 0,
+                command.autoRun ? 1 : 0,
+                command.componentCode || null,
+                command.reviewed ? 1 : 0,
                 id
             ];
             await pool.execute(
-                'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, allow_ai = ?, auto_run = ?, component_code = ?, layout = ?, reviewed = ? WHERE id = ?',
+                'UPDATE commands SET title = ?, command = ?, description = ?, service_type = ?, execute_on_all_nodes = ?, allow_ai = ?, auto_run = ?, component_code = ?, reviewed = ? WHERE id = ?',
                 params
             );
 
@@ -184,13 +182,12 @@ export class CommandService {
                 command: row.command,
                 description: row.description,
                 service_type: row.service_type,
-                execute_on_all_nodes: row.execute_on_all_nodes,
-                allow_ai: row.allow_ai,
-                auto_run: row.auto_run,
+                execute_on_all_nodes: row.execute_on_all_nodes === 1,
+                allow_ai: row.allow_ai === 1,
+                auto_run: row.auto_run === 1,
                 component_code: row.component_code,
-                layout: row.layout,
-                locked: row.locked,
-                reviewed: row.reviewed,
+                locked: row.locked === 1,
+                reviewed: row.reviewed === 1,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
@@ -202,26 +199,44 @@ export class CommandService {
 
     async getAll() {
         try {
+            logger.debug('Fetching all commands from database');
             const [rows] = await pool.execute('SELECT * FROM commands ORDER BY id ASC');
-            return rows.map(row => ({
+            logger.debug('Raw commands fetched', {
+                count: rows.length,
+                sampleCommand: rows.length > 0 ? {
+                    id: rows[0].id,
+                    title: rows[0].title,
+                    service_type: rows[0].service_type
+                } : null
+            });
+            
+            const commands = rows.map(row => ({
                 id: row.id,
                 title: row.title,
                 command: row.command,
                 description: row.description,
                 service_type: row.service_type,
-                execute_on_all_nodes: row.execute_on_all_nodes,
-                allow_ai: row.allow_ai,
-                auto_run: row.auto_run,
+                execute_on_all_nodes: row.execute_on_all_nodes === 1,
+                allow_ai: row.allow_ai === 1,
+                auto_run: row.auto_run === 1,
                 component_code: row.component_code,
-                layout: row.layout,
-                locked: row.locked,
-                reviewed: row.reviewed,
+                locked: row.locked === 1,
+                reviewed: row.reviewed === 1,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
+            
+            logger.debug('Commands mapped successfully', {
+                count: commands.length
+            });
+            
+            return commands;
 
         } catch (error) {
-            logger.error('Failed to get commands:', error);
+            logger.error('Failed to get commands:', {
+                error: error.message,
+                stack: error.stack
+            });
             throw error;
         }
     }
@@ -235,13 +250,12 @@ export class CommandService {
                 command: row.command,
                 description: row.description,
                 service_type: row.service_type,
-                execute_on_all_nodes: row.execute_on_all_nodes,
-                allow_ai: row.allow_ai,
-                auto_run: row.auto_run,
+                execute_on_all_nodes: row.execute_on_all_nodes === 1,
+                allow_ai: row.allow_ai === 1,
+                auto_run: row.auto_run === 1,
                 component_code: row.component_code,
-                layout: row.layout,
-                locked: row.locked,
-                reviewed: row.reviewed,
+                locked: row.locked === 1,
+                reviewed: row.reviewed === 1,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));

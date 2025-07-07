@@ -18,7 +18,6 @@ const tables = {
             allow_ai BOOLEAN DEFAULT FALSE,
             auto_run BOOLEAN DEFAULT TRUE,
             component_code TEXT,
-            layout VARCHAR(255) DEFAULT NULL,
             locked BOOLEAN DEFAULT FALSE,
             reviewed BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -58,6 +57,17 @@ const tables = {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_chat_id (chat_id),
             CONSTRAINT fk_chat_id FOREIGN KEY (chat_id) REFERENCES chat_sessions(chat_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `,
+    dashboard_layouts: `
+        CREATE TABLE IF NOT EXISTS dashboard_layouts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            layouts JSON NOT NULL, -- Stores layout, pinned, and collapsed states
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_layout_user (user_id),
+            INDEX idx_user (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `
 };

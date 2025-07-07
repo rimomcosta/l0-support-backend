@@ -77,6 +77,15 @@ class MagentoCloudAdapter {
             throw new Error("User ID is required to generate Magento Cloud home directory.");
         }
 
+        // Add logging for debugging
+        logger.info('Executing Magento Cloud command', {
+            command: command,
+            userId: userId,
+            hasApiToken: !!apiToken,
+            // Extract project ID from command if present
+            projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown'
+        });
+
         // Generate and ensure the home directory exists
         const homeDir = this.generateHomeDir(userId);
         await this.ensureHomeDir(homeDir);
@@ -98,11 +107,50 @@ class MagentoCloudAdapter {
             logger.debug('Command executed successfully', {
                 commandType: command.split(' ')[0],
                 hasOutput: Boolean(stdout),
-                hasError: Boolean(stderr)
+                hasError: Boolean(stderr),
+                projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown'
             });
 
             return { stdout, stderr };
         } catch (error) {
+            // Check for authentication errors in stderr
+            const stderr = error.stderr || '';
+            const stdout = error.stdout || '';
+            const combinedOutput = stderr + stdout;
+            
+            // Common authentication error patterns
+            const authErrorPatterns = [
+                'Invalid API token',
+                'authentication',
+                'unauthorized',
+                '401',
+                'Access denied',
+                'Permission denied',
+                'API token has been revoked',
+                'API token is invalid',
+                'Authentication required'
+            ];
+            
+            const isAuthError = authErrorPatterns.some(pattern => 
+                combinedOutput.toLowerCase().includes(pattern.toLowerCase())
+            );
+            
+            if (isAuthError) {
+                logger.error('Authentication error detected', {
+                    command: command.split(' ')[0],
+                    projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown',
+                    userId,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Create a more informative error for authentication issues
+                const authError = new Error('Authentication failed: Invalid or revoked API token');
+                authError.code = 'AUTH_FAILED';
+                authError.stderr = stderr;
+                authError.stdout = stdout;
+                throw authError;
+            }
+            
             if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
                 logger.info('Magento Cloud command execution (tunnel:info) returned no tunnel info (expected when tunnel is closed).', {
                     command,
@@ -112,7 +160,10 @@ class MagentoCloudAdapter {
             } else {
                 logger.error('Magento Cloud command execution failed:', {
                     error: error.message,
+                    stderr: error.stderr,
+                    stdout: error.stdout,
                     command,
+                    projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown',
                     timestamp: new Date().toISOString()
                 });
                 throw error;

@@ -13,8 +13,13 @@ import * as bashCommands from '../api/app/bashCommands.js';
 import { openTunnel } from '../api/app/tunnel.js';
 import * as ai from '../api/app/ai.js';
 import { getChatMessages } from '../api/app/chatApi.js';
+import chatApiRouter from '../api/app/chatApi.js';
+import dashboardLayoutRoutes from './dashboardLayoutRoutes.js';
 
 const router = express.Router();
+
+// Dashboard layout routes
+router.use('/', dashboardLayoutRoutes);
 
 router.get('/:projectId/environments', conditionalAuth, environment.getEnvironments);
 router.get('/:projectId/:environment/nodes', conditionalAuth, nodes.getNodes);
@@ -30,12 +35,30 @@ router.post('/commands', conditionalAuth, commands.createCommand);
 router.put('/commands/:id', conditionalAuth, commands.updateCommand);
 router.put('/commands/toggle/:id', conditionalAuth, commands.toggleCommand);
 router.delete('/command/:id', conditionalAuth, commands.deleteCommand);
-router.get('/:projectId/:environment/commands', conditionalAuth, commands.executeAllCommands);
+router.get('/:projectId/:environment/commands', 
+    (req, res, next) => {
+        console.log('=== COMMANDS ROUTE HIT ===', {
+            projectId: req.params.projectId,
+            environment: req.params.environment,
+            url: req.url,
+            path: req.path,
+            method: req.method,
+            hasSession: !!req.session,
+            hasUser: !!req.session?.user
+        });
+        next();
+    },
+    conditionalAuth, 
+    commands.executeAllCommands
+);
 // New route for single command execution
 router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
 router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
 router.post('/command/refresh-service', conditionalAuth, commands.refreshService);
 router.post('/ai/generate-component-code', conditionalAuth, ai.generateComponentCode);
 router.get('/ai/chat/:chatId', conditionalAuth, getChatMessages); //Use in IntelligencePage.js
+
+// Chat API routes
+router.use('/chat', conditionalAuth, chatApiRouter);
 
 export default router;

@@ -135,8 +135,21 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     
     if (!commands || commands.length === 0) return null;
 
+    logger.info('executeServiceCommands called', {
+        serviceType,
+        projectId,
+        environment,
+        userId,
+        commandCount: commands.length,
+        commandIds: commands.map(c => c.id)
+    });
+
     const serviceHandler = SERVICE_HANDLERS[serviceType];
     if (!serviceHandler) {
+        logger.error('Unsupported service type', {
+            serviceType,
+            availableTypes: Object.keys(SERVICE_HANDLERS)
+        });
         throw new Error(`Unsupported service type: ${serviceType}`);
     }
 
@@ -146,15 +159,42 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     let tunnelNeeded = ['redis', 'sql', 'opensearch'].includes(serviceType);
     let tunnelInfo = null;
 
+    logger.debug('Tunnel check', {
+        serviceType,
+        tunnelNeeded,
+        projectId,
+        environment
+    });
+
     if (tunnelNeeded) {
         try {
+            logger.info('Establishing tunnel for service', {
+                serviceType,
+                projectId,
+                environment,
+                userId
+            });
+            
             tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
             if (!tunnelInfo) {
+                logger.error('Tunnel info is null after opening', {
+                    serviceType,
+                    projectId,
+                    environment
+                });
                 throw new Error('Tunnel information is unavailable after opening.');
             }
+            
+            logger.info('Tunnel established successfully', {
+                serviceType,
+                projectId,
+                environment,
+                services: Object.keys(tunnelInfo)
+            });
         } catch (error) {
             logger.error(`Failed to establish tunnel for ${serviceType}`, {
                 error: error.message,
+                errorStack: error.stack,
                 projectId,
                 environment,
                 userId
@@ -215,6 +255,7 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
     } catch (error) {
         logger.error(`Error executing ${serviceType} commands:`, {
             error: error.message,
+            errorStack: error.stack,
             projectId,
             environment,
             userId
@@ -239,26 +280,96 @@ function shouldUseBashService(command) {
 
 // Execute all commands
 export async function executeAllCommands(req, res) {
-    const { projectId, environment } = req.params;
-    const userId = req.session.user.id;
-    const tabId = req.query.tabId;
-    const apiToken = req.session.decryptedApiToken;
+    console.log('=== executeAllCommands CALLED ===', {
+        projectId: req.params.projectId,
+        environment: req.params.environment,
+        url: req.url,
+        method: req.method
+    });
     
-    if (!apiToken) {
-        return res.status(401).json({ error: 'Decrypted API token not found in session' });
-    }
-
     try {
+        const { projectId, environment } = req.params;
+        const userId = req.session.user.id;
+        const tabId = req.query.tabId;
+        const apiToken = req.session.decryptedApiToken;
+        
+        // Validate session is still active
+        if (!req.session || !req.session.user) {
+            logger.error('Invalid session in executeAllCommands', {
+                projectId,
+                environment,
+                hasSession: !!req.session,
+                hasUser: !!req.session?.user
+            });
+            return res.status(401).json({ 
+                error: 'Session expired', 
+                code: 'SESSION_EXPIRED',
+                message: 'Your session has expired. Please log in again.' 
+            });
+        }
+        
+        // Add detailed logging for debugging
+        logger.info('executeAllCommands called', {
+            projectId,
+            environment,
+            userId,
+            tabId,
+            hasApiToken: !!apiToken,
+            sessionId: req.sessionID
+        });
+        
+        if (!apiToken) {
+            logger.error('No decrypted API token found', {
+                projectId,
+                environment,
+                userId,
+                sessionId: req.sessionID
+            });
+            return res.status(401).json({ error: 'Decrypted API token not found in session' });
+        }
+
         // Send initial status to client using tabId, including tunnel setup
-        WebSocketService.broadcastToTab({
-            type: 'execution_started',
-            timestamp: new Date().toISOString(),
-            services: ['tunnel'] // Indicate that tunnel setup is starting
-        }, tabId);
+        try {
+            WebSocketService.broadcastToTab({
+                type: 'execution_started',
+                timestamp: new Date().toISOString(),
+                services: ['tunnel'] // Indicate that tunnel setup is starting
+            }, tabId);
+        } catch (wsError) {
+            logger.error('Failed to send WebSocket message', {
+                error: wsError.message,
+                projectId,
+                environment,
+                tabId
+            });
+            // Continue execution even if WebSocket fails
+        }
 
         // Check if any service needs a tunnel
         const allCommands = await commandService.getAll();
+        
+        logger.info('Commands fetched from database', {
+            projectId,
+            environment,
+            totalCommands: allCommands.length,
+            commandTypes: allCommands.map(cmd => ({
+                id: cmd.id,
+                title: cmd.title,
+                service_type: cmd.service_type,
+                auto_run: cmd.auto_run,
+                reviewed: cmd.reviewed
+            }))
+        });
+        
         const commandsToRun = allCommands.filter(cmd => cmd.auto_run && cmd.reviewed);
+        
+        logger.info('Commands filtered for execution', {
+            projectId,
+            environment,
+            commandsToRunCount: commandsToRun.length,
+            commandsToRunIds: commandsToRun.map(cmd => cmd.id)
+        });
+        
         const commandsByService = commandsToRun.reduce((acc, cmd) => {
             acc[cmd.service_type] = acc[cmd.service_type] || [];
             acc[cmd.service_type].push(cmd);
@@ -386,11 +497,20 @@ export async function executeAllCommands(req, res) {
         res.json(finalResults);
 
     } catch (error) {
+        console.error('=== ERROR IN executeAllCommands ===', {
+            error: error.message,
+            stack: error.stack,
+            projectId: req.params.projectId,
+            environment: req.params.environment
+        });
+        
         logger.error('Failed to execute commands:', {
             error: error.message,
-            projectId,
-            environment,
-            userId
+            errorStack: error.stack,
+            projectId: req.params.projectId,
+            environment: req.params.environment,
+            userId: req.session?.user?.id,
+            sessionId: req.sessionID
         });
 
         const errorResponse = {
@@ -403,7 +523,7 @@ export async function executeAllCommands(req, res) {
             type: 'execution_error',
             timestamp: new Date().toISOString(),
             error: errorResponse
-        }, tabId);
+        }, req.query.tabId);
 
         res.status(500).json(errorResponse);
     }

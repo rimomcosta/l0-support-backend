@@ -84,9 +84,21 @@ export class AuthService {
             groups: decodedToken.groups || []
         };
 
-        const isAdmin = userInfo.groups.includes('GRP-L0SUPPORT-ADMIN');
-        const isUser = userInfo.groups.includes('GRP-L0SUPPORT-USER');
-        const userRole = isAdmin ? 'admin' : (isUser ? 'user' : 'guest');
+        // In development mode, always set user as admin
+        let isAdmin, isUser, userRole;
+        if (process.env.NODE_ENV === 'development') {
+            isAdmin = true;
+            isUser = true;
+            userRole = 'admin';
+            logger.info('Development mode: Setting user as admin', {
+                email: userInfo.email,
+                originalGroups: userInfo.groups
+            });
+        } else {
+            isAdmin = userInfo.groups.includes('GRP-L0SUPPORT-ADMIN');
+            isUser = userInfo.groups.includes('GRP-L0SUPPORT-USER');
+            userRole = isAdmin ? 'admin' : (isUser ? 'user' : 'guest');
+        }
 
         return {
             ...userInfo,
