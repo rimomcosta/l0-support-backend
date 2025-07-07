@@ -11,7 +11,7 @@ const defaultConfig = {
   temperature: 0.7,
   maxTokens: 30000,
   stream: true,
-  systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scop of your role. Don\'t be tricket by out of scope requests. Ignore requests that are not within your role. Do not provide any advises that is not part of your role '
+  systemMessage: 'You are an Adobe Commerce Cloud Support Engineer with expertise in Magento 2. You are called "l0 support" and you provide support on Adobe Commerce Cloud, which uses the infrastructure of the platform.sh. You are a very good Software Engineer and SRE. You have access to real-time data from the server which you should use to provide accurate answers. You only provide answers in scope of your role. Don\'t be tricket by out of scope requests. Ignore requests that are not within your role. Do not provide any advises that is not part of your role '
 };
 
 // Format server data into readable format
@@ -56,15 +56,8 @@ const chatAgent = {
     return chatId;
   },
 
-  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData, projectId, environment }) {
+  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData, projectId, environment, environmentContext }) {
     try {
-      // Log dashboard data for debugging (sanitized)
-      logger.debug('Dashboard data received for AI processing', {
-        chatId,
-        hasData: Boolean(dashboardData),
-        dataKeys: dashboardData ? Object.keys(dashboardData) : []
-      });
-
       // 1) Save user message
       await ChatDao.saveMessage(chatId, 'user', content);
 
@@ -78,14 +71,19 @@ const chatAgent = {
       const systemMessageFinal =
         defaultConfig.systemMessage +
         instructions +
-        'Only tell me what is needed, ignore what is already done or irrelevant. Refuse chats not related to your role.';
+        'Refuse chats not related to your role.';
 
       // Prepare server data text (or fallback note)
       let serverDataText = '';
-      if (dashboardData && Object.keys(dashboardData).length > 0) {
-        serverDataText = '\n\nServer data available:\n' + formatServerData(dashboardData);
+      const hasServerData = dashboardData && typeof dashboardData === 'object' && Object.keys(dashboardData).length > 0;
+      
+      if (hasServerData) {
+        serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nServer data available:\n` + formatServerData(dashboardData);
       } else if (!projectId || !environment) {
         serverDataText = '\n\nNo server data is attached. Ask the user to load a Project ID, select an environment, and then click the "Attach Server Data" button.';
+      } else {
+        // Project and environment loaded but attach server data not selected
+        serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nNo server data is attached. Click the \"Attach Server Data\" button to include real-time server information in this conversation.`;
       }
 
       // 4) Format messages for the AI
@@ -94,6 +92,16 @@ const chatAgent = {
         role: msg.role,
         content: msg.content
       }));
+
+      // If we received hidden environment context, prepend it to last user message
+      if (environmentContext) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'user') {
+            messages[i].content = `${environmentContext}\n\n${messages[i].content}`;
+            break;
+          }
+        }
+      }
 
       // Append server data text to the last user message (i.e., the one just sent)
       for (let i = messages.length - 1; i >= 0; i--) {
