@@ -122,28 +122,56 @@ const chatAgent = {
 
       // 7) Handle streaming response
       let fullAssistantReply = '';
+      let fullThinkingContent = '';
 
-      for await (const token of stream) {
+      for await (const chunk of stream) {
         if (abortSignal?.aborted) {
           logger.info(`Streaming aborted for chatId=${chatId}`);
           break;
         }
 
-        if (!token) continue;
+        if (!chunk) continue;
 
-        fullAssistantReply += token;
-
-        // Send chunk to frontend
-        WebSocketService.broadcastToTab({
-          type: 'chunk',
-          chatId,
-          content: token
-        }, tabId);
+        // Handle different content types
+        if (typeof chunk === 'string') {
+          // Legacy string response (from other adapters)
+          fullAssistantReply += chunk;
+          WebSocketService.broadcastToTab({
+            type: 'chunk',
+            chatId,
+            content: chunk
+          }, tabId);
+        } else if (chunk.type === 'thinking') {
+          // Thinking content
+          fullThinkingContent += chunk.text;
+          WebSocketService.broadcastToTab({
+            type: 'thinking_chunk',
+            chatId,
+            content: chunk.text
+          }, tabId);
+        } else if (chunk.type === 'content') {
+          // Final answer content
+          fullAssistantReply += chunk.text;
+          WebSocketService.broadcastToTab({
+            type: 'chunk',
+            chatId,
+            content: chunk.text
+          }, tabId);
+        }
       }
 
       // 8) Handle completion
       if (!abortSignal?.aborted) {
         await ChatDao.saveMessage(chatId, 'assistant', fullAssistantReply);
+        
+        // Send thinking end if we had thinking content
+        if (fullThinkingContent) {
+          WebSocketService.broadcastToTab({
+            type: 'thinking_end',
+            chatId
+          }, tabId);
+        }
+        
         WebSocketService.broadcastToTab({
           type: 'end',
           chatId
