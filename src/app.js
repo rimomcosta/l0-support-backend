@@ -32,7 +32,7 @@ export async function initializeApp() {
 
         // Middlewares and configurations
         app.set('trust proxy', 1);
-        app.use(express.json());
+        app.use(express.json({ limit: '50mb' })); // Increased from default 100kb to 50mb for large message inputs
         app.use(cookieParser());
         app.use(cors(corsConfig));
 
