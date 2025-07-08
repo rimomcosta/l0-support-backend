@@ -44,11 +44,43 @@ const chatAgent = {
 
   async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData, projectId, environment, environmentContext }) {
     try {
+      // Performance optimization for large content
+      const isLargeMessage = content && content.length > 1000000; // 1MB threshold
+      
+      if (isLargeMessage) {
+        logger.info(`Processing large message: ${content.length} characters for chatId: ${chatId}`);
+        
+        // Send immediate progress update
+        WebSocketService.broadcastToTab({
+          type: 'thinking_chunk',
+          chatId,
+          content: 'Processing large message... This may take a moment.'
+        }, tabId);
+      }
+      
       // 1) Save user message
-      await ChatDao.saveMessage(chatId, 'user', content);
+      try {
+        await ChatDao.saveMessage(chatId, 'user', content);
+        logger.debug(`User message saved successfully for chatId: ${chatId}`);
+      } catch (err) {
+        logger.error(`Failed to save user message for chatId: ${chatId}`, {
+          error: err.message,
+          contentLength: content?.length || 0
+        });
+        throw new Error(`Database error while saving user message: ${err.message}`);
+      }
 
       // 2) Get conversation history
-      const conversation = await ChatDao.getMessagesByChatId(chatId);
+      let conversation;
+      try {
+        conversation = await ChatDao.getMessagesByChatId(chatId);
+        logger.debug(`Retrieved ${conversation.length} messages for chatId: ${chatId}`);
+      } catch (err) {
+        logger.error(`Failed to get conversation history for chatId: ${chatId}`, {
+          error: err.message
+        });
+        throw new Error(`Database error while retrieving conversation history: ${err.message}`);
+      }
 
       // 3) Create system message with server data
       const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
@@ -101,24 +133,54 @@ const chatAgent = {
       }
 
       // 5) Get adapter with config
-      const adapter = aiService.getAdapter(defaultConfig.provider, {
-        ...defaultConfig,
-        temperature: temperature ?? defaultConfig.temperature,
-        maxTokens: maxTokens ?? defaultConfig.maxTokens,
-        topP: defaultConfig.topP,
-        stream: true,
-        systemMessage: systemMessageFinal // System message without server data
-      });
+      let adapter;
+      try {
+        adapter = aiService.getAdapter(defaultConfig.provider, {
+          ...defaultConfig,
+          temperature: temperature ?? defaultConfig.temperature,
+          maxTokens: maxTokens ?? defaultConfig.maxTokens,
+          topP: defaultConfig.topP,
+          stream: true,
+          systemMessage: systemMessageFinal // System message without server data
+        });
+        logger.debug(`AI adapter created successfully for provider: ${defaultConfig.provider}`);
+      } catch (err) {
+        logger.error(`Failed to create AI adapter for chatId: ${chatId}`, {
+          error: err.message,
+          provider: defaultConfig.provider
+        });
+        throw new Error(`AI adapter initialization error: ${err.message}`);
+      }
 
       // 6) Generate stream
-      const { stream } = await adapter.generateStream({
-        model: defaultConfig.model,
-        temperature: temperature ?? defaultConfig.temperature,
-        maxTokens: maxTokens ?? defaultConfig.maxTokens,
-        systemMessage: systemMessageFinal,
-        messages: messages,
-        signal: abortSignal
-      });
+      let stream;
+      try {
+        logger.debug(`Starting AI stream generation for chatId: ${chatId}`, {
+          model: defaultConfig.model,
+          messageCount: messages.length,
+          systemMessageLength: systemMessageFinal.length
+        });
+        
+        const result = await adapter.generateStream({
+          model: defaultConfig.model,
+          temperature: temperature ?? defaultConfig.temperature,
+          maxTokens: maxTokens ?? defaultConfig.maxTokens,
+          systemMessage: systemMessageFinal,
+          messages: messages,
+          signal: abortSignal
+        });
+        
+        stream = result.stream;
+        logger.debug(`AI stream generation started successfully for chatId: ${chatId}`);
+      } catch (err) {
+        logger.error(`Failed to generate AI stream for chatId: ${chatId}`, {
+          error: err.message,
+          stack: err.stack,
+          provider: defaultConfig.provider,
+          model: defaultConfig.model
+        });
+        throw new Error(`AI stream generation error: ${err.message}`);
+      }
 
       // 7) Handle streaming response
       let fullAssistantReply = '';
@@ -178,7 +240,16 @@ const chatAgent = {
         try {
           // Save thinking message first if we have thinking content
           if (fullThinkingContent) {
-            await ChatDao.saveMessage(chatId, 'thinking', fullThinkingContent);
+            try {
+              await ChatDao.saveMessage(chatId, 'thinking', fullThinkingContent);
+              logger.debug(`Thinking message saved for chatId: ${chatId}, length: ${fullThinkingContent.length}`);
+            } catch (err) {
+              logger.error(`Failed to save thinking message for chatId: ${chatId}`, {
+                error: err.message,
+                thinkingLength: fullThinkingContent.length
+              });
+              // Continue with assistant message even if thinking save fails
+            }
             
             // If we haven't sent the thinking complete event yet, send it now
             if (!hasStartedContent) {
@@ -192,18 +263,52 @@ const chatAgent = {
           
           // Save assistant reply only if we have actual content
           if (fullAssistantReply && fullAssistantReply.trim().length > 0) {
-            await ChatDao.saveMessage(chatId, 'assistant', fullAssistantReply);
+            try {
+              const assistantMessageId = await ChatDao.saveMessage(chatId, 'assistant', fullAssistantReply);
+              logger.debug(`Assistant message saved for chatId: ${chatId}, length: ${fullAssistantReply.length}, messageId: ${assistantMessageId}`);
+              
+              WebSocketService.broadcastToTab({
+                type: 'end',
+                chatId,
+                messageId: assistantMessageId
+              }, tabId);
+            } catch (err) {
+              logger.error(`Failed to save assistant message for chatId: ${chatId}`, {
+                error: err.message,
+                contentLength: fullAssistantReply.length
+              });
+              
+              // Still notify frontend that streaming ended, even if save failed
+              WebSocketService.broadcastToTab({
+                type: 'end',
+                chatId,
+                error: 'Failed to save assistant response'
+              }, tabId);
+            }
+          } else {
+            logger.warn(`No assistant content to save for chatId: ${chatId}`, {
+              thinkingLength: fullThinkingContent.length,
+              hasStartedContent
+            });
+            
+            // Still notify frontend that streaming ended
+            WebSocketService.broadcastToTab({
+              type: 'end',
+              chatId
+            }, tabId);
           }
-          
-          WebSocketService.broadcastToTab({
-            type: 'end',
-            chatId
-          }, tabId);
         } catch (error) {
-          logger.error('Error saving messages at completion:', error);
-          // Don't send error to frontend for save issues, just log them
+          logger.error('Error in completion handler for chatId:', chatId, {
+            error: error.message,
+            stack: error.stack,
+            stage: 'completion'
+          });
+          
+          // Send error to frontend for completion issues
           WebSocketService.broadcastToTab({
-            type: 'end',
+            type: 'error',
+            message: 'Error completing message processing',
+            stage: 'COMPLETION',
             chatId
           }, tabId);
         }
@@ -222,11 +327,60 @@ const chatAgent = {
           chatId
         }, tabId);
       } else {
-        logger.error(`Error in handleUserMessage for chatId=${chatId}: ${err}`);
+        // Enhanced error logging
+        logger.error(`Error in handleUserMessage for chatId=${chatId}:`, {
+          error: err.message,
+          stack: err.stack,
+          chatId,
+          contentLength: content?.length || 0,
+          errorType: err.constructor.name,
+          stage: 'handleUserMessage'
+        });
+        
+        // Determine error stage and provide specific messages
+        let errorMessage = 'An error occurred while processing your request.';
+        let errorStage = 'UNKNOWN';
+        
+        // Check for API quota/rate limit errors first (most specific)
+        if (err.message.includes('quota') || err.message.includes('429')) {
+          if (err.message.includes('250000') || err.message.includes('FreeTier')) {
+            const estimatedTokens = Math.ceil((content?.length || 0) / 4);
+            errorMessage = `API quota exceeded. Your message (~${estimatedTokens.toLocaleString()} tokens) exceeds the free tier limit of 250,000 tokens per minute. Please try a shorter message or upgrade your plan.`;
+            errorStage = 'QUOTA_EXCEEDED';
+          } else {
+            errorMessage = 'API rate limit exceeded. Please wait a moment and try again, or consider using a shorter message.';
+            errorStage = 'RATE_LIMIT';
+          }
+        } else if (err.message.includes('500') && err.message.includes('very large')) {
+          const sizeMB = Math.round((content?.length || 0) / 1024 / 1024 * 100) / 100;
+          errorMessage = `Message too large (${sizeMB}MB). The API has practical limits lower than advertised. Please break your content into smaller chunks.`;
+          errorStage = 'SIZE_LIMIT';
+        } else if (err.message.includes('413') || err.message.includes('payload too large')) {
+          errorMessage = 'Message payload too large. Please reduce the message size and try again.';
+          errorStage = 'PAYLOAD_SIZE';
+        } else if (err.message.includes('generateStream') || err.message.includes('adapter')) {
+          errorMessage = 'Error communicating with AI service.';
+          errorStage = 'AI_SERVICE';
+        } else if (err.message.includes('database') || err.message.includes('SQL')) {
+          errorMessage = 'Database error while processing message.';
+          errorStage = 'DATABASE';
+        } else if (err.message.includes('saveMessage')) {
+          errorMessage = 'Error saving message to database.';
+          errorStage = 'MESSAGE_SAVE';
+        } else if (err.message.includes('stream') || err.message.includes('iterator')) {
+          errorMessage = 'Error in response streaming.';
+          errorStage = 'STREAMING';
+        } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
+          errorMessage = 'Request timed out. Large messages may require more time.';
+          errorStage = 'TIMEOUT';
+        }
+        
         WebSocketService.broadcastToTab({
           type: 'error',
-          message: 'An error occurred while processing your request.',
-          chatId
+          message: errorMessage,
+          stage: errorStage,
+          chatId,
+          timestamp: new Date().toISOString()
         }, tabId);
       }
     }
