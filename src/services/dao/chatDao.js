@@ -20,7 +20,9 @@ export class ChatDao {
    */
   static async saveMessage(chatId, role, content) {
     const sql = `INSERT INTO chat_messages (chat_id, role, content) VALUES (?, ?, ?)`;
-    await pool.query(sql, [chatId, role, content]);
+    const [result] = await pool.query(sql, [chatId, role, content]);
+    // Return the inserted message ID so callers can reference it
+    return result.insertId;
   }
 
   /**
@@ -37,6 +39,7 @@ export class ChatDao {
     // Convert Unix timestamp to Date object during mapping
     return rows.map(row => ({
       ...row,
+      id: row.id,
       created_at: new Date(row.created_at) 
     }));
   }
