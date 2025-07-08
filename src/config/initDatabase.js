@@ -53,10 +53,10 @@ const tables = {
             id INT PRIMARY KEY AUTO_INCREMENT,
             chat_id VARCHAR(255) NOT NULL,
             role ENUM('user','assistant','system') NOT NULL,
-            content TEXT NOT NULL,
+            content LONGTEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_chat_id (chat_id),
-            CONSTRAINT fk_chat_id FOREIGN KEY (chat_id) REFERENCES chat_sessions(chat_id) ON DELETE CASCADE
+            INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `,
     dashboard_layouts: `
@@ -68,6 +68,25 @@ const tables = {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY unique_layout_user (user_id),
             INDEX idx_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `,
+    feedback: `
+        CREATE TABLE IF NOT EXISTS feedback (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            chat_id VARCHAR(255) NOT NULL,
+            message_id INT NOT NULL,
+            feedback_type ENUM('helpful', 'not_helpful') NOT NULL,
+            reasons JSON NULL, -- Array of selected reasons
+            additional_feedback TEXT NULL, -- Free-form feedback text
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_user_id (user_id),
+            INDEX idx_chat_id (chat_id),
+            INDEX idx_message_id (message_id),
+            INDEX idx_feedback_type (feedback_type),
+            INDEX idx_created_at (created_at),
+            UNIQUE KEY unique_user_message_feedback (user_id, message_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `
 };
