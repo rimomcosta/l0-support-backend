@@ -3,6 +3,7 @@ import { aiService } from '../aiService.js';
 import { WebSocketService } from '../../webSocketService.js';
 import { logger } from '../../logger.js';
 import { ChatDao } from '../../dao/chatDao.js';
+import { AiSettingsDao } from '../../dao/aiSettingsDao.js';
 import fs from 'fs/promises';
 
 const defaultConfig = {
@@ -42,8 +43,42 @@ const chatAgent = {
     return chatId;
   },
 
-  async handleUserMessage({ chatId, content, temperature, maxTokens, tabId, abortSignal, dashboardData, projectId, environment, environmentContext }) {
+  async handleUserMessage({ chatId, content, userId, tabId, abortSignal, dashboardData, projectId, environment, environmentContext }) {
     try {
+      // Get user settings (this will create defaults if none exist)
+      let userSettings, aiConfig;
+      try {
+        userSettings = await AiSettingsDao.getUserSettings(userId);
+        aiConfig = AiSettingsDao.settingsToConfig(userSettings);
+        logger.debug(`Retrieved AI settings for user ${userId}:`, { userSettings, aiConfig });
+
+        // Optional verbose console output for debugging when enabled
+        if (process.env.ENABLE_AI_OUTPUT === 'true') {
+          console.log('\n=== AI CONFIGURATION ===');
+          console.log('User:', userId);
+          console.log('AI Model (user):', userSettings.aiModel);
+          console.log('Response Style (user):', userSettings.responseStyle);
+          console.log('Response Length (user):', userSettings.responseLength);
+          console.log('Runtime Provider:', aiConfig.provider);
+          console.log('Runtime Model:', aiConfig.model);
+          console.log('Temperature:', aiConfig.temperature);
+          console.log('MaxTokens:', aiConfig.maxTokens);
+          console.log('Stream:', aiConfig.stream);
+          console.log('==========================\n');
+        }
+      } catch (err) {
+        logger.error(`Failed to get AI settings for user ${userId}, using defaults:`, { error: err.message });
+        // Fallback to default config if settings retrieval fails
+        aiConfig = {
+          provider: 'google_vertex',
+          model: 'gemini-2.5-flash', // Fast is the default
+          temperature: 0.7,
+          maxTokens: 16000,
+          stream: true,
+          topP: 0.95
+        };
+      }
+
       // Performance optimization for large content
       const isLargeMessage = content && content.length > 1000000; // 1MB threshold
       
@@ -127,44 +162,43 @@ const chatAgent = {
       // Append server data text to the last user message (i.e., the one just sent)
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'user') {
-          messages[i].content = messages[i].content + serverDataText;
+          messages[i].content = 'This is the server data just for context: ===SERVER DATA START==='+ serverDataText + '===SERVER DATA END=== \n\n Now focus on the user message and only check the server data if the user requests or if it is relevant to answer the user: '+ messages[i].content;
           break;
         }
       }
 
-      // 5) Get adapter with config
+      // 5) Get adapter with user config
       let adapter;
       try {
-        adapter = aiService.getAdapter(defaultConfig.provider, {
-          ...defaultConfig,
-          temperature: temperature ?? defaultConfig.temperature,
-          maxTokens: maxTokens ?? defaultConfig.maxTokens,
-          topP: defaultConfig.topP,
-          stream: true,
+        adapter = aiService.getAdapter(aiConfig.provider, {
+          ...aiConfig,
           systemMessage: systemMessageFinal // System message without server data
         });
-        logger.debug(`AI adapter created successfully for provider: ${defaultConfig.provider}`);
+        logger.debug(`AI adapter created successfully for provider: ${aiConfig.provider}, model: ${aiConfig.model}`);
       } catch (err) {
         logger.error(`Failed to create AI adapter for chatId: ${chatId}`, {
           error: err.message,
-          provider: defaultConfig.provider
+          provider: aiConfig.provider,
+          model: aiConfig.model
         });
         throw new Error(`AI adapter initialization error: ${err.message}`);
       }
 
-      // 6) Generate stream
+      // 6) Generate stream  
       let stream;
       try {
         logger.debug(`Starting AI stream generation for chatId: ${chatId}`, {
-          model: defaultConfig.model,
+          model: aiConfig.model,
+          temperature: aiConfig.temperature,
+          maxTokens: aiConfig.maxTokens,
           messageCount: messages.length,
           systemMessageLength: systemMessageFinal.length
         });
         
         const result = await adapter.generateStream({
-          model: defaultConfig.model,
-          temperature: temperature ?? defaultConfig.temperature,
-          maxTokens: maxTokens ?? defaultConfig.maxTokens,
+          model: aiConfig.model,
+          temperature: aiConfig.temperature,
+          maxTokens: aiConfig.maxTokens,
           systemMessage: systemMessageFinal,
           messages: messages,
           signal: abortSignal
@@ -176,8 +210,8 @@ const chatAgent = {
         logger.error(`Failed to generate AI stream for chatId: ${chatId}`, {
           error: err.message,
           stack: err.stack,
-          provider: defaultConfig.provider,
-          model: defaultConfig.model
+          provider: aiConfig.provider,
+          model: aiConfig.model
         });
         throw new Error(`AI stream generation error: ${err.message}`);
       }

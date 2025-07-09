@@ -15,11 +15,15 @@ import * as ai from '../api/app/ai.js';
 import { getChatMessages } from '../api/app/chatApi.js';
 import chatApiRouter from '../api/app/chatApi.js';
 import dashboardLayoutRoutes from './dashboardLayoutRoutes.js';
+import aiSettingsRoutes from './aiSettingsRoutes.js';
 
 const router = express.Router();
 
 // Dashboard layout routes
 router.use('/', dashboardLayoutRoutes);
+
+// AI settings routes  
+router.use('/', aiSettingsRoutes);
 
 router.get('/:projectId/environments', conditionalAuth, environment.getEnvironments);
 router.get('/:projectId/:environment/nodes', conditionalAuth, nodes.getNodes);
