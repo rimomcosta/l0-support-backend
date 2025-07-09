@@ -35,28 +35,30 @@ export async function initializeApp() {
         app.use(express.json({ limit: '50mb' })); // Increased from default 100kb to 50mb for large message inputs
         app.use(cookieParser());
         
-        // Custom CORS middleware to handle ngrok tunnel issues after system sleep
-        app.use((req, res, next) => {
-            const origin = req.headers.origin;
-            
-            // Handle ngrok tunnel CORS issues specifically
-            if (origin && origin.includes('.ngrok.io')) {
-                res.header('Access-Control-Allow-Origin', origin);
-                res.header('Access-Control-Allow-Credentials', 'true');
-                res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-                res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, Origin, Accept, Cookie, x-api-token-password, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers');
-                res.header('Access-Control-Expose-Headers', 'Set-Cookie');
-                res.header('Access-Control-Max-Age', '86400');
+        // Custom CORS middleware to handle ngrok tunnel issues after system sleep (development only)
+        if (process.env.NODE_ENV !== 'production') {
+            app.use((req, res, next) => {
+                const origin = req.headers.origin;
                 
-                // Handle preflight requests
-                if (req.method === 'OPTIONS') {
-                    logger.debug('Handling preflight request for ngrok origin', { origin, method: req.method, path: req.path });
-                    return res.status(204).end();
+                // Handle ngrok tunnel CORS issues specifically
+                if (origin && origin.includes('.ngrok.io')) {
+                    res.header('Access-Control-Allow-Origin', origin);
+                    res.header('Access-Control-Allow-Credentials', 'true');
+                    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+                    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, Origin, Accept, Cookie, x-api-token-password, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers');
+                    res.header('Access-Control-Expose-Headers', 'Set-Cookie');
+                    res.header('Access-Control-Max-Age', '86400');
+                    
+                    // Handle preflight requests
+                    if (req.method === 'OPTIONS') {
+                        logger.debug('Handling preflight request for ngrok origin', { origin, method: req.method, path: req.path });
+                        return res.status(204).end();
+                    }
                 }
-            }
-            
-            next();
-        });
+                
+                next();
+            });
+        }
         
         app.use(cors(corsConfig));
 

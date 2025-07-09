@@ -3,17 +3,28 @@ import { logger } from '../services/logger.js';
 export const corsConfig = {
     origin: function (origin, callback) {
         const allowedOrigins = [
-            'http://localhost:3000',          // Development
-            'http://localhost:3001',          // Alternative development port
-            process.env.CLIENT_ORIGIN,       // Defined in .env
-            process.env.REACT_APP_API_URL,   // Defined in .env
-            'https://l0support.ngrok.io',    // Ngrok endpoint
-            'http://10.122.12.162:3000'      // Server's local address
+            process.env.CLIENT_ORIGIN,       // Production/staging domain from .env
+            process.env.REACT_APP_API_URL,   // API domain from .env
         ].filter(Boolean);
 
-        // Allow any ngrok subdomain to handle dynamic ngrok URLs
-        const isNgrokOrigin = origin && origin.includes('.ngrok.io');
-        const isLocalhostOrigin = origin && (origin.includes('localhost') || origin.includes('127.0.0.1'));
+        // Development-only origins
+        if (process.env.NODE_ENV !== 'production') {
+            allowedOrigins.push(
+                'http://localhost:3000',          // Development
+                'http://localhost:3001',          // Alternative development port
+                'https://l0support.ngrok.io',    // Ngrok endpoint
+                'http://10.122.12.162:3000'      // Server's local address
+            );
+        }
+
+        // Development-only ngrok and localhost handling
+        let isNgrokOrigin = false;
+        let isLocalhostOrigin = false;
+        
+        if (process.env.NODE_ENV !== 'production') {
+            isNgrokOrigin = origin && origin.includes('.ngrok.io');
+            isLocalhostOrigin = origin && (origin.includes('localhost') || origin.includes('127.0.0.1'));
+        }
         
         if (!origin || allowedOrigins.includes(origin) || isNgrokOrigin || isLocalhostOrigin) {
             callback(null, true);
@@ -22,7 +33,8 @@ export const corsConfig = {
                 origin,
                 allowedOrigins,
                 isNgrokOrigin,
-                isLocalhostOrigin
+                isLocalhostOrigin,
+                environment: process.env.NODE_ENV
             });
             callback(new Error('Not allowed by CORS'));
         }
@@ -32,7 +44,6 @@ export const corsConfig = {
     allowedHeaders: [
         'Content-Type',
         'Authorization',
-        'ngrok-skip-browser-warning',
         'Origin',
         'Accept',
         'Cookie',
@@ -40,7 +51,10 @@ export const corsConfig = {
         'X-Requested-With',
         'Access-Control-Request-Method',
         'Access-Control-Request-Headers'
-    ],
+    ].concat(
+        // Add ngrok-specific headers only in development
+        process.env.NODE_ENV !== 'production' ? ['ngrok-skip-browser-warning'] : []
+    ),
     exposedHeaders: ['Set-Cookie'],
     preflightContinue: false,
     optionsSuccessStatus: 204,
