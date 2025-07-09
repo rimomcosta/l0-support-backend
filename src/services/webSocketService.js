@@ -20,7 +20,7 @@ const sanitizeUserInput = (content) => {
 
 // Optimize WebSocket message handler for large payloads
 const handleLargeMessage = async (ws, parsedMessage, abortControllers, logActivity, logger, chatAgent) => {
-    const { chatId, content, temperature, maxTokens, tabId, dashboardData, projectId, environment, environmentContext } = parsedMessage;
+    const { chatId, content, tabId, dashboardData, projectId, environment, environmentContext } = parsedMessage;
     
     // If we do not have a controller for that chat, create it
     let entry = abortControllers.get(chatId);
@@ -62,8 +62,7 @@ const handleLargeMessage = async (ws, parsedMessage, abortControllers, logActivi
     await chatAgent.handleUserMessage({
         chatId,
         content: sanitizedContent,
-        temperature,
-        maxTokens,
+        userId: ws.userID,
         tabId,
         abortSignal: entry.controller.signal,
         dashboardData,
