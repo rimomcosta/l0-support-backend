@@ -157,3 +157,49 @@ export async function logout(req, res) {
         res.status(500).json({ error: 'Logout failed' });
     }
 }
+
+export async function sessionHealth(req, res) {
+    try {
+        if (!req.session?.user) {
+            return res.status(401).json({ 
+                error: 'Not authenticated',
+                code: 'SESSION_EXPIRED'
+            });
+        }
+
+        // Calculate session timing information
+        const now = Date.now();
+        const sessionCreated = req.session.cookie.originalMaxAge ? 
+            (now - (req.session.cookie.originalMaxAge - req.session.cookie.maxAge)) : 
+            now;
+        const sessionAge = now - sessionCreated;
+        const timeRemaining = req.session.cookie.maxAge;
+        const expiresAt = new Date(now + timeRemaining);
+
+        logger.debug('Session health check', {
+            userId: req.session.user.id,
+            sessionAge: Math.floor(sessionAge / 1000),
+            timeRemaining: Math.floor(timeRemaining / 1000),
+            expiresAt: expiresAt.toISOString()
+        });
+
+        res.json({
+            isValid: true,
+            user: req.session.user,
+            sessionAge,
+            timeRemaining,
+            expiresAt: expiresAt.toISOString(),
+            isNearExpiry: timeRemaining < 30 * 60 * 1000, // Less than 30 minutes
+            warningThreshold: 30 * 60 * 1000 // 30 minutes in milliseconds
+        });
+    } catch (error) {
+        logger.error('Session health check failed:', {
+            error: error.message,
+            sessionId: req.sessionID
+        });
+        res.status(500).json({ 
+            error: 'Session check failed',
+            code: 'SESSION_CHECK_ERROR'
+        });
+    }
+}
