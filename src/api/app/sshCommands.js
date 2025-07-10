@@ -9,12 +9,21 @@ import { ApiTokenService } from '../../services/apiTokenService.js';
  * a script (as a string) and pass it to SSH via a here-document.
  */
 function createScriptContent(commands) {
-    // Each command prints its id and title, then runs the command line from DB.
-    // We do not escape quotes here, we just trust the script content.
+    // Each command is wrapped in unique start/end markers, and its exit code is checked.
     return commands.map(cmd => {
-        return `echo 'id: ${cmd.id}'
-echo 'title: ${cmd.title}'
-${cmd.command}
+        const startMarker = `ACCS_CMD_START_${cmd.id}_${Date.now()}`;
+        const endMarker = `ACCS_CMD_END_${cmd.id}`;
+        const errorMarker = `ACCS_CMD_ERROR_${cmd.id}`;
+
+        // Trim the command to prevent syntax errors from trailing whitespace.
+        const trimmedCommand = cmd.command.trim();
+
+        // Wrap the command to capture its exit code.
+        // If the command fails (non-zero exit code), we echo a unique error marker.
+        return `echo "${startMarker}";
+${trimmedCommand};
+if [ $? -ne 0 ]; then echo "${errorMarker}"; fi;
+echo "${endMarker}";
 `;
     }).join('\n');
 }
@@ -22,92 +31,46 @@ ${cmd.command}
 // Parses the output from commands into individual results
 function parseCommandOutput(output, commands) {
     const results = [];
-    const lines = output.split('\n');
-    let currentCommand = null;
-    let currentOutput = [];
 
-    for (let line of lines) {
-        if (line.startsWith('id: ')) {
-            // Save previous command's output if exists
-            if (currentCommand) {
-                let finalOutput = currentOutput.join('\n').trim();
-                
-                // Special handling for command ID 22 (cron schedule)
-                if (currentCommand.id === 22 && finalOutput) {
-                    // Try to extract JSON from the output
-                    const jsonStart = finalOutput.indexOf('{');
-                    const jsonEnd = finalOutput.lastIndexOf('}');
-                    
-                    if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
-                        const jsonString = finalOutput.substring(jsonStart, jsonEnd + 1);
-                        try {
-                            // Validate it's proper JSON
-                            JSON.parse(jsonString);
-                            finalOutput = jsonString;
-                        } catch (e) {
-                            logger.warn('Failed to extract valid JSON from cron command output', {
-                                commandId: currentCommand.id,
-                                error: e.message,
-                                outputSample: finalOutput.substring(0, 200)
-                            });
-                        }
-                    }
-                }
-                
-                results.push({
-                    commandId: currentCommand.id,
-                    output: finalOutput,
-                    error: null,
-                    status: finalOutput ? "SUCCESS" : "ERROR"
-                });
-                currentOutput = [];
-            }
-            // Start new command
-            const id = parseInt(line.substring(4));
-            currentCommand = commands.find(cmd => cmd.id === id);
-            continue;
-        }
-        if (line.startsWith('title: ')) {
-            continue;
-        }
-        if (currentCommand) {
-            currentOutput.push(line);
-        }
-    }
+    commands.forEach(cmd => {
+        const startMarker = `ACCS_CMD_START_${cmd.id}`;
+        const endMarker = `ACCS_CMD_END_${cmd.id}`;
+        const errorMarker = `ACCS_CMD_ERROR_${cmd.id}`;
 
-    // Don't forget the last command
-    if (currentCommand) {
-        let finalOutput = currentOutput.join('\n').trim();
-        
-        // Special handling for command ID 22 (cron schedule)
-        if (currentCommand.id === 22 && finalOutput) {
-            // Try to extract JSON from the output
-            const jsonStart = finalOutput.indexOf('{');
-            const jsonEnd = finalOutput.lastIndexOf('}');
-            
-            if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
-                const jsonString = finalOutput.substring(jsonStart, jsonEnd + 1);
-                try {
-                    // Validate it's proper JSON
-                    JSON.parse(jsonString);
-                    finalOutput = jsonString;
-                } catch (e) {
-                    logger.warn('Failed to extract valid JSON from cron command output', {
-                        commandId: currentCommand.id,
-                        error: e.message,
-                        outputSample: finalOutput.substring(0, 200)
-                    });
-                }
-            }
+        // Regex to find the content between the unique start and end markers for this command.
+        const regex = new RegExp(`${startMarker}_\\d+([\\s\\S]*?)${endMarker}`, 'g');
+        let match;
+        let foundMatch = false;
+
+        while ((match = regex.exec(output)) !== null) {
+            foundMatch = true;
+            // The full output for this command, including our error marker if it exists.
+            const commandOutputWithMeta = match[1];
+
+            // Check if our unique error marker is present.
+            const hasError = commandOutputWithMeta.includes(errorMarker);
+
+            // Clean the error marker from the final output that the user sees.
+            const finalOutput = commandOutputWithMeta.replace(errorMarker, '').trim();
+
+            results.push({
+                commandId: cmd.id,
+                output: finalOutput,
+                error: hasError ? 'Command executed with a non-zero exit code.' : null,
+                status: hasError ? "ERROR" : "SUCCESS"
+            });
         }
-        
-        results.push({
-            commandId: currentCommand.id,
-            output: finalOutput,
-            error: null,
-            status: finalOutput ? "SUCCESS" : "ERROR"
-        });
-    }
+
+        // If a command's markers were not found in the output at all, it's an error.
+        if (!foundMatch) {
+            results.push({
+                commandId: cmd.id,
+                output: null,
+                error: `Command output not found. Delimiter markers were not present in the final output.`,
+                status: "ERROR"
+            });
+        }
+    });
 
     return results;
 }
