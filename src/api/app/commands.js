@@ -175,7 +175,7 @@ async function executeServiceCommands(serviceType, commands, projectId, environm
                 userId
             });
             
-            tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
+            tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, serviceType);
             if (!tunnelInfo) {
                 logger.error('Tunnel info is null after opening', {
                     serviceType,
@@ -381,8 +381,13 @@ export async function executeAllCommands(req, res) {
         let tunnelInfo = null;
         if (tunnelNeeded) {
             try {
+                // Since multiple services might need a tunnel, we must ensure each one is ready.
+                // For simplicity, we'll check the first one that needs it, as opening the tunnel
+                // should make all services available. A more advanced implementation might check all.
+                const firstTunnelService = Object.keys(commandsByService).find(st => ['redis', 'sql', 'opensearch'].includes(st));
+
                 // Modify openTunnel to accept a callback for progress updates
-                tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, (status) => {
+                tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, firstTunnelService, (status) => {
                     WebSocketService.broadcastToTab({
                         type: 'tunnel_status',
                         status,
@@ -552,7 +557,7 @@ export async function refreshService(req, res) {
         // Ensure tunnel is open before refreshing a service
         if (['redis', 'sql', 'opensearch'].includes(serviceType)) {
             try {
-                const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
+                const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, serviceType);
                 if (!tunnelInfo) {
                     throw new Error('Tunnel information is unavailable after opening.');
                 }
@@ -731,7 +736,7 @@ export async function executeSingleCommand(req, res) {
         // Ensure tunnel is open before executing a single command if needed
         if (['redis', 'sql', 'opensearch'].includes(serviceType)) {
             try {
-                const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
+                const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, serviceType);
                 if (!tunnelInfo) {
                     throw new Error('Tunnel information is unavailable after opening.');
                 }

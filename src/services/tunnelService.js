@@ -6,6 +6,8 @@ import { logActivity } from './activityLogger.js';
 import MagentoCloudAdapter from '../adapters/magentoCloud.js';
 import { redisClient } from './redisService.js';
 import { v4 as uuidv4 } from 'uuid'; // For unique lock identifiers
+import { SQLService } from './sqlService.js';
+import { OpenSearchService } from './openSearchService.js';
 
 const execAsync = promisify(exec);
 
@@ -174,27 +176,58 @@ class TunnelManager {
     }
 
     /**
-     * Checks if the provided tunnel info is healthy. In this example, we ping Redis, but
-     * you could add more checks for SQL/OpenSearch if you wish.
+     * Checks if the provided tunnel info is healthy for a specific service.
+     * If no service is specified, it performs a general check using Redis.
      */
-    async checkTunnelHealth(tunnelInfo) {
+    async checkTunnelHealth(tunnelInfo, serviceName = 'redis') { // Default to redis
         if (!tunnelInfo) return false;
+
         try {
-            // Check Redis as an example
-            if (tunnelInfo?.redis?.[0]) {
+            if (serviceName === 'redis' && tunnelInfo.redis?.[0]) {
                 const { host, port } = tunnelInfo.redis[0];
-                const command = `redis-cli -h ${host} -p ${port} ping`;
-                const { stdout } = await execAsync(command);
-                if (stdout.trim() !== 'PONG') {
-                    return false;
-                }
+                const { stdout } = await execAsync(`redis-cli -h ${host} -p ${port} ping`);
+                return stdout.trim() === 'PONG';
             }
-            // Extend with other checks if needed (SQL, OpenSearch, etc.)
-            return true;
+            if (serviceName === 'sql' && tunnelInfo.database?.[0]) {
+                const sqlService = new SQLService({ database: [tunnelInfo.database[0]] });
+                await sqlService.executeQuery('SELECT 1');
+                return true;
+            }
+            if (serviceName === 'opensearch' && tunnelInfo.opensearch?.[0]) {
+                const osService = new OpenSearchService({ opensearch: [tunnelInfo.opensearch[0]] });
+                // A simple GET request to the root is a good health check.
+                await osService.executeCommand({ method: 'GET', path: '/' });
+                return true;
+            }
         } catch (error) {
-            logger.debug('Tunnel health check failed:', { error: error.message });
+            logger.debug(`Tunnel health check failed for ${serviceName}:`, { error: error.message });
             return false;
         }
+
+        return false; // Service not found or not supported
+    }
+
+    /**
+     * Polls the tunnel until a specific service is healthy and ready.
+     */
+    async waitForServiceReady(projectId, environment, serviceName, apiToken, userId) {
+        const POLL_INTERVAL = 2000; // 2 seconds
+        const MAX_WAIT_TIME = 30000; // 30 seconds
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < MAX_WAIT_TIME) {
+            const tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken, userId);
+            if (tunnelInfo) {
+                const isHealthy = await this.checkTunnelHealth(tunnelInfo, serviceName);
+                if (isHealthy) {
+                    logger.info(`Service "${serviceName}" is ready in tunnel.`, { projectId, environment });
+                    return tunnelInfo;
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+        }
+
+        throw new Error(`Service "${serviceName}" was not ready within the timeout period.`);
     }
 
     /**
@@ -287,14 +320,13 @@ class TunnelManager {
      * Waits for the tunnel to open by spawning "tunnel:open" and parsing its output.
      * This resolves with the tunnel info once all services are reported as ready.
      */
-    async waitForTunnelOpen(projectId, environment, apiToken, userId) {
+    async waitForTunnelOpen(projectId, environment, apiToken, userId, serviceType) {
         return new Promise((resolve, reject) => {
             const command = `tunnel:open -p ${projectId} -e ${environment} -y`;
             const { tunnelProcess } = this.magentoCloud.executeCommandStream(command, apiToken, userId);
 
             let servicesFound = {};
             let allServicesReady = false;
-            let tunnelCreationStarted = false;
 
             // Safety timeout
             const timeout = setTimeout(() => {
@@ -302,55 +334,41 @@ class TunnelManager {
                 reject(new Error('Tunnel setup timeout'));
             }, TUNNEL_READY_TIMEOUT);
 
-            tunnelProcess.stdout.on('data', (data) => {
-                const newServices = this.parseExistingTunnelOutput(data.toString());
-                servicesFound = { ...servicesFound, ...newServices };
-            });
-
-            tunnelProcess.stderr.on('data', (data) => {
-                if (!tunnelCreationStarted && data.includes('SSH tunnel opened to')) {
-                    tunnelCreationStarted = true;
-                    logger.info('Creating tunnels for all services...', { projectId, environment });
-                }
-
-                const newServices = this.parseExistingTunnelOutput(data.toString());
+            const dataHandler = (data) => {
+                const dataStr = data.toString();
+                const newServices = this.parseExistingTunnelOutput(dataStr);
                 servicesFound = { ...servicesFound, ...newServices };
 
-                if (data.includes('Logs are written to:')) {
+                if (dataStr.includes('Logs are written to:')) {
                     allServicesReady = true;
-                    logger.info('All tunnels created successfully', {
+                    logger.info('All tunnels appear to be created successfully.', {
                         projectId,
                         environment,
                         services: Object.keys(servicesFound)
                     });
                 }
-            });
+            };
+
+            tunnelProcess.stdout.on('data', dataHandler);
+            tunnelProcess.stderr.on('data', dataHandler);
 
             tunnelProcess.on('close', async (code) => {
                 clearTimeout(timeout);
 
-                if (allServicesReady && Object.keys(servicesFound).length > 0) {
-                    // A brief wait to let services "settle"
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                logger.debug(`Tunnel process closed with code: ${code}`, { projectId, environment });
 
+                if (allServicesReady && Object.keys(servicesFound).length > 0) {
                     try {
-                        const { stdout } = await this.magentoCloud.executeCommand(
-                            `tunnel:info -p ${projectId} -e ${environment} -y`,
-                            apiToken,
-                            userId
-                        );
-                        const tunnelInfo = this.parseTunnelInfo(stdout);
-                        resolve(tunnelInfo);
+                        // Use the specific serviceType for polling if provided, otherwise default to redis.
+                        const serviceToCheck = serviceType || 'redis';
+                        const finalTunnelInfo = await this.waitForServiceReady(projectId, environment, serviceToCheck, apiToken, userId);
+                        resolve(finalTunnelInfo);
                     } catch (error) {
-                        if (error.message.includes('No tunnels found')) {
-                            logger.debug('Using parsed services while tunnel info stabilizes');
-                            resolve(servicesFound);
-                        } else {
-                            reject(error);
-                        }
+                        logger.error('Service readiness check failed after tunnel open:', { error: error.message });
+                        resolve(servicesFound); // Fallback to what we found
                     }
                 } else {
-                    reject(new Error('Tunnel setup incomplete'));
+                    reject(new Error(`Tunnel setup incomplete. Process exited with code ${code}.`));
                 }
             });
 
@@ -366,7 +384,7 @@ class TunnelManager {
      * The main entrypoint to ensure a tunnel is open for the specified project/env.
      * If already open and healthy, returns the existing info. Otherwise, tries to acquire a lock and open it.
      */
-    async openTunnel(projectId, environment, apiToken, userId, progressCallback) {
+    async openTunnel(projectId, environment, apiToken, userId, serviceType, progressCallback) {
         if (!userId) {
             throw new Error("userId is not provided");
         }
@@ -394,7 +412,7 @@ class TunnelManager {
                 // Quick check for existing tunnel
                 if (progressCallback) progressCallback('checking_existing_tunnel');
                 let tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken, userId);
-                if (tunnelInfo) {
+                if (tunnelInfo && await this.checkTunnelHealth(tunnelInfo, serviceType)) {
                     if (progressCallback) progressCallback('tunnel_exists');
                     await this.incrementTunnelUsage(projectId, environment, userId);
                     this.resetIdleTimer(projectId, environment, userId, apiToken);
@@ -412,7 +430,7 @@ class TunnelManager {
                     const startTime = Date.now();
                     while (Date.now() - startTime < LOCK_WAIT_TIMEOUT) {
                         tunnelInfo = await this.getTunnelInfo(projectId, environment, apiToken, userId);
-                        if (tunnelInfo) {
+                        if (tunnelInfo && await this.checkTunnelHealth(tunnelInfo, serviceType)) {
                             if (progressCallback) progressCallback('tunnel_opened_by_other_process');
                             await this.incrementTunnelUsage(projectId, environment, userId);
                             this.resetIdleTimer(projectId, environment, userId, apiToken);
@@ -433,11 +451,11 @@ class TunnelManager {
                     });
 
                     if (progressCallback) progressCallback('opening_tunnel');
-                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken, userId);
+                    const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken, userId, serviceType);
 
-                    // Verify the new tunnel is healthy
+                    // Verify the new tunnel is healthy for the specific service
                     if (progressCallback) progressCallback('verifying_tunnel');
-                    const isHealthy = await this.checkTunnelHealth(newTunnelInfo);
+                    const isHealthy = await this.checkTunnelHealth(newTunnelInfo, serviceType);
                     if (isHealthy) {
                         if (progressCallback) progressCallback('tunnel_ready');
                         await this.incrementTunnelUsage(projectId, environment, userId);
