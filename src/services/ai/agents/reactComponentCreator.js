@@ -69,25 +69,33 @@ const ExampleComponent = ({ data }) => {
 
     const parsedData = parseOutput(data.output);
 
+    let content;
     if (typeof parsedData === 'string') {
-      // If parsing failed, display the raw output
-      return React.createElement('div', {
-        className: 'p-4 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 hover:shadow-md transition-shadow duration-200'
-      }, [
+      content = React.createElement('pre', {
+        key: 'output',
+        className: 'text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap font-mono'
+      }, parsedData);
+    } else if (Array.isArray(parsedData)) {
+      content = parsedData.map((item, index) =>
         React.createElement('div', {
-          key: 'node-id',
-          className: 'text-xs text-gray-400 dark:text-gray-500 mb-2'
-        }, \`Node \${data.nodeId}\`),
-        React.createElement('pre', {
-          key: 'output',
-          className: 'text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap font-mono'
-        }, parsedData)
-      ]);
+          key: \`\${index}\`,
+          className: 'p-2 border-b dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300'
+        }, typeof item === 'object' ? JSON.stringify(item) : item)
+      );
+    } else {
+      // Other types: create visualization based on parsedData
+      // For example, if object:
+      content = Object.entries(parsedData).map(([key, value]) =>
+        React.createElement('div', {
+          key: key,
+          className: 'flex justify-between p-1 text-sm'
+        }, [
+          React.createElement('span', { className: 'text-gray-500 dark:text-gray-400' }, key + ':'),
+          React.createElement('span', { className: 'text-gray-900 dark:text-gray-100' }, value.toString())
+        ])
+      );
     }
 
-    // If parsing was successful, create the visualization based on parsedData
-    // ... rest of the component logic, directly creating elements within the main container ...
-    // Example:
     return React.createElement('div', {
       className: 'p-4 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 hover:shadow-md transition-shadow duration-200'
     }, [
@@ -95,7 +103,7 @@ const ExampleComponent = ({ data }) => {
         key: 'node-id',
         className: 'text-xs text-gray-400 dark:text-gray-500 mb-2'
       }, \`Node \${data.nodeId}\`),
-      // ... other elements based on parsedData
+      ...(Array.isArray(content) ? content : [content])
     ]);
   } catch (error) {
     return React.createElement('div', {
