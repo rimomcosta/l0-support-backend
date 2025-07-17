@@ -679,7 +679,16 @@ export async function toggleCommand(req, res) {
         res.status(200).json(result);
     } catch (error) {
         logger.error('Failed to toggle command field:', error);
-        res.status(500).json({ error: error.message });
+        
+        // Check if it's an authorization error
+        if (error.message === 'This action requires admin role') {
+            res.status(403).json({ 
+                error: 'Access denied. Admin privileges required.',
+                code: 'ADMIN_REQUIRED'
+            });
+        } else {
+            res.status(500).json({ error: error.message });
+        }
     }
 }
 
