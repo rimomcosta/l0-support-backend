@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../services/logger.js';
+import { getMockUserInsertSQL } from './mockUser.js';
 
 const dbName = 'l0support';
 
@@ -190,6 +191,17 @@ export async function initializeTables() {
         for (const [tableName, query] of Object.entries(tables)) {
             await dbPool.query(query);
             logger.info(`Table ${tableName} initialized successfully or already exists`);
+        }
+
+        // Insert mock development user if USE_OKTA=false
+        if (process.env.NODE_ENV !== 'production' && process.env.USE_OKTA === 'false') {
+            try {
+                const mockUserQuery = getMockUserInsertSQL();
+                await dbPool.query(mockUserQuery);
+                logger.info('Mock development user inserted or already exists');
+            } catch (error) {
+                logger.warn('Failed to insert mock development user:', error);
+            }
         }
 
         await dbPool.end();
