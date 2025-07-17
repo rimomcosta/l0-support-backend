@@ -73,8 +73,10 @@ const handleLargeMessage = async (ws, parsedMessage, abortControllers, logActivi
 };
 
 export class WebSocketService {
+    static wss = null; // Add a static property to hold the WebSocket server instance
+
     static initialize(server) {
-        const wss = new WebSocketServer({ 
+        this.wss = new WebSocketServer({ 
             noServer: true, 
             path: '/ws',
             maxPayload: 100 * 1024 * 1024 // 100MB limit for large message inputs
@@ -85,6 +87,8 @@ export class WebSocketService {
 
         // Store controllers by chatId, so we can handle "stop_stream" repeatedly
         const abortControllers = new Map();
+
+        const wss = this.wss; // Use the static property
 
         wss.on('connection', (ws, req) => {
             const queryObject = url.parse(req.url, true).query;
@@ -289,9 +293,36 @@ export class WebSocketService {
         return wss;
     }
 
+    static broadcast(message) {
+        if (!this.wss) {
+            logger.error('WebSocket server not initialized. Cannot broadcast message.');
+            return;
+        }
+
+        const serializedMessage = JSON.stringify(message);
+        this.wss.clients.forEach(client => {
+            if (client.readyState === 1) { // WebSocket.OPEN
+                client.send(serializedMessage);
+            }
+        });
+    }
+
+    static broadcastAnalysisUpdate(analysisId, status) {
+        const message = {
+            type: 'analysis_update',
+            payload: {
+                id: analysisId,
+                status: status,
+                updated_at: new Date().toISOString()
+            }
+        };
+        this.broadcast(message);
+    }
+
     static broadcastToTab(message, tabId) {
-        if (!global.wss) {
-            throw new Error('WebSocket server not initialized');
+        if (!this.wss) {
+            logger.error('WebSocket server not initialized. Cannot broadcast message to tab.');
+            return;
         }
         const connections = global.wss.connectionsByTabId.get(tabId);
         if (connections) {
