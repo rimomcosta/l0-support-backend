@@ -77,24 +77,30 @@ export class AuthService {
         return introspectData;
     }
 
-    static processUserInfo(decodedToken) {
+    static async processUserInfo(decodedToken) {
         const userInfo = {
             email: decodedToken.email,
             name: decodedToken.name,
             groups: decodedToken.groups || []
         };
 
-        // In development mode, always set user as admin
+        // Determine user permissions based on groups
         let isAdmin, isUser, userRole;
-        if (process.env.NODE_ENV === 'development') {
-            isAdmin = true;
-            isUser = true;
-            userRole = 'admin';
-            logger.info('Development mode: Setting user as admin', {
+        if (process.env.NODE_ENV === 'development' && process.env.USE_OKTA === 'false') {
+            // In development with mock auth, use mock user config
+            const { getMockUserForSession } = await import('../config/mockUser.js');
+            const mockUser = getMockUserForSession();
+            isAdmin = mockUser.isAdmin;
+            isUser = mockUser.isUser;
+            userRole = mockUser.role;
+            logger.info('Development mode with mock auth: Using mock user permissions', {
                 email: userInfo.email,
-                originalGroups: userInfo.groups
+                isAdmin,
+                isUser,
+                userRole
             });
         } else {
+            // Normal Okta authentication logic
             isAdmin = userInfo.groups.includes('GRP-L0SUPPORT-ADMIN');
             isUser = userInfo.groups.includes('GRP-L0SUPPORT-USER');
             userRole = isAdmin ? 'admin' : (isUser ? 'user' : 'guest');

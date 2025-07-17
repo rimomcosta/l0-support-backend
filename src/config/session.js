@@ -10,11 +10,11 @@ export const sessionConfig = {
     proxy: true,
     secret: process.env.SESSION_SECRET,
     cookie: {
-        secure: true,
+        secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
-        sameSite: 'none',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 24 * 60 * 60 * 1000,
-        path: '/'
-        // domain: process.env.NODE_ENV === 'development' ? undefined : '.ngrok-free.app'
+        path: '/',
+        domain: undefined
     }
 };
