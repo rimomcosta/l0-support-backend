@@ -1,6 +1,7 @@
 //src/middleware/auth.js
 import { logger } from '../services/logger.js';
 import { SessionService } from '../services/sessionService.js';
+import { getMockUserForSession, getConfigHash } from '../config/mockUser.js';
 
 export function requireAuth(req, res, next) {
     if (!req.session.user) {
@@ -25,35 +26,37 @@ export function sessionDebug(req, res, next) {
 }
 
 export function conditionalAuth(req, res, next) {
-    console.log('=== CONDITIONAL AUTH CHECK ===', {
-        env: process.env.NODE_ENV,
-        path: req.path,
-        params: req.params,
-        hasSession: !!req.session,
-        hasUser: !!req.session?.user,
-        userId: req.session?.user?.id
-    });
+    const useOkta = process.env.USE_OKTA !== 'false'; // Default to true unless explicitly set to false
+    const isDevelopment = process.env.NODE_ENV !== 'production';
     
-    if (process.env.NODE_ENV !== 'production') {
-        // In development mode, create a mock admin session if none exists
-        if (!req.session?.user) {
-            req.session.user = {
-                id: 'dev-admin-user',
-                email: 'dev-admin@example.com',
-                name: 'Development Admin',
-                role: 'admin',
-                isAdmin: true,
-                isUser: true,
-                groups: ['GRP-L0SUPPORT-ADMIN', 'GRP-L0SUPPORT-USER']
-            };
+    // If USE_OKTA=false in development, always use mock auth (no login page needed)
+    if (isDevelopment && !useOkta) {
+        const currentConfigHash = getConfigHash();
+        
+        // Check if session doesn't exist or if config has changed
+        if (!req.session?.user || req.session.user.configHash !== currentConfigHash) {
+            req.session.user = getMockUserForSession();
             
-            logger.info('Development mode: Created mock admin session', {
-                userId: req.session.user.id,
-                email: req.session.user.email
-            });
+            if (req.session.user.configHash !== currentConfigHash) {
+                logger.info('Development mode: Refreshed mock user session due to config change (USE_OKTA=false)', {
+                    userId: req.session.user.id,
+                    email: req.session.user.email,
+                    isAdmin: req.session.user.isAdmin,
+                    isUser: req.session.user.isUser,
+                    oldConfigHash: req.session.user.configHash,
+                    newConfigHash: currentConfigHash
+                });
+            } else {
+                logger.info('Development mode: Created mock admin session (USE_OKTA=false)', {
+                    userId: req.session.user.id,
+                    email: req.session.user.email
+                });
+            }
         }
         return next();
     }
+    
+    // For USE_OKTA=true or production: require real authentication, no fallbacks
     return requireAuth(req, res, next);
 }
 
