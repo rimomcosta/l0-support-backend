@@ -1,6 +1,7 @@
 // src/routes/coreRoutes.js
 import express from 'express';
-import { login, callback, getUser, logout, sessionHealth } from '../api/core/auth.js';
+import { login, callback, getUser, logout, sessionHealth, claimSession, refreshMockSession } from '../api/core/auth.js';
+import { conditionalAuth } from '../middleware/auth.js';
 import * as health from '../api/core/health.js';
 import * as apiToken from '../api/core/apiToken.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -10,9 +11,11 @@ const router = express.Router();
 // Auth routes
 router.get('/auth/login', login);
 router.get('/auth/callback', callback);
-router.get('/auth/user', getUser);
+router.get('/auth/user', conditionalAuth, getUser);
 router.get('/auth/session-health', sessionHealth);
 router.post('/auth/logout', logout);
+router.post('/auth/claim-session', claimSession);
+router.post('/auth/refresh-mock-session', refreshMockSession);
 
 // Health routes
 router.get('/health', health.checkHealth);
