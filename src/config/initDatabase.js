@@ -102,6 +102,31 @@ const tables = {
             UNIQUE KEY unique_user_settings (user_id),
             INDEX idx_user_id (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `,
+    transaction_analysis: `
+        CREATE TABLE IF NOT EXISTS transaction_analysis (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            project_id VARCHAR(255) NOT NULL,
+            environment VARCHAR(50) NOT NULL,
+            user_id VARCHAR(255) NOT NULL,
+            analysis_name VARCHAR(255) NOT NULL,
+            original_payload LONGTEXT NOT NULL,
+            analysis_result LONGTEXT NOT NULL,
+            status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
+            error_message TEXT,
+            extra_context TEXT NULL,
+            use_ai BOOLEAN DEFAULT TRUE COMMENT 'Whether this analysis should be used in AI chat (1=selected/green sparkles, 0=unselected/red sparkles)',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP NULL,
+            token_count INT DEFAULT 0,
+            processing_time_ms INT DEFAULT 0,
+            INDEX idx_project_env (project_id, environment),
+            INDEX idx_user_id (user_id),
+            INDEX idx_status (status),
+            INDEX idx_created_at (created_at),
+            INDEX idx_use_ai (use_ai)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `
 };
 

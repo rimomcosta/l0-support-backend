@@ -1,6 +1,6 @@
 // src/routes/appRoutes.js
 import express from 'express';
-import { conditionalAuth } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
 import * as environment from '../api/app/environment.js';
 import * as nodes from '../api/app/nodes.js';
 import * as sshCommands from '../api/app/sshCommands.js';
@@ -25,20 +25,20 @@ router.use('/', dashboardLayoutRoutes);
 // AI settings routes  
 router.use('/', aiSettingsRoutes);
 
-router.get('/:projectId/environments', conditionalAuth, environment.getEnvironments);
-router.get('/:projectId/:environment/nodes', conditionalAuth, nodes.getNodes);
-router.post('/:projectId/:environment/open-tunnel', conditionalAuth, openTunnel);
-router.post('/:projectId/:environment/sshcommand', conditionalAuth, sshCommands.runCommands);
-router.post('/:projectId/:environment/sqlquery', conditionalAuth, sqlCommands.runQueries);
-router.post('/:projectId/:environment/redisquery', conditionalAuth, redisCommands.runQueries);
-router.post('/:projectId/:environment/searchquery', conditionalAuth, openSearchCommands.runQueries);
-router.post('/:projectId/:environment/magentocloud/:instance?', conditionalAuth, magentoCloudDirectAccess.executeCommands);
-router.get('/command/:id', conditionalAuth, commands.getCommand);
-router.get('/commands', conditionalAuth, commands.getCommands);
-router.post('/commands', conditionalAuth, commands.createCommand);
-router.put('/commands/:id', conditionalAuth, commands.updateCommand);
-router.put('/commands/toggle/:id', conditionalAuth, commands.toggleCommand);
-router.delete('/command/:id', conditionalAuth, commands.deleteCommand);
+router.get('/:projectId/environments', requireAuth, environment.getEnvironments);
+router.get('/:projectId/:environment/nodes', requireAuth, nodes.getNodes);
+router.post('/:projectId/:environment/open-tunnel', requireAuth, openTunnel);
+router.post('/:projectId/:environment/sshcommand', requireAuth, sshCommands.runCommands);
+router.post('/:projectId/:environment/sqlquery', requireAuth, sqlCommands.runQueries);
+router.post('/:projectId/:environment/redisquery', requireAuth, redisCommands.runQueries);
+router.post('/:projectId/:environment/searchquery', requireAuth, openSearchCommands.runQueries);
+router.post('/:projectId/:environment/magentocloud/:instance?', requireAuth, magentoCloudDirectAccess.executeCommands);
+router.get('/command/:id', requireAuth, commands.getCommand);
+router.get('/commands', requireAuth, commands.getCommands);
+router.post('/commands', requireAuth, commands.createCommand);
+router.put('/commands/:id', requireAuth, commands.updateCommand);
+router.put('/commands/toggle/:id', requireAuth, commands.toggleCommand);
+router.delete('/command/:id', requireAuth, commands.deleteCommand);
 router.get('/:projectId/:environment/commands', 
     (req, res, next) => {
         console.log('=== COMMANDS ROUTE HIT ===', {
@@ -52,17 +52,17 @@ router.get('/:projectId/:environment/commands',
         });
         next();
     },
-    conditionalAuth, 
+    requireAuth, 
     commands.executeAllCommands
 );
 // New route for single command execution
-router.post('/command/execute', conditionalAuth, commands.executeSingleCommand);
-router.post('/bashcommand', conditionalAuth, bashCommands.runCommands);
-router.post('/command/refresh-service', conditionalAuth, commands.refreshService);
-router.post('/ai/generate-component-code', conditionalAuth, ai.generateComponentCode);
-router.get('/ai/chat/:chatId', conditionalAuth, getChatMessages); //Use in IntelligencePage.js
+router.post('/command/execute', requireAuth, commands.executeSingleCommand);
+router.post('/bashcommand', requireAuth, bashCommands.runCommands);
+router.post('/command/refresh-service', requireAuth, commands.refreshService);
+router.post('/ai/generate-component-code', requireAuth, ai.generateComponentCode);
+router.get('/ai/chat/:chatId', requireAuth, getChatMessages); //Use in IntelligencePage.js
 
 // Chat API routes
-router.use('/chat', conditionalAuth, chatApiRouter);
+router.use('/chat', requireAuth, chatApiRouter);
 
 export default router;
