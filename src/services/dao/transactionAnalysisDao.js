@@ -13,6 +13,7 @@ class TransactionAnalysisDao {
                 environment,
                 userId,
                 analysisName,
+                extraContext = null,
                 originalPayload,
                 yamlContent,
                 analysisResult,
@@ -24,8 +25,8 @@ class TransactionAnalysisDao {
 
             const query = `
                 INSERT INTO transaction_analysis 
-                (project_id, environment, user_id, analysis_name, original_payload, yaml_content, analysis_result, status, error_message, token_count, processing_time_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (project_id, environment, user_id, analysis_name, extra_context, original_payload, yaml_content, analysis_result, status, error_message, token_count, processing_time_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -33,6 +34,7 @@ class TransactionAnalysisDao {
                 environment,
                 userId,
                 analysisName,
+                extraContext,
                 originalPayload,
                 yamlContent,
                 analysisResult,
@@ -146,32 +148,7 @@ class TransactionAnalysisDao {
         }
     }
 
-    async updateAnalysisYaml(analysisId, yamlContent, tokenCount) {
-        try {
-            const query = `
-                UPDATE transaction_analysis 
-                SET yaml_content = ?, token_count = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            `;
 
-            const [result] = await database.execute(query, [yamlContent, tokenCount, analysisId]);
-            
-            if (result.affectedRows === 0) {
-                throw new Error(`Analysis with ID ${analysisId} not found`);
-            }
-            
-            this.logger.info(`Updated YAML content for analysis ID: ${analysisId}`);
-            
-            return {
-                success: true,
-                analysisId: analysisId
-            };
-
-        } catch (error) {
-            this.logger.error('Error updating analysis YAML content:', error);
-            throw error;
-        }
-    }
 
     async deleteAnalysis(id) {
         try {

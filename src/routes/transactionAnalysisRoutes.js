@@ -5,52 +5,57 @@ import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Middleware to validate JSON payload
-const validateJsonPayload = (req, res, next) => {
+// Middleware to validate YAML payload
+const validateYamlPayload = (req, res, next) => {
     try {
-        if (!req.body.payload) {
+        if (!req.body.yamlContent) {
             return res.status(400).json({
                 success: false,
-                error: 'Payload is required'
+                error: 'YAML content is required'
             });
         }
 
-        // If payload is a string, try to parse it
-        if (typeof req.body.payload === 'string') {
-            req.body.payload = JSON.parse(req.body.payload);
-        }
-
-        // Validate that it's a New Relic trace format
-        if (!req.body.payload.data?.actor?.entity?.transactionTrace) {
+        if (typeof req.body.yamlContent !== 'string') {
             return res.status(400).json({
                 success: false,
-                error: 'Invalid New Relic trace format. Payload must contain data.actor.entity.transactionTrace'
+                error: 'YAML content must be a string'
+            });
+        }
+
+        // Basic validation - should contain some trace-like content
+        if (!req.body.yamlContent.includes('#') || req.body.yamlContent.length < 50) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid YAML content format'
             });
         }
 
         next();
     } catch (error) {
-        logger.error('Error validating JSON payload:', error);
+        logger.error('Error validating YAML payload:', error);
         return res.status(400).json({
             success: false,
-            error: 'Invalid JSON format'
+            error: 'Invalid YAML format'
         });
     }
 };
 
 // Analyze a single transaction
-router.post('/analyze', requireAuth, validateJsonPayload, async (req, res) => {
+router.post('/analyze', requireAuth, validateYamlPayload, async (req, res) => {
     const requestStartTime = Date.now();
     
     try {
-        const { payload, analysisName } = req.body;
+        const { yamlContent, tokenCount, analysisName, extraContext } = req.body;
         const userId = req.session.user.id;
         // For now, use default project/environment - this can be enhanced later
         const projectId = 'default-project';
         const environment = 'production';
 
         logger.info(`[API] Transaction analysis request from user ${userId} for ${projectId}/${environment}, analysisName: "${analysisName}"`);
-        logger.info(`[API] Payload size: ${JSON.stringify(payload).length} characters`);
+        logger.info(`[API] YAML content size: ${yamlContent.length} characters, estimated tokens: ${tokenCount || 'unknown'}`);
+        if (extraContext) {
+            logger.info(`[API] Extra context provided: ${extraContext.length} characters`);
+        }
 
         // Step 1: Create the analysis record immediately (synchronous)
         const createStartTime = Date.now();
@@ -59,11 +64,12 @@ router.post('/analyze', requireAuth, validateJsonPayload, async (req, res) => {
             environment,
             userId,
             analysisName: analysisName || `Transaction Analysis ${new Date().toLocaleString()}`,
-            originalPayload: JSON.stringify(payload),
-            yamlContent: '', // Will be populated in background
+            originalPayload: '', // Not storing the original JSON anymore
+            yamlContent: yamlContent,
             analysisResult: '',
             status: 'processing',
-            tokenCount: 0
+            tokenCount: tokenCount || 0,
+            extraContext: extraContext || null
         };
 
         const dbResult = await transactionAnalysisService.dao.createAnalysis(analysisData);
@@ -89,8 +95,9 @@ router.post('/analyze', requireAuth, validateJsonPayload, async (req, res) => {
                 logger.info(`[BACKGROUND] Starting background processing for analysis ${analysisId}`);
                 const backgroundStartTime = Date.now();
                 
-                const result = await transactionAnalysisService.analyzeTransaction(
-                    payload,
+                const result = await transactionAnalysisService.analyzeTransactionFromYaml(
+                    yamlContent,
+                    extraContext,
                     userId,
                     projectId,
                     environment,

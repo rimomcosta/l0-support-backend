@@ -11,7 +11,7 @@ class TransactionAnalysisAgent {
         this.stream = false;
     }
 
-    async analyzeTransaction(yamlContent, analysisName, projectId, environment) {
+    async analyzeTransaction(yamlContent, analysisName, projectId, environment, extraContext = null) {
         const startTime = Date.now();
         
         try {
@@ -20,7 +20,7 @@ class TransactionAnalysisAgent {
             // Build the prompt
             this.logger.info(`[AI AGENT] Building analysis prompt for "${analysisName}"`);
             const promptStartTime = Date.now();
-            const prompt = this.buildAnalysisPrompt(yamlContent, analysisName, projectId, environment);
+            const prompt = this.buildAnalysisPrompt(yamlContent, analysisName, projectId, environment, extraContext);
             const promptTime = Date.now() - promptStartTime;
             this.logger.info(`[AI AGENT] Prompt built in ${promptTime}ms for "${analysisName}"`);
 
@@ -74,13 +74,20 @@ class TransactionAnalysisAgent {
         }
     }
 
-    buildAnalysisPrompt(yamlContent, analysisName, projectId, environment) {
+    buildAnalysisPrompt(yamlContent, analysisName, projectId, environment, extraContext = null) {
+        const contextSection = extraContext ? `
+
+ADDITIONAL CONTEXT PROVIDED BY USER:
+${extraContext}
+
+INSTRUCTIONS: Please take the additional context provided by the user into account when performing your analysis. This context may include specific concerns, areas of focus, or domain knowledge that should influence your analysis.` : '';
+
         return `You are an expert performance analyst specializing in New Relic transaction traces. You have been given a transaction trace in YAML format that represents the execution flow of a web request.
 
 PROJECT CONTEXT:
 - Project ID: ${projectId}
 - Environment: ${environment}
-- Analysis Name: ${analysisName}
+- Analysis Name: ${analysisName}${contextSection}
 
 YAML TRANSACTION TRACE:
 \`\`\`yaml

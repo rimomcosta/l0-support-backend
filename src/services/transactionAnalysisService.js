@@ -1,5 +1,4 @@
 import { logger } from './logger.js';
-import yamlConversionService from './yamlConversionService.js';
 import transactionAnalysisAgent from './ai/agents/transactionAnalysis.js';
 import transactionAnalysisDao from './dao/transactionAnalysisDao.js';
 import { WebSocketService } from './webSocketService.js';
@@ -7,75 +6,36 @@ import { WebSocketService } from './webSocketService.js';
 class TransactionAnalysisService {
     constructor() {
         this.logger = logger;
-        this.yamlService = yamlConversionService;
         this.aiAgent = transactionAnalysisAgent;
         this.dao = transactionAnalysisDao;
     }
 
-    async analyzeTransaction(payload, userId, projectId, environment, analysisName, existingAnalysisId = null) {
+
+
+    async analyzeTransactionFromYaml(yamlContent, extraContext, userId, projectId, environment, analysisName, existingAnalysisId) {
         const startTime = Date.now();
         
         try {
-            this.logger.info(`[ANALYSIS START] User ${userId} starting analysis "${analysisName}" in ${projectId}/${environment}`);
+            this.logger.info(`[YAML ANALYSIS START] User ${userId} starting analysis "${analysisName}" in ${projectId}/${environment} from pre-converted YAML`);
             
-            // Step 1: Convert JSON to YAML
-            this.logger.info(`[YAML CONVERSION] Starting YAML conversion for "${analysisName}"`);
-            const yamlStartTime = Date.now();
-            const yamlResult = await this.yamlService.convertPayload(payload);
-            const yamlTime = Date.now() - yamlStartTime;
+            let analysisId = existingAnalysisId;
             
-            if (!yamlResult.success) {
-                this.logger.error(`[YAML CONVERSION FAILED] ${analysisName}: ${yamlResult.error}`);
-                throw new Error(`YAML conversion failed: ${yamlResult.error}`);
-            }
-            
-            this.logger.info(`[YAML CONVERSION COMPLETE] ${analysisName} converted in ${yamlTime}ms, ${yamlResult.tokenCount} tokens`);
-
-            // Step 2: Update the existing database record with YAML content
-            this.logger.info(`[DB UPDATE] Updating analysis record with YAML content for "${analysisName}"`);
-            const dbStartTime = Date.now();
-            
-            let analysisId;
-            if (existingAnalysisId) {
-                // Update existing record with YAML content
-                analysisId = existingAnalysisId;
-                await this.dao.updateAnalysisYaml(analysisId, yamlResult.yamlContent, yamlResult.tokenCount);
-            } else {
-                // Create new record (fallback for direct service calls)
-                const analysisData = {
-                    projectId,
-                    environment,
-                    userId,
-                    analysisName: analysisName || `Transaction Analysis ${new Date().toISOString()}`,
-                    originalPayload: JSON.stringify(payload),
-                    yamlContent: yamlResult.yamlContent,
-                    analysisResult: '',
-                    status: 'processing',
-                    tokenCount: yamlResult.tokenCount
-                };
-
-                const dbResult = await this.dao.createAnalysis(analysisData);
-                analysisId = dbResult.id;
-            }
-            
-            const dbTime = Date.now() - dbStartTime;
-            this.logger.info(`[DB UPDATE COMPLETE] ${analysisName} (ID: ${analysisId}) updated in ${dbTime}ms`);
-
-            // Step 3: Perform AI analysis
+            // Step 1: Perform AI analysis directly from YAML
             this.logger.info(`[AI ANALYSIS START] Starting AI analysis for "${analysisName}" (ID: ${analysisId})`);
             const aiStartTime = Date.now();
             const aiResult = await this.aiAgent.analyzeTransaction(
-                yamlResult.yamlContent,
+                yamlContent,
                 analysisName,
                 projectId,
-                environment
+                environment,
+                extraContext
             );
             const aiTime = Date.now() - aiStartTime;
             this.logger.info(`[AI ANALYSIS COMPLETE] ${analysisName} (ID: ${analysisId}) completed in ${aiTime}ms`);
 
             const totalProcessingTime = Date.now() - startTime;
 
-            // Step 4: Update database with results
+            // Step 2: Update database with results
             this.logger.info(`[DB UPDATE] Updating analysis results for "${analysisName}" (ID: ${analysisId})`);
             const updateStartTime = Date.now();
             
@@ -92,7 +52,7 @@ class TransactionAnalysisService {
                 WebSocketService.broadcastAnalysisUpdate(analysisId, 'completed');
 
                 const updateTime = Date.now() - updateStartTime;
-                this.logger.info(`[ANALYSIS SUCCESS] ${analysisName} (ID: ${analysisId}) completed successfully in ${totalProcessingTime}ms total (AI: ${aiTime}ms, DB: ${updateTime}ms)`);
+                this.logger.info(`[YAML ANALYSIS SUCCESS] ${analysisName} (ID: ${analysisId}) completed successfully in ${totalProcessingTime}ms total (AI: ${aiTime}ms, DB: ${updateTime}ms)`);
                 
                 return {
                     success: true,
@@ -116,16 +76,16 @@ class TransactionAnalysisService {
                 WebSocketService.broadcastAnalysisUpdate(analysisId, 'failed');
 
                 const updateTime = Date.now() - updateStartTime;
-                this.logger.error(`[ANALYSIS FAILED] ${analysisName} (ID: ${analysisId}) failed after ${totalProcessingTime}ms: ${aiResult.error}`);
+                this.logger.error(`[YAML ANALYSIS FAILED] ${analysisName} (ID: ${analysisId}) failed after ${totalProcessingTime}ms: ${aiResult.error}`);
 
                 throw new Error(`AI analysis failed: ${aiResult.error}`);
             }
 
         } catch (error) {
             const totalProcessingTime = Date.now() - startTime;
-            this.logger.error(`[ANALYSIS ERROR] ${analysisName} failed after ${totalProcessingTime}ms:`, error);
+            this.logger.error(`[YAML ANALYSIS ERROR] ${analysisName} failed after ${totalProcessingTime}ms:`, error);
             
-            // If an analysisId was created, mark it as failed
+            // If an analysisId was provided, mark it as failed
             if (existingAnalysisId) {
                 await this.dao.updateAnalysisStatus(existingAnalysisId, 'failed', null, error.message, 0);
                 WebSocketService.broadcastAnalysisUpdate(existingAnalysisId, 'failed');
