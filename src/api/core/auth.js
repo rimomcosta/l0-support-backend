@@ -52,18 +52,7 @@ export async function login(req, res) {
 
 export async function callback(req, res) {
     try {
-        logger.info('Starting callback process', {
-            sessionId: req.sessionID,
-            hasSession: !!req.session,
-            hasAuthData: !!req.session?.auth,
-            cookies: req.headers.cookie,
-            userAgent: req.headers['user-agent'],
-            url: req.url,
-            method: req.method,
-            headers: req.headers,
-            query: req.query,
-            body: req.body
-        });
+        logger.info('Starting callback process');
         
         // Manually extract callback parameters instead of using oidcClient.callbackParams
         const params = {
