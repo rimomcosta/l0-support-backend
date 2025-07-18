@@ -26,7 +26,7 @@ class TransactionAnalysisDao {
             const query = `
                 INSERT INTO transaction_analysis 
                 (project_id, environment, user_id, analysis_name, extra_context, original_payload, analysis_result, status, error_message, token_count, processing_time_ms, use_ai)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
