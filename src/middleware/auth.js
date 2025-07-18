@@ -29,7 +29,41 @@ export function conditionalAuth(req, res, next) {
     const useOkta = process.env.USE_OKTA !== 'false'; // Default to true unless explicitly set to false
     const isDevelopment = process.env.NODE_ENV !== 'production';
     
-    // If USE_OKTA=false in development, always use mock auth (no login page needed)
+
+    
+    // SECURITY: If USE_OKTA=true, automatically invalidate any existing mock sessions
+    if (useOkta && req.session?.user?.id === 'dev-admin-user') {
+        logger.warn('Security: Invalidating mock user session due to USE_OKTA=true', {
+            sessionUser: req.session.user.id,
+            sessionEmail: req.session.user.email,
+            sessionId: req.sessionID,
+            path: req.path
+        });
+        
+        // Destroy the session containing mock user
+        req.session.destroy((err) => {
+            if (err) {
+                logger.error('Failed to destroy mock session:', err);
+            }
+        });
+        
+        // Clear the session cookie
+        res.clearCookie('sessionId', {
+            path: '/',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax'
+        });
+        
+        // Return 401 to force re-authentication
+        return res.status(401).json({ 
+            error: 'Authentication mode changed. Please authenticate with Okta.',
+            code: 'AUTH_MODE_CHANGED',
+            requiresOkta: true
+        });
+    }
+    
+    // If USE_OKTA=false in development, allow mock auth (no login page needed)
     if (isDevelopment && !useOkta) {
         const currentConfigHash = getConfigHash();
         
