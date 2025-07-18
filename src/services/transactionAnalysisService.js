@@ -209,6 +209,24 @@ class TransactionAnalysisService {
             };
         }
     }
+
+    async getRecentAnalysesByProject(projectId, limit = 10) {
+        try {
+            const analyses = await this.dao.getRecentAnalysesByProject(projectId, limit);
+            
+            return {
+                success: true,
+                analyses
+            };
+
+        } catch (error) {
+            this.logger.error('Error getting recent analyses by project:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
 }
 
 export default new TransactionAnalysisService(); 

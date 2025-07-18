@@ -252,6 +252,27 @@ class TransactionAnalysisDao {
         }
     }
 
+    async getRecentAnalysesByProject(projectId, limit = 10) {
+        try {
+            const query = `
+                SELECT id, project_id, environment, user_id, analysis_name, status, 
+                       created_at, updated_at, completed_at, token_count, processing_time_ms
+                FROM transaction_analysis 
+                WHERE project_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            `;
+
+            const [rows] = await database.execute(query, [projectId, limit]);
+            
+            return rows;
+
+        } catch (error) {
+            this.logger.error('Error getting recent transaction analyses by project:', error);
+            throw error;
+        }
+    }
+
     async getStuckAnalyses() {
         try {
             const query = `
