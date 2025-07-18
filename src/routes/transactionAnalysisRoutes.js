@@ -45,11 +45,19 @@ router.post('/analyze', requireAuth, validateYamlPayload, async (req, res) => {
     const requestStartTime = Date.now();
     
     try {
-        const { yamlContent, tokenCount, analysisName, extraContext } = req.body;
+        const { yamlContent, tokenCount, analysisName, extraContext, projectId } = req.body;
         const userId = req.session.user.id;
-        // For now, use default project/environment - this can be enhanced later
-        const projectId = 'default-project';
-        const environment = 'production';
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
+        
+        // Environment is not required for transaction analysis
+        const environment = 'production'; // Default environment for analytics
 
         logger.info(`[API] Transaction analysis request from user ${userId} for ${projectId}/${environment}, analysisName: "${analysisName}"`);
         logger.info(`[API] YAML content size: ${yamlContent.length} characters, estimated tokens: ${tokenCount || 'unknown'}`);
@@ -144,15 +152,21 @@ router.post('/analyze', requireAuth, validateYamlPayload, async (req, res) => {
 router.get('/analysis/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        // For now, use default project/environment - this can be enhanced later
-        const projectId = 'default-project';
-        const environment = 'production';
+        const { projectId } = req.query;
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
 
         const result = await transactionAnalysisService.getAnalysisById(id);
 
         if (result.success) {
-            // Check if the analysis belongs to the current project/environment
-            if (result.analysis.project_id !== projectId || result.analysis.environment !== environment) {
+            // Check if the analysis belongs to the current project
+            if (result.analysis.project_id !== projectId) {
                 return res.status(403).json({
                     success: false,
                     error: 'Access denied to this analysis'
@@ -219,9 +233,15 @@ router.get('/analyses', requireAuth, async (req, res) => {
 router.delete('/analysis/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        // For now, use default project/environment - this can be enhanced later
-        const projectId = 'default-project';
-        const environment = 'production';
+        const { projectId } = req.query;
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
 
         // First check if the analysis exists and belongs to the current project
         const analysisResult = await transactionAnalysisService.getAnalysisById(id);
@@ -233,7 +253,7 @@ router.delete('/analysis/:id', requireAuth, async (req, res) => {
             });
         }
 
-        if (analysisResult.analysis.project_id !== projectId || analysisResult.analysis.environment !== environment) {
+        if (analysisResult.analysis.project_id !== projectId) {
             return res.status(403).json({
                 success: false,
                 error: 'Access denied to this analysis'
@@ -266,9 +286,17 @@ router.delete('/analysis/:id', requireAuth, async (req, res) => {
 // Get analysis statistics
 router.get('/stats', requireAuth, async (req, res) => {
     try {
-        // For now, use default project/environment - this can be enhanced later
-        const projectId = 'default-project';
-        const environment = 'production';
+        const { projectId } = req.query;
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
+        
+        const environment = 'production'; // Default environment for analytics
         
         const result = await transactionAnalysisService.getAnalysisStats(projectId, environment);
         
@@ -295,10 +323,17 @@ router.get('/stats', requireAuth, async (req, res) => {
 // Search analyses
 router.get('/search', requireAuth, async (req, res) => {
     try {
-        // For now, use default project/environment - this can be enhanced later
-        const projectId = 'default-project';
-        const environment = 'production';
-        const { q: searchTerm, limit = 20 } = req.query;
+        const { projectId, q: searchTerm, limit = 20 } = req.query;
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
+        
+        const environment = 'production'; // Default environment for analytics
 
         if (!searchTerm) {
             return res.status(400).json({
@@ -335,12 +370,20 @@ router.get('/search', requireAuth, async (req, res) => {
     }
 });
 
-// Get recent analyses (across all projects)
+// Get recent analyses for a specific project
 router.get('/recent', requireAuth, async (req, res) => {
     try {
-        const { limit = 10 } = req.query;
+        const { projectId, limit = 10 } = req.query;
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
 
-        const result = await transactionAnalysisService.getRecentAnalyses(parseInt(limit));
+        const result = await transactionAnalysisService.getRecentAnalysesByProject(projectId, parseInt(limit));
 
         if (result.success) {
             res.json({
