@@ -370,4 +370,66 @@ router.get('/recent', requireAuth, async (req, res) => {
     }
 });
 
+// Update analysis use_ai status
+router.put('/analysis/:id/use-ai', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { useAi, projectId } = req.body;
+        
+        // Validate project ID is provided
+        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Project ID is required'
+            });
+        }
+
+        // Validate useAi is boolean
+        if (typeof useAi !== 'boolean') {
+            return res.status(400).json({
+                success: false,
+                error: 'useAi must be a boolean value'
+            });
+        }
+
+        // First check if the analysis exists and belongs to the current project
+        const analysisResult = await transactionAnalysisService.getAnalysisById(id);
+        
+        if (!analysisResult.success) {
+            return res.status(404).json({
+                success: false,
+                error: 'Analysis not found'
+            });
+        }
+
+        if (analysisResult.analysis.project_id !== projectId) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied to this analysis'
+            });
+        }
+
+        const result = await transactionAnalysisService.updateAnalysisUseAi(id, useAi);
+
+        if (result.success) {
+            res.json({
+                success: true,
+                message: result.message
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: result.error
+            });
+        }
+
+    } catch (error) {
+        logger.error('Error updating analysis use_ai:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
 export default router; 

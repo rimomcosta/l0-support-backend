@@ -156,6 +156,24 @@ class TransactionAnalysisService {
         }
     }
 
+    async updateAnalysisUseAi(analysisId, useAi) {
+        try {
+            await this.dao.updateAnalysisUseAi(analysisId, useAi);
+            
+            return {
+                success: true,
+                message: 'Analysis use_ai status updated successfully'
+            };
+
+        } catch (error) {
+            this.logger.error('Error updating analysis use_ai:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
 
 
     async searchAnalyses(projectId, environment, searchTerm, limit = 20) {

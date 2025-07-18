@@ -20,13 +20,14 @@ class TransactionAnalysisDao {
                 status = 'pending',
                 errorMessage = null,
                 tokenCount = 0,
-                processingTimeMs = 0
+                processingTimeMs = 0,
+                useAi = true  // Default to selected (true)
             } = analysisData;
 
             const query = `
                 INSERT INTO transaction_analysis 
-                (project_id, environment, user_id, analysis_name, extra_context, original_payload, yaml_content, analysis_result, status, error_message, token_count, processing_time_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (project_id, environment, user_id, analysis_name, extra_context, original_payload, yaml_content, analysis_result, status, error_message, token_count, processing_time_ms, use_ai)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -41,7 +42,8 @@ class TransactionAnalysisDao {
                 status,
                 errorMessage,
                 tokenCount,
-                processingTimeMs
+                processingTimeMs,
+                useAi
             ];
 
             const [result] = await database.execute(query, params);
@@ -85,7 +87,7 @@ class TransactionAnalysisDao {
         try {
             const query = `
                 SELECT id, project_id, environment, user_id, analysis_name, status, 
-                       created_at, updated_at, completed_at, token_count, processing_time_ms
+                       created_at, updated_at, completed_at, token_count, processing_time_ms, use_ai
                 FROM transaction_analysis 
                 WHERE project_id = ? AND environment = ?
                 ORDER BY created_at DESC
@@ -148,6 +150,33 @@ class TransactionAnalysisDao {
         }
     }
 
+    async updateAnalysisUseAi(id, useAi) {
+        try {
+            const query = `
+                UPDATE transaction_analysis 
+                SET use_ai = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `;
+
+            const [result] = await database.execute(query, [useAi, id]);
+            
+            if (result.affectedRows === 0) {
+                throw new Error(`Analysis with ID ${id} not found`);
+            }
+
+            this.logger.info(`Updated transaction analysis ${id} use_ai to ${useAi}`);
+            
+            return {
+                success: true,
+                affectedRows: result.affectedRows
+            };
+
+        } catch (error) {
+            this.logger.error('Error updating transaction analysis use_ai:', error);
+            throw error;
+        }
+    }
+
 
 
     async deleteAnalysis(id) {
@@ -182,7 +211,7 @@ class TransactionAnalysisDao {
         try {
             const query = `
                 SELECT id, project_id, environment, user_id, analysis_name, status, 
-                       created_at, updated_at, completed_at, token_count, processing_time_ms
+                       created_at, updated_at, completed_at, token_count, processing_time_ms, use_ai
                 FROM transaction_analysis 
                 WHERE project_id = ? AND environment = ? 
                 AND (analysis_name LIKE ? OR analysis_result LIKE ?)
@@ -205,7 +234,7 @@ class TransactionAnalysisDao {
         try {
             const query = `
                 SELECT id, project_id, environment, user_id, analysis_name, status, 
-                       created_at, updated_at, completed_at, token_count, processing_time_ms
+                       created_at, updated_at, completed_at, token_count, processing_time_ms, use_ai
                 FROM transaction_analysis 
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -225,7 +254,7 @@ class TransactionAnalysisDao {
         try {
             const query = `
                 SELECT id, project_id, environment, user_id, analysis_name, status, 
-                       created_at, updated_at, completed_at, token_count, processing_time_ms
+                       created_at, updated_at, completed_at, token_count, processing_time_ms, use_ai
                 FROM transaction_analysis 
                 WHERE project_id = ?
                 ORDER BY created_at DESC
