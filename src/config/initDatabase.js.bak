@@ -110,11 +110,10 @@ const tables = {
             user_id VARCHAR(255) NOT NULL,
             analysis_name VARCHAR(255) NOT NULL,
             original_payload LONGTEXT NOT NULL,
+            yaml_content LONGTEXT NOT NULL,
             analysis_result LONGTEXT NOT NULL,
             status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
             error_message TEXT,
-            extra_context TEXT NULL,
-            use_ai BOOLEAN DEFAULT TRUE COMMENT 'Whether this analysis should be used in AI chat (1=selected/green sparkles, 0=unselected/red sparkles)',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             completed_at TIMESTAMP NULL,
@@ -123,8 +122,7 @@ const tables = {
             INDEX idx_project_env (project_id, environment),
             INDEX idx_user_id (user_id),
             INDEX idx_status (status),
-            INDEX idx_created_at (created_at),
-            INDEX idx_use_ai (use_ai)
+            INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `
 };

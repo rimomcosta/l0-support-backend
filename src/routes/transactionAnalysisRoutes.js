@@ -73,7 +73,6 @@ router.post('/analyze', requireAuth, validateYamlPayload, async (req, res) => {
             userId,
             analysisName: analysisName || `Transaction Analysis ${new Date().toLocaleString()}`,
             originalPayload: '', // Not storing the original JSON anymore
-            yamlContent: yamlContent,
             analysisResult: '',
             status: 'processing',
             tokenCount: tokenCount || 0,
