@@ -176,38 +176,7 @@ class TransactionAnalysisDao {
         }
     }
 
-    async getAnalysisStats(projectId, environment) {
-        try {
-            const query = `
-                SELECT 
-                    COUNT(*) as total_analyses,
-                    COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_analyses,
-                    COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_analyses,
-                    COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_analyses,
-                    AVG(processing_time_ms) as avg_processing_time,
-                    SUM(token_count) as total_tokens,
-                    MAX(created_at) as last_analysis_date
-                FROM transaction_analysis 
-                WHERE project_id = ? AND environment = ?
-            `;
 
-            const [rows] = await database.execute(query, [projectId, environment]);
-            
-            return rows[0] || {
-                total_analyses: 0,
-                completed_analyses: 0,
-                failed_analyses: 0,
-                processing_analyses: 0,
-                avg_processing_time: 0,
-                total_tokens: 0,
-                last_analysis_date: null
-            };
-
-        } catch (error) {
-            this.logger.error('Error getting transaction analysis stats:', error);
-            throw error;
-        }
-    }
 
     async searchAnalyses(projectId, environment, searchTerm, limit = 20) {
         try {

@@ -283,42 +283,6 @@ router.delete('/analysis/:id', requireAuth, async (req, res) => {
     }
 });
 
-// Get analysis statistics
-router.get('/stats', requireAuth, async (req, res) => {
-    try {
-        const { projectId } = req.query;
-        
-        // Validate project ID is provided
-        if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Project ID is required'
-            });
-        }
-        
-        const environment = 'production'; // Default environment for analytics
-        
-        const result = await transactionAnalysisService.getAnalysisStats(projectId, environment);
-        
-        if (result.success) {
-            res.json({
-                success: true,
-                stats: result.stats
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: result.error
-            });
-        }
-    } catch (error) {
-        logger.error('Error in analysis stats endpoint:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Internal server error'
-        });
-    }
-});
 
 // Search analyses
 router.get('/search', requireAuth, async (req, res) => {

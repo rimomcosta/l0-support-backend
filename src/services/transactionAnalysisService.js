@@ -156,23 +156,7 @@ class TransactionAnalysisService {
         }
     }
 
-    async getAnalysisStats(projectId, environment) {
-        try {
-            const stats = await this.dao.getAnalysisStats(projectId, environment);
-            
-            return {
-                success: true,
-                stats
-            };
 
-        } catch (error) {
-            this.logger.error('Error getting analysis stats:', error);
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }
 
     async searchAnalyses(projectId, environment, searchTerm, limit = 20) {
         try {
