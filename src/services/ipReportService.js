@@ -113,6 +113,7 @@ class IpReportService {
                     },
                     ips: topIpData,
                     rawOutput: formattedOutput, // Raw format like bash script
+                    rawLogs: parsedLogs, // Include raw parsed logs for time-series charts
                     reportId: `${projectId}-${environment}-${Date.now()}` // For caching
                 }
             };
@@ -388,6 +389,21 @@ EOF`;
             if (!ipMatch) return null;
             const ip = ipMatch[1];
 
+            // Extract timestamp [dd/Mon/yyyy:HH:mm:ss
+            const timestampMatch = line.match(/\[(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})/);
+            let timestamp = null;
+            if (timestampMatch) {
+                const [, day, month, year, hour, minute, second] = timestampMatch;
+                const monthMap = {
+                    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+                    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+                };
+                const monthNum = monthMap[month];
+                if (monthNum !== undefined) {
+                    timestamp = new Date(year, monthNum, day, hour, minute, second).getTime();
+                }
+            }
+
             // Extract HTTP status code
             const fields = line.split(' ');
             let status = null;
@@ -416,6 +432,7 @@ EOF`;
                 method,
                 userAgent,
                 url,
+                timestamp,
                 originalLine: line
             };
 
