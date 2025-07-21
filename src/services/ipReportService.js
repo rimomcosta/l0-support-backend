@@ -522,63 +522,33 @@ class IpReportService {
      */
     buildTimeFilterCommand(options) {
         const { timeframe = 60, from, to } = options;
-        
-        // Determine if we're using custom date range or timeframe
-        let sinceEpoch;
-        let untilEpoch = null;
-        
-        if (from && to) {
-            // Custom date range provided
-            sinceEpoch = Math.floor(new Date(from).getTime() / 1000);
-            untilEpoch = Math.floor(new Date(to).getTime() / 1000);
-            console.log(`[IP REPORT DEBUG] Using custom date range: ${from} (${sinceEpoch}) to ${to} (${untilEpoch})`);
-        } else if (timeframe === 0) {
-            // No time filtering - get all logs including compressed ones
-            return `for f in /var/log/platform/*/access.log*; do case "$f" in *.gz) gzip -cd -- "$f";; *) cat -- "$f";; esac done`;
-        } else {
-            // Use timeframe (minutes from now)
-            const currentEpoch = Math.floor(Date.now() / 1000);
-            sinceEpoch = currentEpoch - (timeframe * 60);
-            console.log(`[IP REPORT DEBUG] Using timeframe: ${timeframe} minutes from ${sinceEpoch}`);
-        }
-        
-        // Build gawk command with date filtering for both .log and .gz files
+
         let gawkCondition;
-        if (untilEpoch) {
-            // Custom range: from sinceEpoch to untilEpoch
-            gawkCondition = `if (ts >= ${sinceEpoch} && ts <= ${untilEpoch}) print $0`;
-        } else {
-            // Timeframe: from sinceEpoch onwards
-            gawkCondition = `if (ts >= ${sinceEpoch}) print $0`;
+
+        if (from && to) {
+            const sinceEpoch = Math.floor(new Date(from).getTime() / 1000);
+            const untilEpoch = Math.floor(new Date(to).getTime() / 1000);
+            console.log(`[IP REPORT DEBUG] Using custom date range: ${from} (${sinceEpoch}) to ${to} (${untilEpoch})`);
+            gawkCondition = `ts >= ${sinceEpoch} && ts <= ${untilEpoch}`;
+        } else if (timeframe > 0) {
+            const currentEpoch = Math.floor(Date.now() / 1000);
+            const sinceEpoch = currentEpoch - (timeframe * 60);
+            console.log(`[IP REPORT DEBUG] Using timeframe: ${timeframe} minutes (since ${sinceEpoch})`);
+            gawkCondition = `ts >= ${sinceEpoch}`;
         }
+
+        // If no time filter is needed (timeframe=0 and no custom range), we just cat the files.
+        if (!gawkCondition) {
+            console.log(`[IP REPORT DEBUG] No time filter. Reading all log files.`);
+            return `for f in /var/log/platform/*/access.log*; do case "$f" in *.gz) gzip -cd -- "$f";; *) cat -- "$f";; esac; done`;
+        }
+
+        const gawkScript = `'BEGIN{split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ");for(m=1;m<=12;m++)mon[M[m]]=m}{if(match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)){ts=mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6]);if(${gawkCondition})print $0}}'`;
+
+        const command = `for f in /var/log/platform/*/access.log*; do case "$f" in *.gz) gzip -cd -- "$f" | gawk ${gawkScript};; *) gawk ${gawkScript} "$f";; esac; done`;
         
-        // Build the command exactly like your working bash script with .gz support
-        return `for f in /var/log/platform/*/access.log*; do
-  case "$f" in
-    *.gz) gzip -cd -- "$f" | gawk '
-BEGIN {
-  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
-  for(m=1;m<=12;m++)mon[M[m]]=m
-}
-{
-  if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
-    ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
-    ${gawkCondition}
-  }
-}';;
-    *) gawk '
-BEGIN {
-  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
-  for(m=1;m<=12;m++)mon[M[m]]=m
-}
-{
-  if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
-    ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
-    ${gawkCondition}
-  }
-}' "$f";;
-  esac
-done`;
+        console.log(`[IP REPORT DEBUG] Generated one-line command: ${command}`);
+        return command;
     }
 
     /**
