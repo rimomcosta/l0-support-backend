@@ -7,6 +7,30 @@ class IpReportService {
     }
 
     /**
+     * Send progress update via WebSocket
+     */
+    sendProgress(wsService, userId, message) {
+        if (global.wss && userId) {
+            try {
+                const progressMessage = {
+                    type: 'ip-report-progress',
+                    message: message,
+                    timestamp: new Date().toISOString()
+                };
+                
+                // Send to all connections for this user
+                global.wss.clients.forEach(client => {
+                    if (client.readyState === 1 && client.userID === userId) { // WebSocket.OPEN
+                        client.send(JSON.stringify(progressMessage));
+                    }
+                });
+            } catch (error) {
+                this.logger.warn(`[IP REPORT] Failed to send WebSocket progress: ${error.message}`);
+            }
+        }
+    }
+
+    /**
      * Generate IP access report for a given project and environment
      * @param {string} projectId - Magento Cloud project ID
      * @param {string} environment - Environment name (e.g., 'production', 'staging')
@@ -17,9 +41,10 @@ class IpReportService {
      * @param {number} options.topIps - Number of top IPs to return (default: 20)
      * @param {string} apiToken - API token for authentication
      * @param {string} userId - User ID for logging
+     * @param {Object} wsService - WebSocket service for progress updates
      * @returns {Object} IP report data
      */
-    async generateIpReport(projectId, environment, options = {}, apiToken, userId) {
+    async generateIpReport(projectId, environment, options = {}, apiToken, userId, wsService = null) {
         const startTime = Date.now();
         
         try {
@@ -34,22 +59,27 @@ class IpReportService {
 
             // Step 1: Get all nodes for the environment
             this.logger.info(`[IP REPORT] Getting nodes for ${projectId}/${environment}`);
+            this.sendProgress(wsService, userId, 'Getting available nodes...');
+            
             const nodes = await this.getEnvironmentNodes(projectId, environment, apiToken, userId);
             this.logger.info(`[IP REPORT] Found ${nodes.length} nodes: ${nodes.join(', ')}`);
+            this.sendProgress(wsService, userId, `Found ${nodes.length} nodes`);
 
             // Step 2: Collect access logs from all nodes
             this.logger.info(`[IP REPORT] Collecting access logs from all nodes`);
-            const allLogs = await this.collectAccessLogs(projectId, environment, nodes, apiToken, userId);
+            const allLogs = await this.collectAccessLogs(projectId, environment, nodes, apiToken, userId, wsService);
             this.logger.info(`[IP REPORT] Collected ${allLogs.length} log lines`);
 
-            // Step 3: Parse and filter logs based on time criteria
-            this.logger.info(`[IP REPORT] Parsing and filtering logs`);
-            const filteredLogs = this.parseAndFilterLogs(allLogs, { from, to, timeframe });
-            this.logger.info(`[IP REPORT] Filtered to ${filteredLogs.length} relevant log entries`);
+            // Step 3: Parse logs (time filtering already done server-side)
+            this.logger.info(`[IP REPORT] Parsing logs`);
+            this.sendProgress(wsService, userId, 'Aggregating locally...');
+            
+            const parsedLogs = this.parseLogLines(allLogs);
+            this.logger.info(`[IP REPORT] Parsed ${parsedLogs.length} relevant log entries`);
 
             // Step 4: Aggregate data by IP
             this.logger.info(`[IP REPORT] Aggregating data by IP`);
-            const aggregatedData = this.aggregateByIp(filteredLogs);
+            const aggregatedData = this.aggregateByIp(parsedLogs);
             
             // Step 5: Sort and limit results
             const topIpData = this.getTopIps(aggregatedData, topIps);
@@ -57,17 +87,22 @@ class IpReportService {
             const processingTime = Date.now() - startTime;
             this.logger.info(`[IP REPORT] Report generated successfully in ${processingTime}ms`);
 
+            // Format output exactly like bash script
+            const formattedOutput = this.formatOutputLikeBashScript(topIpData);
+            
             return {
                 success: true,
                 data: {
                     summary: {
-                        totalRequests: filteredLogs.length,
+                        totalRequests: parsedLogs.length,
                         uniqueIps: Object.keys(aggregatedData).length,
                         topIpsShown: topIpData.length,
                         timeRange: this.getTimeRangeInfo(from, to, timeframe),
                         processingTimeMs: processingTime
                     },
-                    ips: topIpData
+                    ips: topIpData,
+                    rawOutput: formattedOutput, // Raw format like bash script
+                    reportId: `${projectId}-${environment}-${Date.now()}` // For caching
                 }
             };
 
@@ -99,12 +134,23 @@ class IpReportService {
                 throw new Error(`Failed to get nodes: ${stderr}`);
             }
 
-            // Parse the output to extract node names (first column)
-            const nodes = stdout
-                .split('\n')
-                .filter(line => line.trim())
+            // Parse the output to extract SSH connection strings
+            // The output contains SSH connection strings like: 1.ent-...-production-...@ssh.us-4.magento.cloud
+            this.logger.info(`[IP REPORT] Raw ssh --all output: ${stdout}`);
+            
+            const lines = stdout.split('\n').filter(line => line.trim());
+            this.logger.info(`[IP REPORT] Filtered lines: ${JSON.stringify(lines)}`);
+            
+            // Extract the full SSH connection strings (these ARE the nodes)
+            const nodes = lines
                 .map(line => line.split(/\s+/)[0])
-                .filter(node => node && !node.includes('NODE'));
+                .filter(node => node && node.includes('@ssh.'));
+            
+            this.logger.info(`[IP REPORT] Parsed SSH connection strings: ${JSON.stringify(nodes)}`);
+            
+            if (nodes.length === 0) {
+                throw new Error(`No valid SSH connections found in ssh --all output: ${stdout}`);
+            }
 
             return nodes;
         } catch (error) {
@@ -116,34 +162,49 @@ class IpReportService {
     /**
      * Collect access logs from all nodes
      */
-    async collectAccessLogs(projectId, environment, nodes, apiToken, userId) {
+    async collectAccessLogs(projectId, environment, nodes, apiToken, userId, wsService = null) {
         try {
-            const magentoCloud = new MagentoCloudAdapter();
-            await magentoCloud.validateExecutable();
+            const { promisify } = await import('util');
+            const { exec } = await import('child_process');
+            const execAsync = promisify(exec);
             
             const allLogs = [];
             
-            for (const node of nodes) {
-                this.logger.info(`[IP REPORT] Collecting logs from node: ${node}`);
+            for (let i = 0; i < nodes.length; i++) {
+                const sshConnection = nodes[i];
+                this.logger.info(`[IP REPORT] Collecting logs from SSH connection: ${sshConnection}`);
                 
-                // SSH to the node and collect access logs
-                const command = `ssh -p ${projectId} -e ${environment} ${node} "
-                    for f in /var/log/platform/*/access.log*; do
-                        case \\"\\$f\\" in 
-                            *.gz) gzip -cd -- \\"\\$f\\";;
-                            *) cat -- \\"\\$f\\";;
-                        esac
-                    done
-                "`;
+                // Send progress update (matching your bash script format)
+                const nodeNumber = sshConnection.split('.')[0];
+                this.sendProgress(wsService, userId, `Collecting from ${nodeNumber}.${sshConnection.split('@')[1]}...`);
                 
-                const { stdout, stderr } = await magentoCloud.executeCommand(command, apiToken, userId);
+                // Calculate time filtering parameters (matching your bash script)
+                const timeFilterCommand = this.buildTimeFilterCommand({ timeframe });
                 
-                if (!stderr && stdout) {
-                    const nodeLines = stdout.split('\n').filter(line => line.trim());
-                    allLogs.push(...nodeLines);
-                    this.logger.info(`[IP REPORT] Collected ${nodeLines.length} lines from ${node}`);
-                } else {
-                    this.logger.warn(`[IP REPORT] No logs or error collecting from ${node}: ${stderr || 'No output'}`);
+                // Direct SSH to the connection string to collect access logs
+                // Match your working bash script exactly
+                const sshCommand = `ssh ${sshConnection} '${timeFilterCommand}'`;
+                
+                this.logger.info(`[IP REPORT] Executing SSH command: ${sshCommand}`);
+                
+                try {
+                    const { stdout, stderr } = await execAsync(sshCommand, {
+                        timeout: 120000, // 2 minutes timeout
+                        maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large log files
+                    });
+                    
+                    if (stdout) {
+                        const nodeLines = stdout.split('\n').filter(line => line.trim());
+                        allLogs.push(...nodeLines);
+                        this.logger.info(`[IP REPORT] Collected ${nodeLines.length} lines from ${sshConnection}`);
+                    }
+                    
+                    if (stderr) {
+                        this.logger.warn(`[IP REPORT] SSH stderr from ${sshConnection}: ${stderr}`);
+                    }
+                } catch (sshError) {
+                    this.logger.error(`[IP REPORT] SSH error for ${sshConnection}:`, sshError.message);
+                    // Continue with other nodes even if one fails
                 }
             }
 
@@ -155,7 +216,30 @@ class IpReportService {
     }
 
     /**
-     * Parse and filter logs based on time criteria
+     * Parse log lines into structured data (no time filtering - done server-side)
+     */
+    parseLogLines(logs) {
+        const parsedLogs = [];
+        
+        for (const line of logs) {
+            if (!line.trim()) continue;
+            
+            try {
+                const logEntry = this.parseLogLine(line);
+                if (logEntry) {
+                    parsedLogs.push(logEntry);
+                }
+            } catch (error) {
+                this.logger.debug(`[IP REPORT] Error parsing log line: ${error.message}`);
+                continue;
+            }
+        }
+        
+        return parsedLogs;
+    }
+
+    /**
+     * Parse and filter logs based on time criteria (LEGACY - now using server-side filtering)
      */
     parseAndFilterLogs(logs, { from, to, timeframe }) {
         const filteredLogs = [];
@@ -381,6 +465,69 @@ class IpReportService {
             this.logger.warn(`[IP REPORT] Invalid time format: ${timeStr}`);
             return Date.now() / 1000;
         }
+    }
+
+    /**
+     * Build time filter command that matches the working bash script exactly
+     */
+    buildTimeFilterCommand(options) {
+        const { timeframe = 60 } = options;
+        
+        if (timeframe === 0) {
+            // No time filtering, all logs (only current access.log)
+            return 'cat /var/log/platform/*/access.log';
+        } else {
+            // Server-side time filtering using gawk (exactly like your bash script)
+            const currentEpoch = Math.floor(Date.now() / 1000);
+            const sinceEpoch = currentEpoch - (timeframe * 60);
+            
+            return `
+                wall_ago=${sinceEpoch}
+                gawk -v WALL_AGO=$wall_ago '
+                BEGIN {
+                    split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
+                    for(m=1;m<=12;m++)mon[M[m]]=m
+                }
+                {
+                    if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
+                        ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+                        if (ts >= WALL_AGO) print $0
+                    }
+                }
+                ' /var/log/platform/*/access.log
+            `.replace(/\s+/g, ' ').trim();
+        }
+    }
+
+    /**
+     * Format output exactly like bash script
+     */
+    formatOutputLikeBashScript(topIpData) {
+        const lines = [];
+        
+        for (const ipData of topIpData) {
+            // IP line: "IP: 194.81.125.225 - Total count: 1477"
+            lines.push(`IP: ${ipData.ip} - Total count: ${ipData.totalHits}`);
+            
+            // Status codes: "Status: 200 - Count: 1452"
+            for (const [status, count] of Object.entries(ipData.statusCodes)) {
+                lines.push(`Status: ${status} - Count: ${count}`);
+            }
+            
+            // Methods: "Method: POST - Count: 1082"
+            for (const [method, count] of Object.entries(ipData.methods)) {
+                lines.push(`Method: ${method} - Count: ${count}`);
+            }
+            
+            // User agents: "User agent: Mozilla/5.0 ..."
+            for (const [userAgent, count] of Object.entries(ipData.userAgents)) {
+                lines.push(`User agent: ${userAgent}`);
+            }
+            
+            lines.push(''); // Empty line between IPs
+        }
+        
+        return lines.join('\n');
     }
 
     /**

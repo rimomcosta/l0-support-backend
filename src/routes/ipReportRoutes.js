@@ -1,8 +1,9 @@
 import express from 'express';
 import { ipReportService } from '../services/ipReportService.js';
 import { logger } from '../services/logger.js';
-import activityLogger from '../services/activityLogger.js';
+import { logActivity } from '../services/activityLogger.js';
 import { requireAuth } from '../middleware/auth.js';
+import { WebSocketService } from '../services/webSocketService.js';
 
 const router = express.Router();
 
@@ -81,7 +82,7 @@ router.post('/generate', requireAuth, async (req, res) => {
 
         console.log('[DEBUG] About to log activity for userId:', userId);
         // Log the activity
-        activityLogger.custom('IP report generation requested', {
+        logActivity.custom('IP report generation requested', {
             userId,
             projectId: sanitizedProjectId,
             environment: sanitizedEnvironment,
@@ -99,13 +100,14 @@ router.post('/generate', requireAuth, async (req, res) => {
             });
         }
 
-        // Generate the report
+        // Generate the report with WebSocket progress updates
         const result = await ipReportService.generateIpReport(
             sanitizedProjectId,
             sanitizedEnvironment,
             sanitizedOptions,
             apiToken,
-            userIdFromSession
+            userIdFromSession,
+            WebSocketService
         );
 
         const processingTime = Date.now() - startTime;
