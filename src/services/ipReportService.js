@@ -202,16 +202,41 @@ class IpReportService {
                 const nodeNumber = sshConnection.split('.')[0];
                 this.sendProgress(wsService, userId, `Collecting from ${nodeNumber}.${sshConnection.split('@')[1]}...`);
                 
-                // Calculate time filtering parameters (matching your bash script)
-                const timeFilterCommand = this.buildTimeFilterCommand(options);
-                console.log('[IP REPORT DEBUG] Generated time filter command:', timeFilterCommand);
+                // Build the awk script based on time filtering
+                const { timeframe = 60, from, to } = options;
+                let wallAgo;
                 
-                // Direct SSH to the connection string to collect access logs
-                // Match your working bash script exactly
-                const sshCommand = `ssh ${sshConnection} '${timeFilterCommand}'`;
+                if (from && to) {
+                    // Custom date range
+                    wallAgo = Math.floor(new Date(from).getTime() / 1000);
+                } else if (timeframe === 0) {
+                    // All logs
+                    wallAgo = 0;
+                } else {
+                    // Timeframe in minutes
+                    wallAgo = Math.floor(Date.now() / 1000) - (timeframe * 60);
+                }
                 
-                console.log(`[IP REPORT DEBUG] Executing SSH command: ${sshCommand}`);
-                this.logger.info(`[IP REPORT] Executing SSH command: ${sshCommand}`);
+                console.log(`[IP REPORT DEBUG] Using wallAgo: ${wallAgo} for timeframe: ${timeframe} minutes`);
+                
+                // Use heredoc approach to avoid escaping issues
+                const sshCommand = `ssh ${sshConnection} << 'EOF'
+wall_ago=${wallAgo}
+gawk -v WALL_AGO=$wall_ago '
+BEGIN {
+  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
+  for(m=1;m<=12;m++)mon[M[m]]=m
+}
+{
+  if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
+    ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+    if (ts >= WALL_AGO) print $0
+  }
+}' /var/log/platform/*/access.log
+EOF`;
+                
+                console.log(`[IP REPORT DEBUG] Executing SSH command with heredoc`);
+                this.logger.info(`[IP REPORT] Executing SSH command for ${sshConnection}`);
                 
                 try {
                     const { stdout, stderr } = await execAsync(sshCommand, {
@@ -534,7 +559,7 @@ class IpReportService {
             console.log(`[IP REPORT DEBUG] Using custom date range: ${from} (${sinceEpoch}) to ${to} (${untilEpoch})`);
         } else if (timeframe === 0) {
             // No time filtering - get all logs including compressed ones
-            return `for f in /var/log/platform/*/access.log*; do case "\\$f" in *.gz) gzip -cd -- "\\$f";; *) cat -- "\\$f";; esac; done`;
+            return `for f in /var/log/platform/*/access.log*; do if [[ "$f" == *.gz ]]; then gzip -cd "$f"; else cat "$f"; fi; done`;
         } else {
             // Use timeframe (minutes from now)
             const currentEpoch = Math.floor(Date.now() / 1000);
@@ -552,12 +577,33 @@ class IpReportService {
             gawkCondition = `if (ts >= ${sinceEpoch}) print $0`;
         }
         
-        // Build a single-line command to avoid shell parsing issues
-        // Use a more robust approach with proper escaping
-        const awkScript = `BEGIN { split(\\"Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec\\",M,\\" \\"); for(m=1;m<=12;m++)mon[M[m]]=m } { if (match(\\$0,/\\\\[([0-9]{2})\\\\/([A-Za-z]{3})\\\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) { ts = mktime(t[3]\\" \\"mon[t[2]]\\" \\"t[1]\\" \\"t[4]\\" \\"t[5]\\" \\"t[6]); ${gawkCondition.replace(/\$/g, '\\$')} } }`;
+        // Use a simpler approach - let's use grep with date filtering instead of complex awk
+        // This avoids the shell escaping nightmare
+        const currentDate = new Date();
+        const sinceDate = new Date(sinceEpoch * 1000);
         
-        // Return a single-line command that handles both regular and compressed files
-        return `for f in /var/log/platform/*/access.log*; do if [[ "\\$f" == *.gz ]]; then gzip -cd "\\$f" | gawk '${awkScript}'; else gawk '${awkScript}' "\\$f"; fi; done`;
+        // For recent logs (within 24 hours), we can use a simpler grep approach
+        if (currentDate - sinceDate < 24 * 60 * 60 * 1000) {
+            // Build a grep pattern for the time range
+            const patterns = [];
+            const tempDate = new Date(sinceDate);
+            
+            while (tempDate <= currentDate) {
+                const day = String(tempDate.getDate()).padStart(2, '0');
+                const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][tempDate.getMonth()];
+                const year = tempDate.getFullYear();
+                const hour = String(tempDate.getHours()).padStart(2, '0');
+                
+                patterns.push(`\\[${day}/${month}/${year}:${hour}:`);
+                tempDate.setHours(tempDate.getHours() + 1);
+            }
+            
+            const grepPattern = patterns.join('\\|');
+            return `for f in /var/log/platform/*/access.log*; do if [[ "$f" == *.gz ]]; then gzip -cd "$f" | grep -E "${grepPattern}"; else grep -E "${grepPattern}" "$f" 2>/dev/null || true; fi; done`;
+        }
+        
+        // For longer time ranges or all logs, just cat everything
+        return `for f in /var/log/platform/*/access.log*; do if [[ "$f" == *.gz ]]; then gzip -cd "$f"; else cat "$f"; fi; done`;
     }
 
     /**
