@@ -48,49 +48,60 @@ class IpReportService {
         const startTime = Date.now();
         
         try {
-            this.logger.info(`[IP REPORT] Starting IP report generation for ${projectId}/${environment}`);
+            console.log('[IP REPORT DEBUG] Starting generateIpReport with params:', {
+                projectId, environment, options, userId: userId || 'undefined'
+            });
             
-            const {
-                from = null,
-                to = null,
-                timeframe = 60,
-                topIps = 20
-            } = options;
+            const { timeframe = 60, topIps = 20, from, to } = options;
+            
+            console.log('[IP REPORT DEBUG] Parsed options:', { timeframe, topIps, from, to });
 
             // Step 1: Get all nodes for the environment
             this.logger.info(`[IP REPORT] Getting nodes for ${projectId}/${environment}`);
+            console.log('[IP REPORT DEBUG] About to get nodes...');
             this.sendProgress(wsService, userId, 'Getting available nodes...');
             
             const nodes = await this.getEnvironmentNodes(projectId, environment, apiToken, userId);
+            console.log('[IP REPORT DEBUG] Got nodes:', nodes);
             this.logger.info(`[IP REPORT] Found ${nodes.length} nodes: ${nodes.join(', ')}`);
             this.sendProgress(wsService, userId, `Found ${nodes.length} nodes`);
 
             // Step 2: Collect access logs from all nodes
             this.logger.info(`[IP REPORT] Collecting access logs from all nodes`);
-            const allLogs = await this.collectAccessLogs(projectId, environment, nodes, apiToken, userId, wsService);
+            console.log('[IP REPORT DEBUG] About to collect logs...');
+            const allLogs = await this.collectAccessLogs(projectId, environment, nodes, apiToken, userId, wsService, { timeframe, from, to });
+            console.log('[IP REPORT DEBUG] Collected logs count:', allLogs.length);
             this.logger.info(`[IP REPORT] Collected ${allLogs.length} log lines`);
 
             // Step 3: Parse logs (time filtering already done server-side)
             this.logger.info(`[IP REPORT] Parsing logs`);
+            console.log('[IP REPORT DEBUG] About to parse logs...');
             this.sendProgress(wsService, userId, 'Aggregating locally...');
             
             const parsedLogs = this.parseLogLines(allLogs);
+            console.log('[IP REPORT DEBUG] Parsed logs count:', parsedLogs.length);
             this.logger.info(`[IP REPORT] Parsed ${parsedLogs.length} relevant log entries`);
 
             // Step 4: Aggregate data by IP
             this.logger.info(`[IP REPORT] Aggregating data by IP`);
+            console.log('[IP REPORT DEBUG] About to aggregate...');
             const aggregatedData = this.aggregateByIp(parsedLogs);
+            console.log('[IP REPORT DEBUG] Aggregated data keys:', Object.keys(aggregatedData).length);
             
             // Step 5: Sort and limit results
+            console.log('[IP REPORT DEBUG] About to get top IPs...');
             const topIpData = this.getTopIps(aggregatedData, topIps);
+            console.log('[IP REPORT DEBUG] Top IP data count:', topIpData.length);
             
             const processingTime = Date.now() - startTime;
             this.logger.info(`[IP REPORT] Report generated successfully in ${processingTime}ms`);
 
             // Format output exactly like bash script
+            console.log('[IP REPORT DEBUG] About to format output...');
             const formattedOutput = this.formatOutputLikeBashScript(topIpData);
+            console.log('[IP REPORT DEBUG] Formatted output length:', formattedOutput.length);
             
-            return {
+            const result = {
                 success: true,
                 data: {
                     summary: {
@@ -105,17 +116,24 @@ class IpReportService {
                     reportId: `${projectId}-${environment}-${Date.now()}` // For caching
                 }
             };
+            
+            console.log('[IP REPORT DEBUG] Returning result with success:', result.success);
+            return result;
 
         } catch (error) {
             const processingTime = Date.now() - startTime;
             this.logger.error(`[IP REPORT] Failed to generate report after ${processingTime}ms:`, error);
             console.error('[IP REPORT] Service error:', error);
+            console.error('[IP REPORT] Stack trace:', error.stack);
             
-            return {
+            const errorResult = {
                 success: false,
                 error: error.message,
                 processingTimeMs: processingTime
             };
+            
+            console.log('[IP REPORT DEBUG] Returning error result:', errorResult);
+            return errorResult;
         }
     }
 
@@ -163,16 +181,21 @@ class IpReportService {
     /**
      * Collect access logs from all nodes
      */
-    async collectAccessLogs(projectId, environment, nodes, apiToken, userId, wsService = null) {
+    async collectAccessLogs(projectId, environment, nodes, apiToken, userId, wsService = null, options = {}) {
         try {
             const { promisify } = await import('util');
             const { exec } = await import('child_process');
             const execAsync = promisify(exec);
             
             const allLogs = [];
+            const { timeframe = 60 } = options;
+            
+            console.log('[IP REPORT DEBUG] Starting log collection from', nodes.length, 'nodes');
+            console.log('[IP REPORT DEBUG] Options:', options);
             
             for (let i = 0; i < nodes.length; i++) {
                 const sshConnection = nodes[i];
+                console.log(`[IP REPORT DEBUG] Processing node ${i + 1}/${nodes.length}: ${sshConnection}`);
                 this.logger.info(`[IP REPORT] Collecting logs from SSH connection: ${sshConnection}`);
                 
                 // Send progress update (matching your bash script format)
@@ -180,12 +203,14 @@ class IpReportService {
                 this.sendProgress(wsService, userId, `Collecting from ${nodeNumber}.${sshConnection.split('@')[1]}...`);
                 
                 // Calculate time filtering parameters (matching your bash script)
-                const timeFilterCommand = this.buildTimeFilterCommand({ timeframe });
+                const timeFilterCommand = this.buildTimeFilterCommand(options);
+                console.log('[IP REPORT DEBUG] Generated time filter command:', timeFilterCommand);
                 
                 // Direct SSH to the connection string to collect access logs
                 // Match your working bash script exactly
                 const sshCommand = `ssh ${sshConnection} '${timeFilterCommand}'`;
                 
+                console.log(`[IP REPORT DEBUG] Executing SSH command: ${sshCommand}`);
                 this.logger.info(`[IP REPORT] Executing SSH command: ${sshCommand}`);
                 
                 try {
@@ -194,23 +219,44 @@ class IpReportService {
                         maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large log files
                     });
                     
-                    if (stdout) {
-                        const nodeLines = stdout.split('\n').filter(line => line.trim());
-                        allLogs.push(...nodeLines);
-                        this.logger.info(`[IP REPORT] Collected ${nodeLines.length} lines from ${sshConnection}`);
-                    }
+                    console.log(`[IP REPORT DEBUG] SSH stdout length: ${stdout ? stdout.length : 0}`);
+                    console.log(`[IP REPORT DEBUG] SSH stderr length: ${stderr ? stderr.length : 0}`);
                     
                     if (stderr) {
+                        console.log(`[IP REPORT DEBUG] SSH stderr content: ${stderr}`);
                         this.logger.warn(`[IP REPORT] SSH stderr from ${sshConnection}: ${stderr}`);
                     }
+                    
+                    if (stdout) {
+                        const nodeLines = stdout.split('\n').filter(line => line.trim());
+                        console.log(`[IP REPORT DEBUG] Node ${sshConnection} returned ${nodeLines.length} lines`);
+                        
+                        // Show first few lines for debugging
+                        if (nodeLines.length > 0) {
+                            console.log(`[IP REPORT DEBUG] First few lines from ${sshConnection}:`);
+                            nodeLines.slice(0, 3).forEach((line, idx) => {
+                                console.log(`[IP REPORT DEBUG] Line ${idx + 1}: ${line.substring(0, 200)}...`);
+                            });
+                        }
+                        
+                        allLogs.push(...nodeLines);
+                        this.logger.info(`[IP REPORT] Collected ${nodeLines.length} lines from ${sshConnection}`);
+                    } else {
+                        console.log(`[IP REPORT DEBUG] No stdout from ${sshConnection}`);
+                    }
+                    
                 } catch (sshError) {
+                    console.error(`[IP REPORT DEBUG] SSH error for ${sshConnection}:`, sshError.message);
+                    console.error(`[IP REPORT DEBUG] SSH error stack:`, sshError.stack);
                     this.logger.error(`[IP REPORT] SSH error for ${sshConnection}:`, sshError.message);
                     // Continue with other nodes even if one fails
                 }
             }
 
+            console.log(`[IP REPORT DEBUG] Total logs collected: ${allLogs.length}`);
             return allLogs;
         } catch (error) {
+            console.error(`[IP REPORT DEBUG] Error in collectAccessLogs:`, error);
             this.logger.error(`[IP REPORT] Error collecting access logs:`, error);
             throw error;
         }
@@ -407,8 +453,11 @@ class IpReportService {
             // Get most common user agent
             ipData.primaryUserAgent = this.getMostCommon(ipData.userAgents);
             
-            // Get top URLs (limit to top 5)
-            ipData.topUrlsList = this.getTopEntries(ipData.topUrls, 5);
+            // Get top URLs (limit to top 10)
+            ipData.topUrlsList = this.getTopEntries(ipData.topUrls, 10);
+            
+            // Get all user agents as a list
+            ipData.userAgentsList = this.getTopEntries(ipData.userAgents, 20);
         }
 
         return aggregated;
@@ -472,32 +521,64 @@ class IpReportService {
      * Build time filter command that matches the working bash script exactly
      */
     buildTimeFilterCommand(options) {
-        const { timeframe = 60 } = options;
+        const { timeframe = 60, from, to } = options;
         
-        if (timeframe === 0) {
-            // No time filtering, all logs (only current access.log)
-            return 'cat /var/log/platform/*/access.log';
+        // Determine if we're using custom date range or timeframe
+        let sinceEpoch;
+        let untilEpoch = null;
+        
+        if (from && to) {
+            // Custom date range provided
+            sinceEpoch = Math.floor(new Date(from).getTime() / 1000);
+            untilEpoch = Math.floor(new Date(to).getTime() / 1000);
+            console.log(`[IP REPORT DEBUG] Using custom date range: ${from} (${sinceEpoch}) to ${to} (${untilEpoch})`);
+        } else if (timeframe === 0) {
+            // No time filtering - get all logs including compressed ones
+            return `for f in /var/log/platform/*/access.log*; do case "$f" in *.gz) gzip -cd -- "$f";; *) cat -- "$f";; esac done`;
         } else {
-            // Server-side time filtering using gawk (exactly like your bash script)
+            // Use timeframe (minutes from now)
             const currentEpoch = Math.floor(Date.now() / 1000);
-            const sinceEpoch = currentEpoch - (timeframe * 60);
-            
-            return `
-                wall_ago=${sinceEpoch}
-                gawk -v WALL_AGO=$wall_ago '
-                BEGIN {
-                    split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
-                    for(m=1;m<=12;m++)mon[M[m]]=m
-                }
-                {
-                    if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
-                        ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
-                        if (ts >= WALL_AGO) print $0
-                    }
-                }
-                ' /var/log/platform/*/access.log
-            `.replace(/\s+/g, ' ').trim();
+            sinceEpoch = currentEpoch - (timeframe * 60);
+            console.log(`[IP REPORT DEBUG] Using timeframe: ${timeframe} minutes from ${sinceEpoch}`);
         }
+        
+        // Build gawk command with date filtering for both .log and .gz files
+        let gawkCondition;
+        if (untilEpoch) {
+            // Custom range: from sinceEpoch to untilEpoch
+            gawkCondition = `if (ts >= ${sinceEpoch} && ts <= ${untilEpoch}) print $0`;
+        } else {
+            // Timeframe: from sinceEpoch onwards
+            gawkCondition = `if (ts >= ${sinceEpoch}) print $0`;
+        }
+        
+        // Build the command exactly like your working bash script with .gz support
+        return `for f in /var/log/platform/*/access.log*; do
+  case "$f" in
+    *.gz) gzip -cd -- "$f" | gawk '
+BEGIN {
+  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
+  for(m=1;m<=12;m++)mon[M[m]]=m
+}
+{
+  if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
+    ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+    ${gawkCondition}
+  }
+}';;
+    *) gawk '
+BEGIN {
+  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
+  for(m=1;m<=12;m++)mon[M[m]]=m
+}
+{
+  if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
+    ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+    ${gawkCondition}
+  }
+}' "$f";;
+  esac
+done`;
     }
 
     /**
