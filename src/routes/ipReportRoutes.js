@@ -34,8 +34,10 @@ router.post('/generate', requireAuth, async (req, res) => {
     const startTime = Date.now();
     
     try {
+        console.log('[DEBUG] IP Report request received:', { body: req.body });
         const { projectId, environment, options = {} } = req.body;
         const userId = req.session?.user?.id || 'anonymous';
+        console.log('[DEBUG] Extracted data:', { projectId, environment, options, userId });
 
         // Validate required parameters
         if (!projectId || !environment) {
@@ -77,12 +79,15 @@ router.post('/generate', requireAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested IP report for ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
+        console.log('[DEBUG] About to log activity for userId:', userId);
         // Log the activity
-        await activityLogger.logActivity(userId, 'ip_report_generation', {
+        activityLogger.custom('IP report generation requested', {
+            userId,
             projectId: sanitizedProjectId,
             environment: sanitizedEnvironment,
             options: sanitizedOptions
         });
+        console.log('[DEBUG] Activity logged successfully');
 
         // Get API token and user ID from session
         const apiToken = req.session.decryptedApiToken;
@@ -135,6 +140,7 @@ router.post('/generate', requireAuth, async (req, res) => {
 
     } catch (error) {
         const processingTime = Date.now() - startTime;
+        console.log('[DEBUG] Caught error in route:', error);
         logger.error(`[IP REPORT API] Unexpected error:`, error);
         
         res.status(500).json({
