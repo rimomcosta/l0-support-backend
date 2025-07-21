@@ -109,6 +109,7 @@ class IpReportService {
         } catch (error) {
             const processingTime = Date.now() - startTime;
             this.logger.error(`[IP REPORT] Failed to generate report after ${processingTime}ms:`, error);
+            console.error('[IP REPORT] Service error:', error);
             
             return {
                 success: false,

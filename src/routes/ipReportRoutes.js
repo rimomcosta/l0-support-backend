@@ -144,6 +144,7 @@ router.post('/generate', requireAuth, async (req, res) => {
         const processingTime = Date.now() - startTime;
         console.log('[DEBUG] Caught error in route:', error);
         logger.error(`[IP REPORT API] Unexpected error:`, error);
+        console.error('[IP REPORT API] Unexpected error:', error);
         
         res.status(500).json({
             success: false,
