@@ -355,6 +355,10 @@ class IpReportService {
             
             // Step 1: Collect all relevant files from all nodes
             const allLocalFiles = [];
+            let successfulNodes = 0;
+            let failedNodes = 0;
+            
+            console.log(`[IP REPORT DEBUG] Starting collection from ${nodes.length} nodes`);
             
             for (let i = 0; i < nodes.length; i++) {
                 const sshConnection = nodes[i];
@@ -408,16 +412,26 @@ class IpReportService {
                         allLocalFiles.push(localPath);
                     }
                     
+                    successfulNodes++;
+                    console.log(`[IP REPORT DEBUG] Successfully processed node ${nodeNumber} (${successfulNodes}/${nodes.length})`);
+                    
                 } catch (nodeError) {
+                    failedNodes++;
                     console.error(`[IP REPORT DEBUG] Error processing node ${nodeNumber}:`, nodeError.message);
                     this.logger.error(`[IP REPORT] Error processing node ${nodeNumber}:`, nodeError.message);
-                    // Continue with other nodes
+                    // Continue with other nodes but log the failure
+                    console.error(`[IP REPORT DEBUG] WARNING: Node ${nodeNumber} failed - this will reduce data completeness (${failedNodes} failed, ${successfulNodes} successful)`);
                 }
             }
             
             // Step 2: Process all files from all nodes together
             this.sendProgress(wsService, userId, `Merging logs from all nodes...`);
-            console.log(`[IP REPORT DEBUG] Processing ${allLocalFiles.length} files from all ${nodes.length} nodes`);
+            console.log(`[IP REPORT DEBUG] Processing ${allLocalFiles.length} files from ${successfulNodes}/${nodes.length} successful nodes`);
+            console.log(`[IP REPORT DEBUG] Node success rate: ${successfulNodes}/${nodes.length} (${((successfulNodes/nodes.length)*100).toFixed(1)}%)`);
+            
+            if (failedNodes > 0) {
+                console.error(`[IP REPORT DEBUG] CRITICAL: ${failedNodes} nodes failed - this explains the data discrepancy!`);
+            }
             
             const allLogs = await this.processLocalLogFiles(allLocalFiles, wallAgo, wallUntil, { timeframe, from, to });
             
@@ -1070,9 +1084,28 @@ END {
             const methodMatch = line.match(/"([A-Z]+)\s/);
             const method = methodMatch ? methodMatch[1] : null;
 
-            // Extract User Agent (last quoted string)
+            // Extract User Agent (more robust approach)
+            let userAgent = null;
             const quotes = line.split('"');
-            const userAgent = quotes.length >= 2 ? quotes[quotes.length - 2] : null;
+            
+            // Try to find user agent in different positions
+            if (quotes.length >= 4) {
+                // Normal case: last non-empty quoted string
+                for (let i = quotes.length - 2; i >= 0; i -= 2) {
+                    if (quotes[i] && quotes[i].trim() && quotes[i] !== '-') {
+                        userAgent = quotes[i];
+                        break;
+                    }
+                }
+            }
+            
+            // Fallback: try regex pattern for user agent
+            if (!userAgent) {
+                const uaMatch = line.match(/"([^"]*(?:Mozilla|Bot|Crawler|Spider|Agent)[^"]*)"[^"]*$/i);
+                if (uaMatch) {
+                    userAgent = uaMatch[1];
+                }
+            }
 
             // Extract URL
             const urlMatch = line.match(/"[A-Z]+\s([^\s"]+)/);
