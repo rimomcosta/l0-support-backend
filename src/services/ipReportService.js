@@ -113,7 +113,7 @@ class IpReportService {
                 topIpData = this.getTopIps(aggregatedData, topIps);
                 
                 // Create time-series data for charts (aggregated by 1-minute buckets)
-                timeSeriesData = this.aggregateByTimeBuckets(parsedLogs, wallAgo, wallUntil);
+                timeSeriesData = this.aggregateByTimeBuckets(parsedLogs, wallAgo, wallUntil, timeframe);
                 
                 // Clear parsed logs from memory
                 parsedLogs.length = 0;
@@ -1037,13 +1037,17 @@ END {
 
     /**
      * Aggregate logs by time buckets to reduce memory usage for large datasets
-     * This creates 1-minute interval buckets for time-series charts
+     * This creates adaptive interval buckets for time-series charts
      */
-    aggregateByTimeBuckets(logs, wallAgo, wallUntil) {
+    aggregateByTimeBuckets(logs, wallAgo, wallUntil, timeframeMinutes = 60) {
         console.log('[IP REPORT DEBUG] Aggregating logs by time buckets...');
         
-        // Create 1-minute buckets
-        const bucketSize = 60; // 1 minute in seconds
+        // Calculate optimal bucket size based on timeframe
+        const bucketSize = this.calculateOptimalBucketSize(timeframeMinutes);
+        const bucketSizeMinutes = bucketSize / 60;
+        
+        console.log(`[IP REPORT DEBUG] Using ${bucketSizeMinutes}-minute buckets for ${timeframeMinutes}-minute timeframe`);
+        
         const buckets = new Map();
         
         // Initialize buckets for the entire time range
@@ -1245,6 +1249,49 @@ END {
                 description: 'All available logs'
             };
         }
+    }
+
+    /**
+     * Calculate optimal bucket size based on timeframe
+     * Provides appropriate granularity for different time ranges
+     */
+    calculateOptimalBucketSize(timeframeMinutes) {
+        // Convert timeframe to hours for easier calculation
+        const hours = timeframeMinutes / 60;
+        
+        if (hours <= 1) {
+            return 60; // 1 minute buckets for 1 hour or less
+        } else if (hours <= 12) {
+            return 600; // 10 minute buckets for up to 12 hours
+        } else if (hours <= 24) {
+            return 1200; // 20 minute buckets for up to 24 hours
+        } else if (hours <= 36) {
+            return 1800; // 30 minute buckets for up to 36 hours
+        } else if (hours <= 48) {
+            return 2700; // 45 minute buckets for up to 48 hours
+        } else if (hours <= 60) {
+            return 3600; // 1 hour buckets for up to 60 hours
+        } else if (hours <= 72) {
+            return 7200; // 2 hour buckets for up to 72 hours
+        } else {
+            // For anything beyond 72 hours, use 4 hour buckets
+            return 14400;
+        }
+    }
+
+    /**
+     * Get allowed timeframes with their bucket sizes
+     */
+    getAllowedTimeframes() {
+        return [
+            { value: 60, label: '1 hour', bucketSize: 60 },
+            { value: 720, label: '12 hours', bucketSize: 600 },
+            { value: 1440, label: '24 hours', bucketSize: 1200 },
+            { value: 2160, label: '36 hours', bucketSize: 1800 },
+            { value: 2880, label: '48 hours', bucketSize: 2700 },
+            { value: 3600, label: '60 hours', bucketSize: 3600 },
+            { value: 4320, label: '72 hours', bucketSize: 7200 }
+        ];
     }
 }
 
