@@ -142,6 +142,39 @@ class IpReportService {
                 topIpData = this.getTopIps(aggregatedData, topIps);
                 console.log('[IP REPORT DEBUG] Top IP data count:', topIpData.length);
                 
+                // Debug: Check specific IP 66.249.79.6
+                const debugIp = '66.249.79.6';
+                if (aggregatedData[debugIp]) {
+                    console.log(`[IP REPORT DEBUG] IP ${debugIp} total hits from aggregation: ${aggregatedData[debugIp].totalHits}`);
+                }
+                const topIpEntry = topIpData.find(ip => ip.ip === debugIp);
+                if (topIpEntry) {
+                    console.log(`[IP REPORT DEBUG] IP ${debugIp} in top IPs with totalHits: ${topIpEntry.totalHits}`);
+                }
+                
+                // Step 6: Create time bucket aggregation for charts
+                console.log('[IP REPORT DEBUG] Creating time bucket aggregation for charts...');
+                let wallAgo, wallUntil;
+                if (from && to) {
+                    const fromDate = new Date(from);
+                    const toDate = new Date(to);
+                    wallAgo = Math.floor(fromDate.getTime() / 1000);
+                    wallUntil = Math.floor(toDate.getTime() / 1000);
+                } else {
+                    // For "past X hours", find the actual time range from parsed logs
+                    if (parsedLogs.length > 0) {
+                        const timestamps = parsedLogs.map(log => log.timestamp);
+                        wallAgo = Math.floor(Math.min(...timestamps) / 1000);
+                        wallUntil = Math.floor(Math.max(...timestamps) / 1000);
+                    } else {
+                        wallUntil = Math.floor(Date.now() / 1000);
+                        wallAgo = wallUntil - (timeframe * 60);
+                    }
+                }
+                
+                timeSeriesData = this.aggregateByTimeBuckets(parsedLogs, wallAgo, wallUntil, timeframe);
+                console.log('[IP REPORT DEBUG] Time bucket aggregation completed, buckets created:', timeSeriesData.length);
+                
                 totalRequests = parsedLogs.length;
             }
             
@@ -153,6 +186,13 @@ class IpReportService {
             const formattedOutput = this.formatOutputLikeBashScript(topIpData);
             console.log('[IP REPORT DEBUG] Formatted output length:', formattedOutput.length);
             
+            // Debug: Check what's being sent for 66.249.79.6
+            const debugIp = '66.249.79.6';
+            const sentIpData = topIpData.find(ip => ip.ip === debugIp);
+            if (sentIpData) {
+                console.log(`[IP REPORT DEBUG] Sending to frontend - IP ${debugIp} totalHits: ${sentIpData.totalHits}`);
+            }
+
             const result = {
                 success: true,
                 data: {
@@ -165,6 +205,7 @@ class IpReportService {
                         isLargeDataset: isLargeDataset
                     },
                     ips: topIpData,
+                    rawLogs: isLargeDataset ? [] : parsedLogs, // Raw parsed log entries for frontend processing (only for small datasets)
                     rawOutput: formattedOutput, // Raw format like bash script
                     timeSeriesData: timeSeriesData, // Aggregated time-series data for charts
                     reportId: `${projectId}-${environment}-${Date.now()}` // For caching
@@ -274,9 +315,24 @@ class IpReportService {
                 wallAgo = 0;
                 wallUntil = Math.floor(Date.now() / 1000);
             } else {
-                // Timeframe in minutes from now
+                // For "past X hours", be smarter about file selection
+                // For small timeframes (< 24 hours), only get recent files
+                let daysToDownload;
+                if (timeframe <= 60) {          // Past 1 hour - check today's files only
+                    daysToDownload = 1;
+                } else if (timeframe <= 12 * 60) {  // Past 12 hours - check past 2 days
+                    daysToDownload = 2;
+                } else if (timeframe <= 24 * 60) {  // Past 24 hours - check past 3 days
+                    daysToDownload = 3;
+                } else {                        // Longer periods - check past week
+                    daysToDownload = 7;
+                }
+                
                 wallUntil = Math.floor(Date.now() / 1000);
-                wallAgo = wallUntil - (timeframe * 60);
+                wallAgo = wallUntil - (daysToDownload * 24 * 60 * 60);
+                
+                console.log(`[IP REPORT DEBUG] Smart file selection for "past ${timeframe} minutes" - downloading ${daysToDownload} days of files`);
+                console.log(`[IP REPORT DEBUG] Download range: ${new Date(wallAgo * 1000).toISOString()} to ${new Date(wallUntil * 1000).toISOString()}`);
             }
             
             console.log(`[IP REPORT DEBUG] Final time range: ${wallAgo} to ${wallUntil}`);
@@ -363,7 +419,7 @@ class IpReportService {
             this.sendProgress(wsService, userId, `Merging logs from all nodes...`);
             console.log(`[IP REPORT DEBUG] Processing ${allLocalFiles.length} files from all ${nodes.length} nodes`);
             
-            const allLogs = await this.processLocalLogFiles(allLocalFiles, wallAgo, wallUntil);
+            const allLogs = await this.processLocalLogFiles(allLocalFiles, wallAgo, wallUntil, { timeframe, from, to });
             
             // Clean up old cache files (older than 6 hours)
             this.cleanupCacheFiles(cacheDir, 6 * 60 * 60 * 1000);
@@ -380,7 +436,7 @@ class IpReportService {
     /**
      * Process downloaded log files locally with precise time filtering
      */
-    async processLocalLogFiles(localFiles, wallAgo, wallUntil) {
+    async processLocalLogFiles(localFiles, wallAgo, wallUntil, options = {}) {
         const { exec } = await import('child_process');
         const { promisify } = await import('util');
         const fs = await import('fs/promises');
@@ -418,6 +474,40 @@ class IpReportService {
                 return [];
             }
             
+            // Step 2.5: If this is a "past X hours" request, recalculate time range from actual log data
+            const { timeframe, from, to } = options;
+            if (timeframe && !from && !to) {
+                console.log(`[IP REPORT DEBUG] Recalculating time range for "past ${timeframe} minutes" from actual log data`);
+                
+                // Find the latest timestamp in the merged file
+                const latestTimestampCmd = `tail -n 1000 "${mergedFile}" | grep -o '\\[../.../....:..:..:..' | tail -n 1`;
+                try {
+                    const { stdout: latestTimeStr } = await execAsync(latestTimestampCmd, { timeout: 30000 });
+                    const latestTime = latestTimeStr.trim();
+                    
+                    if (latestTime) {
+                        console.log(`[IP REPORT DEBUG] Latest log timestamp found: ${latestTime}`);
+                        
+                        // Parse the timestamp: [22/Jul/2025:17:37:27
+                        const timeMatch = latestTime.match(/\[(\d{2})\/(\w{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})/);
+                        if (timeMatch) {
+                            const [, day, month, year, hour, minute, second] = timeMatch;
+                            const monthMap = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+                            const latestDate = new Date(parseInt(year), monthMap[month], parseInt(day), parseInt(hour), parseInt(minute), parseInt(second));
+                            
+                            wallUntil = Math.floor(latestDate.getTime() / 1000);
+                            wallAgo = wallUntil - (timeframe * 60);
+                            
+                            console.log(`[IP REPORT DEBUG] Recalculated time range based on latest log:`);
+                            console.log(`[IP REPORT DEBUG] Latest log: ${latestDate.toISOString()} (${wallUntil})`);
+                            console.log(`[IP REPORT DEBUG] Looking for logs from: ${new Date(wallAgo * 1000).toISOString()} (${wallAgo}) to ${new Date(wallUntil * 1000).toISOString()} (${wallUntil})`);
+                        }
+                    }
+                } catch (timestampError) {
+                    console.log(`[IP REPORT DEBUG] Could not find latest timestamp, using original range:`, timestampError.message);
+                }
+            }
+            
             // Step 3: Filter merged file and save to output file
             const outputFile = `/tmp/ip-report-cache/filtered-${Date.now()}.txt`;
             console.log(`[IP REPORT DEBUG] Filtering merged file to: ${outputFile}`);
@@ -438,8 +528,9 @@ class IpReportService {
     for(m=1; m<=12; m++) mon[M[m]] = m
     wall_ago = ${wallAgo}
     wall_until = ${wallUntil}
-    print "DEBUG: wall_ago = " wall_ago " (" strftime("%Y-%m-%d %H:%M:%S", wall_ago) ")"
-    print "DEBUG: wall_until = " wall_until " (" strftime("%Y-%m-%d %H:%M:%S", wall_until) ")"
+    # Send debug info to stderr instead of stdout
+    print "DEBUG: wall_ago = " wall_ago " (" strftime("%Y-%m-%d %H:%M:%S", wall_ago) ")" > "/dev/stderr"
+    print "DEBUG: wall_until = " wall_until " (" strftime("%Y-%m-%d %H:%M:%S", wall_until) ")" > "/dev/stderr"
     processed = 0
     matched = 0
 }
@@ -456,11 +547,11 @@ class IpReportService {
         }
     }
     if (processed <= 5) {
-        print "DEBUG: Line " processed " - timestamp: " t[1] "/" t[2] "/" t[3] " " t[4] ":" t[5] ":" t[6] " -> epoch: " ts " (in range: " (ts >= wall_ago && ts <= wall_until) ")"
+        print "DEBUG: Line " processed " - timestamp: " t[1] "/" t[2] "/" t[3] " " t[4] ":" t[5] ":" t[6] " -> epoch: " ts " (in range: " (ts >= wall_ago && ts <= wall_until) ")" > "/dev/stderr"
     }
 }
 END {
-    print "DEBUG: Processed " processed " lines, matched " matched " lines"
+    print "DEBUG: Processed " processed " lines, matched " matched " lines" > "/dev/stderr"
 }`;
             
             await fs.writeFile(awkScript, awkContent);
@@ -615,17 +706,21 @@ END {
             const fs = await import('fs/promises');
             const path = await import('path');
             
-            // Get all cached .gz files
+            // Get only cached .gz files (rotated logs are immutable)
+            // access.log is never cached as it's constantly being updated
             const files = await fs.readdir(cacheDir);
             const logFiles = files.filter(f => f.endsWith('.gz'));
             
-            if (logFiles.length === 0) {
+            console.log(`[IP REPORT DEBUG] Cache contains ${logFiles.length} immutable .gz files (access.log always re-fetched)`);
+            const validFiles = logFiles;
+            
+            if (validFiles.length === 0) {
                 return { canUseCached: false, files: [] };
             }
             
-            // For each cached file, check what timeframe it covers
+            // For each valid cached file, check what timeframe it covers
             const fileTimeframes = [];
-            for (const file of logFiles) {
+            for (const file of validFiles) {
                 const filePath = path.join(cacheDir, file);
                 const timeframe = await this.getFileTimeframe(filePath);
                 if (timeframe) {
@@ -815,21 +910,40 @@ END {
         
         console.log(`[IP REPORT DEBUG] parseLogLines called with ${logs.length} lines`);
         
+        let debugIpCount = 0; // Count for IP 66.249.79.6
+        let parseFailures = 0;
+        
         for (const line of logs) {
             if (!line.trim()) continue;
+            
+            // Count raw occurrences of debug IP
+            if (line.includes('66.249.79.6')) {
+                debugIpCount++;
+            }
             
             try {
                 const logEntry = this.parseLogLine(line);
                 if (logEntry) {
                     parsedLogs.push(logEntry);
+                } else {
+                    parseFailures++;
+                    if (line.includes('66.249.79.6')) {
+                        console.log(`[IP REPORT DEBUG] Failed to parse 66.249.79.6 line: ${line.substring(0, 100)}...`);
+                    }
                 }
             } catch (error) {
+                parseFailures++;
                 this.logger.debug(`[IP REPORT] Error parsing log line: ${error.message}`);
+                if (line.includes('66.249.79.6')) {
+                    console.log(`[IP REPORT DEBUG] Exception parsing 66.249.79.6 line: ${error.message}`);
+                }
                 continue;
             }
         }
         
         console.log(`[IP REPORT DEBUG] parseLogLines returned ${parsedLogs.length} parsed entries`);
+        console.log(`[IP REPORT DEBUG] Parse failures: ${parseFailures} lines failed to parse`);
+        console.log(`[IP REPORT DEBUG] Raw count of 66.249.79.6 lines: ${debugIpCount}`);
         
         // Debug first few lines if we have any
         if (parsedLogs.length > 0) {
@@ -1298,22 +1412,23 @@ END {
         // Convert timeframe to hours for easier calculation
         const hours = timeframeMinutes / 60;
         
+        // Proportional segmentation for optimal chart readability (~18-24 segments)
         if (hours <= 1) {
-            return 60; // 1 minute buckets for 1 hour or less
+            return 300; // 5-minute buckets → 12 segments for 1 hour
         } else if (hours <= 12) {
-            return 600; // 10 minute buckets for up to 12 hours
+            return 1800; // 30-minute buckets → 24 segments for 12 hours
         } else if (hours <= 24) {
-            return 1200; // 20 minute buckets for up to 24 hours
+            return 3600; // 1-hour buckets → 24 segments for 24 hours
         } else if (hours <= 36) {
-            return 1800; // 30 minute buckets for up to 36 hours
+            return 7200; // 2-hour buckets → 18 segments for 36 hours
         } else if (hours <= 48) {
-            return 2700; // 45 minute buckets for up to 48 hours
+            return 7200; // 2-hour buckets → 24 segments for 48 hours
         } else if (hours <= 60) {
-            return 3600; // 1 hour buckets for up to 60 hours
+            return 10800; // 3-hour buckets → 20 segments for 60 hours
         } else if (hours <= 72) {
-            return 7200; // 2 hour buckets for up to 72 hours
+            return 10800; // 3-hour buckets → 24 segments for 72 hours
         } else {
-            // For anything beyond 72 hours, use 4 hour buckets
+            // For anything beyond 72 hours, use 4-hour buckets
             return 14400;
         }
     }
