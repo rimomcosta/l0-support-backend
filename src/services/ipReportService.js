@@ -82,22 +82,59 @@ class IpReportService {
             console.log('[IP REPORT DEBUG] Parsed logs count:', parsedLogs.length);
             this.logger.info(`[IP REPORT] Parsed ${parsedLogs.length} relevant log entries`);
 
-            // Step 4: Aggregate data by IP
-            this.logger.info(`[IP REPORT] Aggregating data by IP`);
-            console.log('[IP REPORT DEBUG] About to aggregate...');
-            const aggregatedData = this.aggregateByIp(parsedLogs);
-            console.log('[IP REPORT DEBUG] Aggregated data keys:', Object.keys(aggregatedData).length);
-            
-            // Step 5: Sort and limit results
-            console.log('[IP REPORT DEBUG] About to get top IPs...');
-            const topIpData = this.getTopIps(aggregatedData, topIps);
-            console.log('[IP REPORT DEBUG] Top IP data count:', topIpData.length);
-            
-            // Step 6: Filter raw logs to only include logs from top IPs
-            console.log('[IP REPORT DEBUG] Filtering raw logs to only include top IPs...');
-            const topIpsSet = new Set(topIpData.map(ipData => ipData.ip));
-            const filteredRawLogs = parsedLogs.filter(log => topIpsSet.has(log.ip));
-            console.log('[IP REPORT DEBUG] Filtered raw logs count:', filteredRawLogs.length);
+            // Check if this is a large dataset that needs memory-efficient processing
+            const isLargeDataset = parsedLogs.length > 500000; // 500K+ logs
+            console.log(`[IP REPORT DEBUG] Large dataset detected: ${isLargeDataset} (${parsedLogs.length} logs)`);
+
+            let aggregatedData, topIpData, timeSeriesData, totalRequests;
+
+            if (isLargeDataset) {
+                // Memory-efficient processing for large datasets
+                console.log('[IP REPORT DEBUG] Using memory-efficient processing...');
+                
+                // Calculate time range for bucket aggregation
+                let wallAgo, wallUntil;
+                if (from && to) {
+                    const fromDate = new Date(from);
+                    const toDate = new Date(to);
+                    wallAgo = Math.floor(fromDate.getTime() / 1000);
+                    wallUntil = Math.floor(toDate.getTime() / 1000);
+                } else {
+                    wallUntil = Math.floor(Date.now() / 1000);
+                    wallAgo = wallUntil - (timeframe * 60);
+                }
+                
+                // Get accurate totals without keeping all data in memory
+                const totalsResult = this.getAccurateTotals(parsedLogs);
+                aggregatedData = totalsResult.aggregatedData;
+                totalRequests = totalsResult.totalRequests;
+                
+                // Get top IPs
+                topIpData = this.getTopIps(aggregatedData, topIps);
+                
+                // Create time-series data for charts (aggregated by 1-minute buckets)
+                timeSeriesData = this.aggregateByTimeBuckets(parsedLogs, wallAgo, wallUntil);
+                
+                // Clear parsed logs from memory
+                parsedLogs.length = 0;
+                
+            } else {
+                // Standard processing for smaller datasets
+                console.log('[IP REPORT DEBUG] Using standard processing...');
+                
+                // Step 4: Aggregate data by IP
+                this.logger.info(`[IP REPORT] Aggregating data by IP`);
+                console.log('[IP REPORT DEBUG] About to aggregate...');
+                aggregatedData = this.aggregateByIp(parsedLogs);
+                console.log('[IP REPORT DEBUG] Aggregated data keys:', Object.keys(aggregatedData).length);
+                
+                // Step 5: Sort and limit results
+                console.log('[IP REPORT DEBUG] About to get top IPs...');
+                topIpData = this.getTopIps(aggregatedData, topIps);
+                console.log('[IP REPORT DEBUG] Top IP data count:', topIpData.length);
+                
+                totalRequests = parsedLogs.length;
+            }
             
             const processingTime = Date.now() - startTime;
             this.logger.info(`[IP REPORT] Report generated successfully in ${processingTime}ms`);
@@ -111,15 +148,16 @@ class IpReportService {
                 success: true,
                 data: {
                     summary: {
-                        totalRequests: parsedLogs.length,
+                        totalRequests: totalRequests,
                         uniqueIps: Object.keys(aggregatedData).length,
                         topIpsShown: topIpData.length,
                         timeRange: this.getTimeRangeInfo(from, to, timeframe),
-                        processingTimeMs: processingTime
+                        processingTimeMs: processingTime,
+                        isLargeDataset: isLargeDataset
                     },
                     ips: topIpData,
                     rawOutput: formattedOutput, // Raw format like bash script
-                    rawLogs: filteredRawLogs, // Only include logs from top IPs
+                    timeSeriesData: timeSeriesData, // Aggregated time-series data for charts
                     reportId: `${projectId}-${environment}-${Date.now()}` // For caching
                 }
             };
@@ -995,6 +1033,109 @@ END {
         }
 
         return aggregated;
+    }
+
+    /**
+     * Aggregate logs by time buckets to reduce memory usage for large datasets
+     * This creates 1-minute interval buckets for time-series charts
+     */
+    aggregateByTimeBuckets(logs, wallAgo, wallUntil) {
+        console.log('[IP REPORT DEBUG] Aggregating logs by time buckets...');
+        
+        // Create 1-minute buckets
+        const bucketSize = 60; // 1 minute in seconds
+        const buckets = new Map();
+        
+        // Initialize buckets for the entire time range
+        for (let timestamp = wallAgo; timestamp <= wallUntil; timestamp += bucketSize) {
+            const bucketKey = Math.floor(timestamp / bucketSize) * bucketSize;
+            buckets.set(bucketKey, {
+                timestamp: bucketKey,
+                ipCounts: new Map(), // IP -> count for this bucket
+                totalRequests: 0
+            });
+        }
+        
+        console.log(`[IP REPORT DEBUG] Created ${buckets.size} time buckets`);
+        
+        // Process logs in chunks to avoid memory issues
+        const chunkSize = 10000;
+        let processedCount = 0;
+        
+        for (let i = 0; i < logs.length; i += chunkSize) {
+            const chunk = logs.slice(i, i + chunkSize);
+            
+            for (const log of chunk) {
+                const logTimestamp = Math.floor(log.timestamp / 1000);
+                const bucketKey = Math.floor(logTimestamp / bucketSize) * bucketSize;
+                
+                if (buckets.has(bucketKey)) {
+                    const bucket = buckets.get(bucketKey);
+                    bucket.totalRequests++;
+                    
+                    // Count by IP for this bucket
+                    bucket.ipCounts.set(log.ip, (bucket.ipCounts.get(log.ip) || 0) + 1);
+                }
+            }
+            
+            processedCount += chunk.length;
+            if (processedCount % 100000 === 0) {
+                console.log(`[IP REPORT DEBUG] Processed ${processedCount}/${logs.length} logs`);
+            }
+        }
+        
+        console.log(`[IP REPORT DEBUG] Completed time bucket aggregation for ${logs.length} logs`);
+        
+        // Convert to array format for frontend
+        const timeSeriesData = Array.from(buckets.values()).map(bucket => ({
+            timestamp: bucket.timestamp,
+            totalRequests: bucket.totalRequests,
+            ipCounts: Object.fromEntries(bucket.ipCounts)
+        }));
+        
+        return timeSeriesData;
+    }
+
+    /**
+     * Get accurate totals from all logs without keeping them all in memory
+     */
+    getAccurateTotals(logs) {
+        console.log('[IP REPORT DEBUG] Calculating accurate totals...');
+        
+        const ipTotals = new Map();
+        let totalRequests = 0;
+        
+        // Process in chunks to avoid memory issues
+        const chunkSize = 10000;
+        
+        for (let i = 0; i < logs.length; i += chunkSize) {
+            const chunk = logs.slice(i, i + chunkSize);
+            
+            for (const log of chunk) {
+                totalRequests++;
+                ipTotals.set(log.ip, (ipTotals.get(log.ip) || 0) + 1);
+            }
+            
+            if ((i + chunkSize) % 100000 === 0) {
+                console.log(`[IP REPORT DEBUG] Processed ${i + chunkSize}/${logs.length} logs for totals`);
+            }
+        }
+        
+        // Convert to aggregated format
+        const aggregatedData = {};
+        for (const [ip, totalHits] of ipTotals) {
+            aggregatedData[ip] = {
+                ip,
+                totalHits,
+                statusCodes: {},
+                methods: {},
+                userAgents: {}
+            };
+        }
+        
+        console.log(`[IP REPORT DEBUG] Calculated totals: ${totalRequests} requests, ${ipTotals.size} unique IPs`);
+        
+        return { aggregatedData, totalRequests };
     }
 
     /**
