@@ -81,6 +81,45 @@ class IpReportService {
             const parsedLogs = this.parseLogLines(allLogs);
             console.log('[IP REPORT DEBUG] Parsed logs count:', parsedLogs.length);
             this.logger.info(`[IP REPORT] Parsed ${parsedLogs.length} relevant log entries`);
+            
+            // Verify time filtering accuracy (calculate time range here)
+            if (parsedLogs.length > 0 && (from || to || timeframe)) {
+                let requestedStart, requestedEnd;
+                
+                if (from && to) {
+                    requestedStart = new Date(from);
+                    requestedEnd = new Date(to);
+                } else if (timeframe > 0) {
+                    requestedEnd = new Date();
+                    requestedStart = new Date(Date.now() - timeframe * 60 * 1000);
+                }
+                
+                if (requestedStart && requestedEnd) {
+                    const timestamps = parsedLogs
+                        .filter(log => log.timestamp)
+                        .map(log => log.timestamp)
+                        .sort((a, b) => a - b);
+                    
+                    if (timestamps.length > 0) {
+                        const earliest = new Date(timestamps[0]);
+                        const latest = new Date(timestamps[timestamps.length - 1]);
+                        
+                        console.log('[IP REPORT DEBUG] Time filtering verification:');
+                        console.log('  Requested range:', requestedStart.toISOString(), 'to', requestedEnd.toISOString());
+                        console.log('  Actual data range:', earliest.toISOString(), 'to', latest.toISOString());
+                        console.log('  Time filter accurate:', 
+                            earliest >= requestedStart && latest <= requestedEnd ? 'YES' : 'NO');
+                            
+                        // Check for any logs outside the requested range
+                        const outsideRange = parsedLogs.filter(log => 
+                            log.timestamp && (log.timestamp < requestedStart.getTime() || log.timestamp > requestedEnd.getTime())
+                        );
+                        if (outsideRange.length > 0) {
+                            console.log(`[IP REPORT DEBUG] WARNING: ${outsideRange.length} logs found outside requested range`);
+                        }
+                    }
+                }
+            }
 
             // Step 4: Aggregate data by IP
             this.logger.info(`[IP REPORT] Aggregating data by IP`);
@@ -205,35 +244,84 @@ class IpReportService {
                 
                 // Build the awk script based on time filtering
                 const { timeframe = 60, from, to } = options;
-                let wallAgo;
+                let wallAgo, wallUntil = 0;
                 
                 if (from && to) {
-                    // Custom date range
-                    wallAgo = Math.floor(new Date(from).getTime() / 1000);
+                    // Custom date range - treat input as UTC since server logs are in UTC
+                    // Convert datetime-local input to UTC timestamps
+                    const fromDate = new Date(from + ':00.000Z'); // Add seconds and Z for UTC
+                    const toDate = new Date(to + ':00.000Z');     // Add seconds and Z for UTC
+                    
+                    wallAgo = Math.floor(fromDate.getTime() / 1000);
+                    wallUntil = Math.floor(toDate.getTime() / 1000);
+                    
+                    // Validate the parsed dates
+                    if (isNaN(wallAgo) || isNaN(wallUntil)) {
+                        console.log(`[IP REPORT DEBUG] Invalid date range detected, falling back to last 60 minutes`);
+                        wallAgo = Math.floor(Date.now() / 1000) - (60 * 60);
+                        wallUntil = Math.floor(Date.now() / 1000);
+                    } else if (wallAgo > wallUntil) {
+                        console.log(`[IP REPORT DEBUG] From date is after To date, swapping`);
+                        [wallAgo, wallUntil] = [wallUntil, wallAgo];
+                    } else if (wallUntil > Date.now() / 1000 + 86400) { // More than 1 day in future
+                        console.log(`[IP REPORT DEBUG] Future date detected, falling back to last 60 minutes`);
+                        wallAgo = Math.floor(Date.now() / 1000) - (60 * 60);
+                        wallUntil = Math.floor(Date.now() / 1000);
+                    }
                 } else if (timeframe === 0) {
                     // All logs
                     wallAgo = 0;
+                    wallUntil = Math.floor(Date.now() / 1000);
                 } else {
                     // Timeframe in minutes
                     wallAgo = Math.floor(Date.now() / 1000) - (timeframe * 60);
+                    wallUntil = Math.floor(Date.now() / 1000);
                 }
                 
-                console.log(`[IP REPORT DEBUG] Using wallAgo: ${wallAgo} for timeframe: ${timeframe} minutes`);
+                console.log(`[IP REPORT DEBUG] Using time range: ${wallAgo} to ${wallUntil} (from: ${from}, to: ${to})`);
+                console.log(`[IP REPORT DEBUG] Time range in human readable: ${new Date(wallAgo * 1000).toISOString()} to ${new Date(wallUntil * 1000).toISOString()}`);
                 
-                // Use heredoc approach to avoid escaping issues
-                const sshCommand = `ssh ${sshConnection} << 'EOF'
+                // Use a more efficient approach - execute the awk script properly
+                // Add explicit bash shell and error handling
+                const sshCommand = `ssh ${sshConnection} 'bash -s' << 'EOF'
 wall_ago=${wallAgo}
-gawk -v WALL_AGO=$wall_ago '
-BEGIN {
-  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
-  for(m=1;m<=12;m++)mon[M[m]]=m
-}
-{
-  if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
-    ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
-    if (ts >= WALL_AGO) print $0
-  }
-}' /var/log/platform/*/access.log
+wall_until=${wallUntil}
+
+# Set error handling
+set -e
+
+# Process both .log and .gz files efficiently
+for f in /var/log/platform/*/access.log*; do
+    if [[ -f "$f" ]]; then
+        if [[ "$f" == *.gz ]]; then
+            # Process compressed files - decompress and filter in one pass
+            gzip -dc "$f" 2>/dev/null | gawk -v WALL_AGO=$wall_ago -v WALL_UNTIL=$wall_until '
+            BEGIN {
+              split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
+              for(m=1;m<=12;m++)mon[M[m]]=m
+            }
+            {
+              if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
+                ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+                if (ts >= WALL_AGO && ts <= WALL_UNTIL) print $0
+              }
+            }'
+        else
+            # Process uncompressed files
+            gawk -v WALL_AGO=$wall_ago -v WALL_UNTIL=$wall_until '
+            BEGIN {
+              split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
+              for(m=1;m<=12;m++)mon[M[m]]=m
+            }
+            {
+              if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
+                ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+                if (ts >= WALL_AGO && ts <= WALL_UNTIL) print $0
+              }
+            }' "$f"
+        fi
+    fi
+done
 EOF`;
                 
                 console.log(`[IP REPORT DEBUG] Executing SSH command with heredoc`);

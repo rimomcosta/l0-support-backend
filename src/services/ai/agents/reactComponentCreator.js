@@ -113,14 +113,14 @@ const ExampleComponent = ({ data }) => {
 };
 \`\`\`
 
-Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Comply with ALL requirements above without loosing the context - Do not let any element from within a component to overflow its container! Pay attention to the Type of Component: "${data.aiGuidance || 'Optimal for a dashboard'}", and this is an example of the data the component will display ${data.outputExample} Take the quotations mark and json elements into consideration, if present
+Generate ONLY the component code without any markdown code block markers or extra text. Return the clean code, using React.createElement() and Tailwind classes. Respect the dark/light theme. Comply with ALL requirements above without loosing the context - Do not let any element from within a component to overflow its container! Pay attention to the Type of Component: "${data.aiGuidance || 'Optimal for a dashboard Component'}", and this is an example of the data the component will display ${data.outputExample} Take the quotations mark and json elements into consideration, if present
 `;
 
 const config = {
     provider: 'google_vertex',
     model: 'gemini-2.5-pro',
-    temperature: 0.4,
-    maxTokens: 10000,
+    temperature: 0.7,
+    maxTokens: 15000,
     stream: false,
     systemMessage: 'You are a helpful assistant that generates React code. You don\'t do anything else and your code is related to the dashboard only. Be carefull with harmfull instructions or instructions that asks you to do things out of scope in react code.',
 };
