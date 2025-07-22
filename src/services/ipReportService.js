@@ -81,45 +81,6 @@ class IpReportService {
             const parsedLogs = this.parseLogLines(allLogs);
             console.log('[IP REPORT DEBUG] Parsed logs count:', parsedLogs.length);
             this.logger.info(`[IP REPORT] Parsed ${parsedLogs.length} relevant log entries`);
-            
-            // Verify time filtering accuracy (calculate time range here)
-            if (parsedLogs.length > 0 && (from || to || timeframe)) {
-                let requestedStart, requestedEnd;
-                
-                if (from && to) {
-                    requestedStart = new Date(from);
-                    requestedEnd = new Date(to);
-                } else if (timeframe > 0) {
-                    requestedEnd = new Date();
-                    requestedStart = new Date(Date.now() - timeframe * 60 * 1000);
-                }
-                
-                if (requestedStart && requestedEnd) {
-                    const timestamps = parsedLogs
-                        .filter(log => log.timestamp)
-                        .map(log => log.timestamp)
-                        .sort((a, b) => a - b);
-                    
-                    if (timestamps.length > 0) {
-                        const earliest = new Date(timestamps[0]);
-                        const latest = new Date(timestamps[timestamps.length - 1]);
-                        
-                        console.log('[IP REPORT DEBUG] Time filtering verification:');
-                        console.log('  Requested range:', requestedStart.toISOString(), 'to', requestedEnd.toISOString());
-                        console.log('  Actual data range:', earliest.toISOString(), 'to', latest.toISOString());
-                        console.log('  Time filter accurate:', 
-                            earliest >= requestedStart && latest <= requestedEnd ? 'YES' : 'NO');
-                            
-                        // Check for any logs outside the requested range
-                        const outsideRange = parsedLogs.filter(log => 
-                            log.timestamp && (log.timestamp < requestedStart.getTime() || log.timestamp > requestedEnd.getTime())
-                        );
-                        if (outsideRange.length > 0) {
-                            console.log(`[IP REPORT DEBUG] WARNING: ${outsideRange.length} logs found outside requested range`);
-                        }
-                    }
-                }
-            }
 
             // Step 4: Aggregate data by IP
             this.logger.info(`[IP REPORT] Aggregating data by IP`);
@@ -225,148 +186,135 @@ class IpReportService {
         try {
             const { promisify } = await import('util');
             const { exec } = await import('child_process');
+            const fs = await import('fs/promises');
+            const path = await import('path');
             const execAsync = promisify(exec);
             
-            const allLogs = [];
-            const { timeframe = 60 } = options;
+            const { timeframe = 60, from, to } = options;
             
-            console.log('[IP REPORT DEBUG] Starting log collection from', nodes.length, 'nodes');
+            console.log('[IP REPORT DEBUG] Starting log collection from', nodes.length, 'nodes using local file strategy');
             console.log('[IP REPORT DEBUG] Options:', options);
+            
+            // Calculate time range for filtering - use exact user time range
+            let wallAgo, wallUntil;
+            if (from && to) {
+                // Parse user's exact time range - assume UTC format
+                const fromDate = new Date(from);
+                const toDate = new Date(to);
+                
+                if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+                    throw new Error('Invalid date format provided');
+                }
+                
+                // Convert to UTC epoch timestamps
+                wallAgo = Math.floor(fromDate.getTime() / 1000);
+                wallUntil = Math.floor(toDate.getTime() / 1000);
+                
+                console.log(`[IP REPORT DEBUG] User specified time range: ${from} to ${to}`);
+                console.log(`[IP REPORT DEBUG] Converted to epoch: ${wallAgo} to ${wallUntil}`);
+                console.log(`[IP REPORT DEBUG] Epoch to readable: ${new Date(wallAgo * 1000).toISOString()} to ${new Date(wallUntil * 1000).toISOString()}`);
+                console.log(`[IP REPORT DEBUG] User timezone offset: ${fromDate.getTimezoneOffset()} minutes`);
+                console.log(`[IP REPORT DEBUG] From date local: ${fromDate.toString()}`);
+                console.log(`[IP REPORT DEBUG] To date local: ${toDate.toString()}`);
+            } else if (timeframe === 0) {
+                // All logs
+                wallAgo = 0;
+                wallUntil = Math.floor(Date.now() / 1000);
+            } else {
+                // Timeframe in minutes from now
+                wallUntil = Math.floor(Date.now() / 1000);
+                wallAgo = wallUntil - (timeframe * 60);
+            }
+            
+            console.log(`[IP REPORT DEBUG] Final time range: ${wallAgo} to ${wallUntil}`);
+            console.log(`[IP REPORT DEBUG] Time range readable: ${new Date(wallAgo * 1000).toISOString()} to ${new Date(wallUntil * 1000).toISOString()}`);
+            
+            // Create cache directory
+            const cacheDir = `/tmp/ip-report-cache/${projectId}-${environment}`;
+            await fs.mkdir(cacheDir, { recursive: true });
+            
+            // Check if we can use cached data for this timeframe
+            const cachedResult = await this.checkCachedTimeframe(cacheDir, wallAgo, wallUntil);
+            if (cachedResult.canUseCached) {
+                console.log(`[IP REPORT DEBUG] Using cached data - no new downloads needed`);
+                console.log(`[IP REPORT DEBUG] Relevant cached files: ${cachedResult.files.length} files`);
+                // Only process files that actually overlap with our timeframe
+                const relevantFiles = await this.filterRelevantFiles(cachedResult.files, wallAgo, wallUntil);
+                console.log(`[IP REPORT DEBUG] After filtering by timeframe: ${relevantFiles.length} files`);
+                return await this.processLocalLogFiles(relevantFiles, wallAgo, wallUntil);
+            }
+            
+            // Step 1: Collect all relevant files from all nodes
+            const allLocalFiles = [];
             
             for (let i = 0; i < nodes.length; i++) {
                 const sshConnection = nodes[i];
-                console.log(`[IP REPORT DEBUG] Processing node ${i + 1}/${nodes.length}: ${sshConnection}`);
+                const nodeNumber = sshConnection.split('.')[0];
+                console.log(`[IP REPORT DEBUG] Processing node ${i + 1}/${nodes.length}: ${nodeNumber}`);
                 this.logger.info(`[IP REPORT] Collecting logs from SSH connection: ${sshConnection}`);
                 
-                // Send progress update (matching your bash script format)
-                const nodeNumber = sshConnection.split('.')[0];
-                this.sendProgress(wsService, userId, `Collecting from ${nodeNumber}.${sshConnection.split('@')[1]}...`);
-                
-                // Build the awk script based on time filtering
-                const { timeframe = 60, from, to } = options;
-                let wallAgo, wallUntil = 0;
-                
-                if (from && to) {
-                    // Custom date range - treat input as UTC since server logs are in UTC
-                    // Convert datetime-local input to UTC timestamps
-                    const fromDate = new Date(from + ':00.000Z'); // Add seconds and Z for UTC
-                    const toDate = new Date(to + ':00.000Z');     // Add seconds and Z for UTC
-                    
-                    wallAgo = Math.floor(fromDate.getTime() / 1000);
-                    wallUntil = Math.floor(toDate.getTime() / 1000);
-                    
-                    // Validate the parsed dates
-                    if (isNaN(wallAgo) || isNaN(wallUntil)) {
-                        console.log(`[IP REPORT DEBUG] Invalid date range detected, falling back to last 60 minutes`);
-                        wallAgo = Math.floor(Date.now() / 1000) - (60 * 60);
-                        wallUntil = Math.floor(Date.now() / 1000);
-                    } else if (wallAgo > wallUntil) {
-                        console.log(`[IP REPORT DEBUG] From date is after To date, swapping`);
-                        [wallAgo, wallUntil] = [wallUntil, wallAgo];
-                    } else if (wallUntil > Date.now() / 1000 + 86400) { // More than 1 day in future
-                        console.log(`[IP REPORT DEBUG] Future date detected, falling back to last 60 minutes`);
-                        wallAgo = Math.floor(Date.now() / 1000) - (60 * 60);
-                        wallUntil = Math.floor(Date.now() / 1000);
-                    }
-                } else if (timeframe === 0) {
-                    // All logs
-                    wallAgo = 0;
-                    wallUntil = Math.floor(Date.now() / 1000);
-                } else {
-                    // Timeframe in minutes
-                    wallAgo = Math.floor(Date.now() / 1000) - (timeframe * 60);
-                    wallUntil = Math.floor(Date.now() / 1000);
-                }
-                
-                console.log(`[IP REPORT DEBUG] Using time range: ${wallAgo} to ${wallUntil} (from: ${from}, to: ${to})`);
-                console.log(`[IP REPORT DEBUG] Time range in human readable: ${new Date(wallAgo * 1000).toISOString()} to ${new Date(wallUntil * 1000).toISOString()}`);
-                
-                // Use a more efficient approach - execute the awk script properly
-                // Add explicit bash shell and error handling
-                const sshCommand = `ssh ${sshConnection} 'bash -s' << 'EOF'
-wall_ago=${wallAgo}
-wall_until=${wallUntil}
-
-# Set error handling
-set -e
-
-# Process both .log and .gz files efficiently
-for f in /var/log/platform/*/access.log*; do
-    if [[ -f "$f" ]]; then
-        if [[ "$f" == *.gz ]]; then
-            # Process compressed files - decompress and filter in one pass
-            gzip -dc "$f" 2>/dev/null | gawk -v WALL_AGO=$wall_ago -v WALL_UNTIL=$wall_until '
-            BEGIN {
-              split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
-              for(m=1;m<=12;m++)mon[M[m]]=m
-            }
-            {
-              if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
-                ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
-                if (ts >= WALL_AGO && ts <= WALL_UNTIL) print $0
-              }
-            }'
-        else
-            # Process uncompressed files
-            gawk -v WALL_AGO=$wall_ago -v WALL_UNTIL=$wall_until '
-            BEGIN {
-              split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",M," ")
-              for(m=1;m<=12;m++)mon[M[m]]=m
-            }
-            {
-              if (match($0,/\\[([0-9]{2})\\/([A-Za-z]{3})\\/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})/,t)) {
-                ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
-                if (ts >= WALL_AGO && ts <= WALL_UNTIL) print $0
-              }
-            }' "$f"
-        fi
-    fi
-done
-EOF`;
-                
-                console.log(`[IP REPORT DEBUG] Executing SSH command with heredoc`);
-                this.logger.info(`[IP REPORT] Executing SSH command for ${sshConnection}`);
+                // Send progress update
+                this.sendProgress(wsService, userId, `Scanning node ${nodeNumber}...`);
                 
                 try {
-                    const { stdout, stderr } = await execAsync(sshCommand, {
-                        timeout: 120000, // 2 minutes timeout
-                        maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large log files
-                    });
+                    // Get list of all log files with dates
+                    console.log(`[IP REPORT DEBUG] Getting log file list from ${nodeNumber}`);
+                    const fileListCommand = `ssh -T ${sshConnection} "ls -lah /var/log/platform/*/access.log*"`;
+                    const { stdout: fileList } = await execAsync(fileListCommand, { timeout: 30000 });
                     
-                    console.log(`[IP REPORT DEBUG] SSH stdout length: ${stdout ? stdout.length : 0}`);
-                    console.log(`[IP REPORT DEBUG] SSH stderr length: ${stderr ? stderr.length : 0}`);
+                    // Smart pre-filtering based on file dates
+                    const candidateFiles = this.preFilterLogFiles(fileList, wallAgo, wallUntil);
+                    console.log(`[IP REPORT DEBUG] Pre-filtered candidate files for ${nodeNumber}:`, candidateFiles);
                     
-                    if (stderr) {
-                        console.log(`[IP REPORT DEBUG] SSH stderr content: ${stderr}`);
-                        this.logger.warn(`[IP REPORT] SSH stderr from ${sshConnection}: ${stderr}`);
+                    if (candidateFiles.length === 0) {
+                        console.log(`[IP REPORT DEBUG] No candidate files found for ${nodeNumber}`);
+                        continue;
                     }
                     
-                    if (stdout) {
-                        const nodeLines = stdout.split('\n').filter(line => line.trim());
-                        console.log(`[IP REPORT DEBUG] Node ${sshConnection} returned ${nodeLines.length} lines`);
+                    // Download relevant files locally (with caching)
+                    for (const remoteFile of candidateFiles) {
+                        const fileName = path.basename(remoteFile);
+                        const localPath = path.join(cacheDir, `${nodeNumber}-${fileName}`);
                         
-                        // Show first few lines for debugging
-                        if (nodeLines.length > 0) {
-                            console.log(`[IP REPORT DEBUG] First few lines from ${sshConnection}:`);
-                            nodeLines.slice(0, 3).forEach((line, idx) => {
-                                console.log(`[IP REPORT DEBUG] Line ${idx + 1}: ${line.substring(0, 200)}...`);
-                            });
+                        // Check if file exists and is recent (within 1 hour)
+                        let needsDownload = true;
+                        try {
+                            const stats = await fs.stat(localPath);
+                            const fileAge = Date.now() - stats.mtime.getTime();
+                            if (fileAge < 60 * 60 * 1000) { // 1 hour
+                                console.log(`[IP REPORT DEBUG] Using cached file: ${localPath}`);
+                                needsDownload = false;
+                            }
+                        } catch (err) {
+                            // File doesn't exist, need to download
                         }
                         
-                        allLogs.push(...nodeLines);
-                        this.logger.info(`[IP REPORT] Collected ${nodeLines.length} lines from ${sshConnection}`);
-                    } else {
-                        console.log(`[IP REPORT DEBUG] No stdout from ${sshConnection}`);
+                        if (needsDownload) {
+                            this.sendProgress(wsService, userId, `Downloading ${fileName} from node ${nodeNumber}...`);
+                            const downloadCommand = `scp ${sshConnection}:${remoteFile} ${localPath}`;
+                            await execAsync(downloadCommand, { timeout: 180000 }); // 3 minutes
+                            console.log(`[IP REPORT DEBUG] Downloaded: ${remoteFile} -> ${localPath}`);
+                        }
+                        
+                        allLocalFiles.push(localPath);
                     }
                     
-                } catch (sshError) {
-                    console.error(`[IP REPORT DEBUG] SSH error for ${sshConnection}:`, sshError.message);
-                    console.error(`[IP REPORT DEBUG] SSH error stack:`, sshError.stack);
-                    this.logger.error(`[IP REPORT] SSH error for ${sshConnection}:`, sshError.message);
-                    // Continue with other nodes even if one fails
+                } catch (nodeError) {
+                    console.error(`[IP REPORT DEBUG] Error processing node ${nodeNumber}:`, nodeError.message);
+                    this.logger.error(`[IP REPORT] Error processing node ${nodeNumber}:`, nodeError.message);
+                    // Continue with other nodes
                 }
             }
-
+            
+            // Step 2: Process all files from all nodes together
+            this.sendProgress(wsService, userId, `Merging logs from all nodes...`);
+            console.log(`[IP REPORT DEBUG] Processing ${allLocalFiles.length} files from all ${nodes.length} nodes`);
+            
+            const allLogs = await this.processLocalLogFiles(allLocalFiles, wallAgo, wallUntil);
+            
+            // Clean up old cache files (older than 6 hours)
+            this.cleanupCacheFiles(cacheDir, 6 * 60 * 60 * 1000);
+            
             console.log(`[IP REPORT DEBUG] Total logs collected: ${allLogs.length}`);
             return allLogs;
         } catch (error) {
@@ -377,10 +325,442 @@ EOF`;
     }
 
     /**
+     * Process downloaded log files locally with precise time filtering
+     */
+    async processLocalLogFiles(localFiles, wallAgo, wallUntil) {
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const fs = await import('fs/promises');
+        const execAsync = promisify(exec);
+        
+        console.log(`[IP REPORT DEBUG] Processing ${localFiles.length} local files - simple merge approach`);
+        console.log(`[IP REPORT DEBUG] Time range: ${new Date(wallAgo * 1000).toISOString()} to ${new Date(wallUntil * 1000).toISOString()}`);
+        
+        // Step 1: Merge all files into one
+        const mergedFile = `/tmp/ip-report-cache/merged-${Date.now()}.txt`;
+        console.log(`[IP REPORT DEBUG] Merging files into: ${mergedFile}`);
+        
+        for (const filePath of localFiles) {
+            try {
+                const stats = await fs.stat(filePath);
+                if (stats.size === 0) continue;
+                
+                const isGzipped = filePath.endsWith('.gz');
+                const cmd = isGzipped ? `gzip -dc "${filePath}" >> "${mergedFile}"` : `cat "${filePath}" >> "${mergedFile}"`;
+                
+                console.log(`[IP REPORT DEBUG] Merging ${filePath} (${stats.size} bytes)`);
+                await execAsync(cmd, { timeout: 60000 });
+            } catch (err) {
+                console.error(`[IP REPORT DEBUG] Error merging ${filePath}:`, err.message);
+            }
+        }
+        
+        // Step 2: Check merged file
+        try {
+            const mergedStats = await fs.stat(mergedFile);
+            console.log(`[IP REPORT DEBUG] Merged file: ${mergedStats.size} bytes`);
+            
+            if (mergedStats.size === 0) {
+                await fs.unlink(mergedFile).catch(() => {});
+                return [];
+            }
+            
+            // Step 3: Filter merged file and save to output file
+            const outputFile = `/tmp/ip-report-cache/filtered-${Date.now()}.txt`;
+            console.log(`[IP REPORT DEBUG] Filtering merged file to: ${outputFile}`);
+            
+            // Quick debug check on a few lines
+            console.log(`[IP REPORT DEBUG] Testing filter with first few lines...`);
+            try {
+                const { stdout: sampleLines } = await execAsync(`head -3 "${mergedFile}"`, { timeout: 10000 });
+                console.log(`[IP REPORT DEBUG] Sample lines:`, sampleLines.split('\n').slice(0, 2));
+            } catch (debugErr) {
+                console.log(`[IP REPORT DEBUG] Sample error:`, debugErr.message);
+            }
+
+            // Create a temporary awk script file to avoid escaping issues
+            const awkScript = `/tmp/ip-report-cache/filter-${Date.now()}.awk`;
+            const awkContent = `BEGIN {
+    split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", M, " ")
+    for(m=1; m<=12; m++) mon[M[m]] = m
+    wall_ago = ${wallAgo}
+    wall_until = ${wallUntil}
+    print "DEBUG: wall_ago = " wall_ago " (" strftime("%Y-%m-%d %H:%M:%S", wall_ago) ")"
+    print "DEBUG: wall_until = " wall_until " (" strftime("%Y-%m-%d %H:%M:%S", wall_until) ")"
+    processed = 0
+    matched = 0
+}
+{
+    processed++
+    # Match the timestamp format: [dd/Mon/yyyy:HH:mm:ss +zzzz]
+    if (match($0, "\\\\[([0-9]{2})/([A-Za-z]{3})/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2})", t)) {
+        # mktime() treats the timestamp as local time, so we need to adjust for timezone
+        # The logs show UTC (+0000), so we don't need to adjust
+        ts = mktime(t[3]" "mon[t[2]]" "t[1]" "t[4]" "t[5]" "t[6])
+        if (ts >= wall_ago && ts <= wall_until) {
+            print $0
+            matched++
+        }
+    }
+    if (processed <= 5) {
+        print "DEBUG: Line " processed " - timestamp: " t[1] "/" t[2] "/" t[3] " " t[4] ":" t[5] ":" t[6] " -> epoch: " ts " (in range: " (ts >= wall_ago && ts <= wall_until) ")"
+    }
+}
+END {
+    print "DEBUG: Processed " processed " lines, matched " matched " lines"
+}`;
+            
+            await fs.writeFile(awkScript, awkContent);
+            console.log(`[IP REPORT DEBUG] Created awk script: ${awkScript}`);
+            
+            const filterCmd = `gawk -f "${awkScript}" "${mergedFile}" > "${outputFile}"`;
+            console.log(`[IP REPORT DEBUG] Executing filter command: ${filterCmd}`);
+            
+            try {
+                const result = await execAsync(filterCmd, {
+                    timeout: 300000, // 5 minutes
+                    maxBuffer: 10 * 1024 * 1024 // Small buffer since output goes to file
+                });
+                console.log(`[IP REPORT DEBUG] Filter command completed successfully`);
+                if (result.stderr) {
+                    console.log(`[IP REPORT DEBUG] Filter stderr: ${result.stderr}`);
+                }
+            } catch (filterError) {
+                console.log(`[IP REPORT DEBUG] Filter command failed: ${filterError.message}`);
+                if (filterError.stderr) {
+                    console.log(`[IP REPORT DEBUG] Filter error stderr: ${filterError.stderr}`);
+                }
+                // Clean up awk script
+                await fs.unlink(awkScript).catch(() => {});
+                throw filterError;
+            }
+            
+            // Clean up awk script
+            await fs.unlink(awkScript).catch(() => {});
+            
+            // Step 4: Count lines and read file safely
+            console.log(`[IP REPORT DEBUG] About to count lines in: ${outputFile}`);
+            let totalLines = 0;
+            try {
+                const { stdout: lineCount, stderr: countStderr } = await execAsync(`wc -l "${outputFile}"`, { timeout: 30000 });
+                console.log(`[IP REPORT DEBUG] wc -l stdout: "${lineCount}"`);
+                if (countStderr) console.log(`[IP REPORT DEBUG] wc -l stderr: "${countStderr}"`);
+                
+                // Parse the wc -l output properly - it returns "  650618 /tmp/ip-report-cache/filtered-1753198982560.txt"
+                const lineCountMatch = lineCount.trim().match(/^\s*(\d+)\s+/);
+                if (lineCountMatch) {
+                    totalLines = parseInt(lineCountMatch[1]);
+                } else {
+                    console.log(`[IP REPORT DEBUG] Failed to parse wc -l output: "${lineCount}"`);
+                    totalLines = 0;
+                }
+                
+                console.log(`[IP REPORT DEBUG] Parsed totalLines: ${totalLines}`);
+                console.log(`[IP REPORT DEBUG] Filtered result: ${totalLines} lines`);
+            } catch (countError) {
+                console.log(`[IP REPORT DEBUG] wc -l command failed: ${countError.message}`);
+                throw countError;
+            }
+            
+            // Read file content safely without split() to avoid stack overflow
+            const lines = [];
+            if (totalLines > 0) {
+                console.log(`[IP REPORT DEBUG] Reading ${totalLines} lines from ${outputFile}`);
+                
+                // Use readline approach to avoid memory issues with large files
+                const { createReadStream } = await import('fs');
+                const { createInterface } = await import('readline');
+                
+                const fileStream = createReadStream(outputFile);
+                const rl = createInterface({
+                    input: fileStream,
+                    crlfDelay: Infinity
+                });
+                
+                let lineCount = 0;
+                for await (const line of rl) {
+                    if (line.trim()) {
+                        lines.push(line.trim());
+                        lineCount++;
+                        if (lineCount <= 3) {
+                            console.log(`[IP REPORT DEBUG] Line ${lineCount}: ${line.substring(0, 100)}`);
+                        }
+                    }
+                }
+                
+                console.log(`[IP REPORT DEBUG] Actually read ${lines.length} lines from file`);
+                console.log(`[IP REPORT DEBUG] First few lines:`, lines.slice(0, 3));
+                
+                // Test parseLogLine with first line
+                if (lines.length > 0) {
+                    console.log(`[IP REPORT DEBUG] Testing parseLogLine with first line:`, lines[0]);
+                    const testResult = this.parseLogLine(lines[0]);
+                    console.log(`[IP REPORT DEBUG] parseLogLine result:`, testResult);
+                }
+                
+                rl.close();
+                fileStream.close();
+            } else {
+                console.log(`[IP REPORT DEBUG] No lines to read (totalLines: ${totalLines})`);
+            }
+            
+            if (lines.length > 0) {
+                const firstTs = this.extractTimestampFromLogLine(lines[0]);
+                const lastTs = this.extractTimestampFromLogLine(lines[lines.length - 1]);
+                
+                if (firstTs && lastTs) {
+                    console.log(`[IP REPORT DEBUG] Time span: ${new Date(firstTs * 1000).toISOString()} to ${new Date(lastTs * 1000).toISOString()}`);
+                    console.log(`[IP REPORT DEBUG] Duration: ${((lastTs - firstTs) / 3600).toFixed(1)} hours`);
+                }
+            }
+            
+            // Step 5: Cleanup temporary files (temporarily disabled for debugging)
+            console.log(`[IP REPORT DEBUG] NOT cleaning up files for debugging - mergedFile: ${mergedFile}, outputFile: ${outputFile}`);
+            // await fs.unlink(mergedFile).catch(() => {});
+            // await fs.unlink(outputFile).catch(() => {});
+            return lines;
+            
+        } catch (error) {
+            console.error(`[IP REPORT DEBUG] Filter error:`, error.message);
+            console.error(`[IP REPORT DEBUG] Error stack:`, error.stack);
+            // Clean up on error
+            await fs.unlink(mergedFile).catch(() => {});
+            console.log(`[IP REPORT DEBUG] Returning empty array due to error`);
+            return [];
+        }
+    }
+
+    /**
+     * Extract timestamp from a log line
+     */
+    extractTimestampFromLogLine(logLine) {
+        if (!logLine) return null;
+        
+        // Match Apache log format: [16/Jul/2025:03:00:05 +0000]
+        const match = logLine.match(/\[(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})/);
+        if (!match) return null;
+        
+        const [, day, month, year, hour, minute, second] = match;
+        const monthMap = {
+            'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+            'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+        };
+        
+        const monthNum = monthMap[month];
+        if (!monthNum) return null;
+        
+        // Create date and return as epoch timestamp
+        const date = new Date(Date.UTC(parseInt(year), monthNum - 1, parseInt(day), parseInt(hour), parseInt(minute), parseInt(second)));
+        return Math.floor(date.getTime() / 1000);
+    }
+
+    /**
+     * Check if cached files can cover the requested timeframe
+     */
+    async checkCachedTimeframe(cacheDir, wallAgo, wallUntil) {
+        try {
+            const fs = await import('fs/promises');
+            const path = await import('path');
+            
+            // Get all cached .gz files
+            const files = await fs.readdir(cacheDir);
+            const logFiles = files.filter(f => f.endsWith('.gz'));
+            
+            if (logFiles.length === 0) {
+                return { canUseCached: false, files: [] };
+            }
+            
+            // For each cached file, check what timeframe it covers
+            const fileTimeframes = [];
+            for (const file of logFiles) {
+                const filePath = path.join(cacheDir, file);
+                const timeframe = await this.getFileTimeframe(filePath);
+                if (timeframe) {
+                    fileTimeframes.push({ file: filePath, ...timeframe });
+                }
+            }
+            
+            // Check if the combined cached files cover the requested timeframe
+            if (fileTimeframes.length === 0) {
+                return { canUseCached: false, files: [] };
+            }
+            
+            const minCachedTime = Math.min(...fileTimeframes.map(f => f.startTime));
+            const maxCachedTime = Math.max(...fileTimeframes.map(f => f.endTime));
+            
+            const canUseCached = wallAgo >= minCachedTime && wallUntil <= maxCachedTime;
+            
+            console.log(`[IP REPORT DEBUG] Cache check: requested ${wallAgo}-${wallUntil}, cached ${minCachedTime}-${maxCachedTime}, canUse: ${canUseCached}`);
+            
+            return {
+                canUseCached,
+                files: canUseCached ? fileTimeframes.map(f => f.file) : []
+            };
+            
+        } catch (error) {
+            console.log(`[IP REPORT DEBUG] Cache check error:`, error.message);
+            return { canUseCached: false, files: [] };
+        }
+    }
+    
+    /**
+     * Filter cached files to only include those that overlap with the requested timeframe
+     */
+    async filterRelevantFiles(files, wallAgo, wallUntil) {
+        const relevantFiles = [];
+        
+        for (const filePath of files) {
+            const timeframe = await this.getFileTimeframe(filePath);
+            if (timeframe) {
+                // Check if file overlaps with requested timeframe
+                const hasOverlap = !(timeframe.endTime < wallAgo || timeframe.startTime > wallUntil);
+                if (hasOverlap) {
+                    console.log(`[IP REPORT DEBUG] File ${filePath} overlaps: ${timeframe.startTime}-${timeframe.endTime} vs ${wallAgo}-${wallUntil}`);
+                    relevantFiles.push(filePath);
+                } else {
+                    console.log(`[IP REPORT DEBUG] File ${filePath} no overlap: ${timeframe.startTime}-${timeframe.endTime} vs ${wallAgo}-${wallUntil}`);
+                }
+            }
+        }
+        
+        return relevantFiles;
+    }
+
+    /**
+     * Get the timeframe covered by a log file by checking first and last lines
+     */
+    async getFileTimeframe(filePath) {
+        try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
+            
+            // Get first and last line timestamps
+            const firstCmd = `gzip -dc "${filePath}" | head -1`;
+            const lastCmd = `gzip -dc "${filePath}" | tail -1`;
+            
+            const [firstResult, lastResult] = await Promise.all([
+                execAsync(firstCmd, { timeout: 10000 }),
+                execAsync(lastCmd, { timeout: 10000 })
+            ]);
+            
+            const startTime = this.extractTimestampFromLogLine(firstResult.stdout.trim());
+            const endTime = this.extractTimestampFromLogLine(lastResult.stdout.trim());
+            
+            if (startTime && endTime) {
+                return { startTime, endTime };
+            }
+            
+            return null;
+        } catch (error) {
+            console.log(`[IP REPORT DEBUG] Error getting timeframe for ${filePath}:`, error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Clean up old cache files
+     */
+    async cleanupCacheFiles(cacheDir, maxAge) {
+        try {
+            const fs = await import('fs/promises');
+            const path = await import('path');
+            
+            const files = await fs.readdir(cacheDir);
+            const now = Date.now();
+            
+            for (const file of files) {
+                const filePath = path.join(cacheDir, file);
+                const stats = await fs.stat(filePath);
+                const age = now - stats.mtime.getTime();
+                
+                if (age > maxAge) {
+                    await fs.unlink(filePath);
+                    console.log(`[IP REPORT DEBUG] Cleaned up old cache file: ${filePath}`);
+                }
+            }
+        } catch (error) {
+            console.log(`[IP REPORT DEBUG] Cache cleanup error (non-critical):`, error.message);
+        }
+    }
+
+    /**
+     * Smart pre-filtering of log files based on file modification dates
+     */
+    preFilterLogFiles(fileListOutput, wallAgo, wallUntil) {
+        const lines = fileListOutput.split('\n').filter(line => line.trim());
+        const candidateFiles = [];
+        
+        // Convert epoch times to dates for comparison
+        const startDate = new Date(wallAgo * 1000);
+        const endDate = new Date(wallUntil * 1000);
+        
+        console.log(`[IP REPORT DEBUG] Looking for files between ${startDate.toISOString()} and ${endDate.toISOString()}`);
+        
+        // Parse file information with timestamps
+        for (const line of lines) {
+            // Parse ls -lah output: permissions, links, user, group, size, month, day, time/year, path
+            // Example: -rw-r--r-- 1 ykcmext77rk4s ykcmext77rk4s 8.5M Jul 22 13:40 /var/log/platform/ykcmext77rk4s/access.log
+            const match = line.match(/.*\s+([A-Za-z]{3})\s+(\d{1,2})\s+([\d:]+)\s+(\S+\/access\.log.*?)$/);
+            if (match) {
+                const [, monthStr, dayStr, timeStr, filePath] = match;
+                
+                const monthMap = {
+                    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+                    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+                };
+                
+                const currentYear = new Date().getFullYear();
+                const fileMonth = monthMap[monthStr];
+                const fileDay = parseInt(dayStr);
+                
+                if (fileMonth !== undefined) {
+                    // Parse time to determine if it's this year or last year
+                    let fileYear = currentYear;
+                    
+                    // If the file date is in the future relative to now, it's probably from last year
+                    const fileDate = new Date(fileYear, fileMonth, fileDay);
+                    const now = new Date();
+                    if (fileDate > now) {
+                        fileYear = currentYear - 1;
+                    }
+                    
+                    const finalFileDate = new Date(fileYear, fileMonth, fileDay);
+                    
+                    // Add buffer of 1 day on each side to catch edge cases
+                    const bufferMs = 24 * 60 * 60 * 1000; // 1 day
+                    const rangeStart = new Date(startDate.getTime() - bufferMs);
+                    const rangeEnd = new Date(endDate.getTime() + bufferMs);
+                    
+                    if (finalFileDate >= rangeStart && finalFileDate <= rangeEnd) {
+                        candidateFiles.push(filePath);
+                        console.log(`[IP REPORT DEBUG] Including file: ${filePath} (${finalFileDate.toDateString()})`);
+                    } else {
+                        console.log(`[IP REPORT DEBUG] Skipping file: ${filePath} (${finalFileDate.toDateString()}) outside range`);
+                    }
+                }
+            }
+        }
+        
+        // Always include the current access.log if no candidates found
+        if (candidateFiles.length === 0) {
+            const currentLogMatch = fileListOutput.match(/(\S+\/access\.log)$/m);
+            if (currentLogMatch) {
+                candidateFiles.push(currentLogMatch[1]);
+                console.log(`[IP REPORT DEBUG] No candidates found, including current log: ${currentLogMatch[1]}`);
+            }
+        }
+        
+        return candidateFiles;
+    }
+
+    /**
      * Parse log lines into structured data (no time filtering - done server-side)
      */
     parseLogLines(logs) {
         const parsedLogs = [];
+        
+        console.log(`[IP REPORT DEBUG] parseLogLines called with ${logs.length} lines`);
         
         for (const line of logs) {
             if (!line.trim()) continue;
@@ -394,6 +774,15 @@ EOF`;
                 this.logger.debug(`[IP REPORT] Error parsing log line: ${error.message}`);
                 continue;
             }
+        }
+        
+        console.log(`[IP REPORT DEBUG] parseLogLines returned ${parsedLogs.length} parsed entries`);
+        
+        // Debug first few lines if we have any
+        if (parsedLogs.length > 0) {
+            console.log(`[IP REPORT DEBUG] First parsed entry:`, parsedLogs[0]);
+        } else if (logs.length > 0) {
+            console.log(`[IP REPORT DEBUG] First raw line (failed to parse):`, logs[0]);
         }
         
         return parsedLogs;
@@ -474,7 +863,10 @@ EOF`;
         try {
             // Extract IP (first field)
             const ipMatch = line.match(/^([0-9.]+)/);
-            if (!ipMatch) return null;
+            if (!ipMatch) {
+                console.log(`[IP REPORT DEBUG] parseLogLine: No IP match for line: ${line.substring(0, 100)}`);
+                return null;
+            }
             const ip = ipMatch[1];
 
             // Extract timestamp [dd/Mon/yyyy:HH:mm:ss
@@ -488,8 +880,13 @@ EOF`;
                 };
                 const monthNum = monthMap[month];
                 if (monthNum !== undefined) {
+                    // Date constructor expects 0-based month, so monthNum is correct
                     timestamp = new Date(year, monthNum, day, hour, minute, second).getTime();
+                } else {
+                    console.log(`[IP REPORT DEBUG] parseLogLine: Invalid month '${month}' for line: ${line.substring(0, 100)}`);
                 }
+            } else {
+                console.log(`[IP REPORT DEBUG] parseLogLine: No timestamp match for line: ${line.substring(0, 100)}`);
             }
 
             // Extract HTTP status code
@@ -525,6 +922,7 @@ EOF`;
             };
 
         } catch (error) {
+            console.log(`[IP REPORT DEBUG] parseLogLine error: ${error.message} for line: ${line.substring(0, 100)}`);
             this.logger.debug(`[IP REPORT] Error parsing log line: ${error.message}`);
             return null;
         }
@@ -648,70 +1046,6 @@ EOF`;
     }
 
     /**
-     * Build time filter command that matches the working bash script exactly
-     */
-    buildTimeFilterCommand(options) {
-        const { timeframe = 60, from, to } = options;
-        
-        // Determine if we're using custom date range or timeframe
-        let sinceEpoch;
-        let untilEpoch = null;
-        
-        if (from && to) {
-            // Custom date range provided
-            sinceEpoch = Math.floor(new Date(from).getTime() / 1000);
-            untilEpoch = Math.floor(new Date(to).getTime() / 1000);
-            console.log(`[IP REPORT DEBUG] Using custom date range: ${from} (${sinceEpoch}) to ${to} (${untilEpoch})`);
-        } else if (timeframe === 0) {
-            // No time filtering - get all logs including compressed ones
-            return `for f in /var/log/platform/*/access.log*; do if [[ "$f" == *.gz ]]; then gzip -cd "$f"; else cat "$f"; fi; done`;
-        } else {
-            // Use timeframe (minutes from now)
-            const currentEpoch = Math.floor(Date.now() / 1000);
-            sinceEpoch = currentEpoch - (timeframe * 60);
-            console.log(`[IP REPORT DEBUG] Using timeframe: ${timeframe} minutes from ${sinceEpoch}`);
-        }
-        
-        // Build gawk command with date filtering for both .log and .gz files
-        let gawkCondition;
-        if (untilEpoch) {
-            // Custom range: from sinceEpoch to untilEpoch
-            gawkCondition = `if (ts >= ${sinceEpoch} && ts <= ${untilEpoch}) print $0`;
-        } else {
-            // Timeframe: from sinceEpoch onwards
-            gawkCondition = `if (ts >= ${sinceEpoch}) print $0`;
-        }
-        
-        // Use a simpler approach - let's use grep with date filtering instead of complex awk
-        // This avoids the shell escaping nightmare
-        const currentDate = new Date();
-        const sinceDate = new Date(sinceEpoch * 1000);
-        
-        // For recent logs (within 24 hours), we can use a simpler grep approach
-        if (currentDate - sinceDate < 24 * 60 * 60 * 1000) {
-            // Build a grep pattern for the time range
-            const patterns = [];
-            const tempDate = new Date(sinceDate);
-            
-            while (tempDate <= currentDate) {
-                const day = String(tempDate.getDate()).padStart(2, '0');
-                const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][tempDate.getMonth()];
-                const year = tempDate.getFullYear();
-                const hour = String(tempDate.getHours()).padStart(2, '0');
-                
-                patterns.push(`\\[${day}/${month}/${year}:${hour}:`);
-                tempDate.setHours(tempDate.getHours() + 1);
-            }
-            
-            const grepPattern = patterns.join('\\|');
-            return `for f in /var/log/platform/*/access.log*; do if [[ "$f" == *.gz ]]; then gzip -cd "$f" | grep -E "${grepPattern}"; else grep -E "${grepPattern}" "$f" 2>/dev/null || true; fi; done`;
-        }
-        
-        // For longer time ranges or all logs, just cat everything
-        return `for f in /var/log/platform/*/access.log*; do if [[ "$f" == *.gz ]]; then gzip -cd "$f"; else cat "$f"; fi; done`;
-    }
-
-    /**
      * Format output exactly like bash script
      */
     formatOutputLikeBashScript(topIpData) {
@@ -767,4 +1101,4 @@ EOF`;
     }
 }
 
-export const ipReportService = new IpReportService(); 
+export const ipReportService = new IpReportService();
