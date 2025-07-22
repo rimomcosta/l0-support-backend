@@ -93,6 +93,12 @@ class IpReportService {
             const topIpData = this.getTopIps(aggregatedData, topIps);
             console.log('[IP REPORT DEBUG] Top IP data count:', topIpData.length);
             
+            // Step 6: Filter raw logs to only include logs from top IPs
+            console.log('[IP REPORT DEBUG] Filtering raw logs to only include top IPs...');
+            const topIpsSet = new Set(topIpData.map(ipData => ipData.ip));
+            const filteredRawLogs = parsedLogs.filter(log => topIpsSet.has(log.ip));
+            console.log('[IP REPORT DEBUG] Filtered raw logs count:', filteredRawLogs.length);
+            
             const processingTime = Date.now() - startTime;
             this.logger.info(`[IP REPORT] Report generated successfully in ${processingTime}ms`);
 
@@ -113,7 +119,7 @@ class IpReportService {
                     },
                     ips: topIpData,
                     rawOutput: formattedOutput, // Raw format like bash script
-                    rawLogs: parsedLogs, // Include raw parsed logs for time-series charts
+                    rawLogs: filteredRawLogs, // Only include logs from top IPs
                     reportId: `${projectId}-${environment}-${Date.now()}` // For caching
                 }
             };
