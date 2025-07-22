@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node src/services/server.js",
-    "dev": "nodemon src/services/server.js"
+    "dev": "nodemon src/services/server.js",
+    "start:high-memory": "node --max-old-space-size=8192 --expose-gc src/services/server.js",
+    "dev:high-memory": "nodemon --max-old-space-size=8192 --expose-gc src/services/server.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
