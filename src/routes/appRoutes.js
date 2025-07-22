@@ -1,6 +1,6 @@
 // src/routes/appRoutes.js
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, conditionalAuth } from '../middleware/auth.js';
 import * as environment from '../api/app/environment.js';
 import * as nodes from '../api/app/nodes.js';
 import * as sshCommands from '../api/app/sshCommands.js';
@@ -26,7 +26,7 @@ router.use('/', dashboardLayoutRoutes);
 router.use('/', aiSettingsRoutes);
 
 router.get('/:projectId/environments', requireAuth, environment.getEnvironments);
-router.get('/:projectId/:environment/nodes', requireAuth, nodes.getNodes);
+router.get('/:projectId/:environment/nodes', conditionalAuth, nodes.getNodes);
 router.post('/:projectId/:environment/open-tunnel', requireAuth, openTunnel);
 router.post('/:projectId/:environment/sshcommand', requireAuth, sshCommands.runCommands);
 router.post('/:projectId/:environment/sqlquery', requireAuth, sqlCommands.runQueries);

@@ -337,6 +337,22 @@ export class WebSocketService {
             });
         }
     }
+
+    static sendToUser(userId, message) {
+        if (!this.wss) {
+            logger.error('WebSocket server not initialized. Cannot send message to user.');
+            return;
+        }
+
+        this.wss.clients.forEach(client => {
+            if (client.userID === userId && client.readyState === 1) { // WebSocket.OPEN
+                client.send(JSON.stringify({
+                    ...message,
+                    timestamp: new Date().toISOString()
+                }));
+            }
+        });
+    }
 }
 
 
