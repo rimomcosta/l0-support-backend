@@ -56,6 +56,15 @@ class IpReportService {
             
             console.log('[IP REPORT DEBUG] Parsed options:', { timeframe, topIps, from, to });
 
+            // Validate custom date range if provided
+            if (from && to) {
+                const validation = this.validateCustomDateRange(from, to);
+                if (!validation.isValid) {
+                    throw new Error(`Invalid custom date range: ${validation.message}`);
+                }
+                console.log('[IP REPORT DEBUG] Custom date range validated successfully');
+            }
+            
             // Step 1: Get all nodes for the environment
             this.logger.info(`[IP REPORT] Getting nodes for ${projectId}/${environment}`);
             console.log('[IP REPORT DEBUG] About to get nodes...');
@@ -1249,6 +1258,36 @@ END {
                 description: 'All available logs'
             };
         }
+    }
+
+    /**
+     * Validate custom date range
+     */
+    validateCustomDateRange(from, to) {
+        if (!from || !to) {
+            return { isValid: false, message: 'Both from and to dates are required' };
+        }
+        
+        const fromDate = new Date(from);
+        const toDate = new Date(to);
+        
+        if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+            return { isValid: false, message: 'Invalid date format' };
+        }
+        
+        if (toDate <= fromDate) {
+            return { isValid: false, message: 'End date must be after start date' };
+        }
+        
+        const maxHours = 72;
+        const maxMs = maxHours * 60 * 60 * 1000;
+        const timeDiff = toDate.getTime() - fromDate.getTime();
+        
+        if (timeDiff > maxMs) {
+            return { isValid: false, message: `Maximum range is ${maxHours} hours` };
+        }
+        
+        return { isValid: true, message: '' };
     }
 
     /**
