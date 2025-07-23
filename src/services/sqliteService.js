@@ -34,6 +34,15 @@ export class SQLiteService {
         // Enable WAL mode for better concurrency
         await this.runQuery(db, 'PRAGMA journal_mode = WAL');
         
+        // Maximum performance optimizations for parallel processing
+        await this.runQuery(db, 'PRAGMA synchronous = OFF'); // Fastest writes
+        await this.runQuery(db, 'PRAGMA cache_size = 20000'); // Very large cache
+        await this.runQuery(db, 'PRAGMA temp_store = MEMORY'); // Use memory for temp storage
+        await this.runQuery(db, 'PRAGMA mmap_size = 536870912'); // 512MB memory mapping
+        await this.runQuery(db, 'PRAGMA page_size = 65536'); // Larger page size
+        await this.runQuery(db, 'PRAGMA locking_mode = EXCLUSIVE'); // Exclusive locking for better performance
+        await this.runQuery(db, 'PRAGMA journal_mode = DELETE'); // Faster than WAL for bulk inserts
+        
         // Create tables if they don't exist
         await this.initializeTables(db);
         
@@ -144,48 +153,61 @@ export class SQLiteService {
         }
 
         const db = await this.getDatabase(projectId, environment);
-        const batchSize = 1000;
+        const batchSize = 2500; // Maximum batch size for optimal performance
         let totalInserted = 0;
 
         console.log(`[SQLITE DEBUG] Inserting ${logs.length} logs in batches of ${batchSize}`);
 
-        for (let i = 0; i < logs.length; i += batchSize) {
-            const batch = logs.slice(i, i + batchSize);
-            const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
-            
-            const sql = `
-                INSERT OR IGNORE INTO access_logs 
-                (project_id, environment, ip, timestamp, status_code, method, url, user_agent, original_line, file_source)
-                VALUES ${placeholders}
-            `;
+        try {
+            // Start transaction for better performance
+            await this.runQuery(db, 'BEGIN TRANSACTION');
 
-            const params = batch.flatMap(log => [
-                projectId,
-                environment,
-                log.ip,
-                log.timestamp,
-                log.status || null,
-                log.method || null,
-                log.url || null,
-                log.userAgent || null,
-                log.originalLine || null,
-                log.fileSource || null
-            ]);
+            for (let i = 0; i < logs.length; i += batchSize) {
+                const batch = logs.slice(i, i + batchSize);
+                const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                
+                const sql = `
+                    INSERT OR IGNORE INTO access_logs 
+                    (project_id, environment, ip, timestamp, status_code, method, url, user_agent, original_line, file_source)
+                    VALUES ${placeholders}
+                `;
 
-            try {
+                const params = batch.flatMap(log => [
+                    projectId,
+                    environment,
+                    log.ip,
+                    log.timestamp,
+                    log.status || null,
+                    log.method || null,
+                    log.url || null,
+                    log.userAgent || null,
+                    log.originalLine || null,
+                    log.fileSource || null
+                ]);
+
                 const affected = await this.runQueryAffected(db, sql, params);
                 totalInserted += affected;
                 
                 if (i % 10000 === 0) {
                     console.log(`[SQLITE DEBUG] Inserted ${totalInserted} logs so far (${Math.round((i / logs.length) * 100)}%)`);
                 }
-            } catch (error) {
-                console.error('[SQLITE ERROR] Batch insert failed:', error);
-                throw error;
             }
+
+            // Commit transaction
+            await this.runQuery(db, 'COMMIT');
+            console.log(`[SQLITE DEBUG] Total logs inserted: ${totalInserted} (${logs.length} attempted)`);
+            
+        } catch (error) {
+            // Rollback on error
+            try {
+                await this.runQuery(db, 'ROLLBACK');
+            } catch (rollbackError) {
+                console.error('[SQLITE ERROR] Rollback failed:', rollbackError);
+            }
+            console.error('[SQLITE ERROR] Batch insert failed:', error);
+            throw error;
         }
 
-        console.log(`[SQLITE DEBUG] Total logs inserted: ${totalInserted} (${logs.length} attempted)`);
         return totalInserted;
     }
 

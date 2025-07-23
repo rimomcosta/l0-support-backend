@@ -251,15 +251,18 @@ export class IpReportService {
             const filesToDownload = await this.getRelevantFiles(nodes, startTime, endTime, isCustomTimeRange);
             console.log('[IP REPORT DEBUG] Files to download:', filesToDownload.length);
 
-            // Step 2: Download and process files
+            // Step 2: Process files sequentially to avoid database locking issues
+            console.log(`[IP REPORT DEBUG] Processing ${filesToDownload.length} files sequentially to avoid database conflicts`);
+            
             let totalLogsInserted = 0;
             let successfulNodes = 0;
 
+            // Process files sequentially but with optimized database operations
             for (let i = 0; i < filesToDownload.length; i++) {
                 const fileInfo = filesToDownload[i];
                 console.log(`[IP REPORT DEBUG] Processing file ${i + 1}/${filesToDownload.length}: ${fileInfo.filePath} from ${fileInfo.nodeNumber}`);
 
-                this.sendProgress(wsService, userId, `Downloading ${fileInfo.fileName} from node ${fileInfo.nodeNumber}...`);
+                this.sendProgress(wsService, userId, `Processing ${fileInfo.fileName} from node ${fileInfo.nodeNumber}... (${i + 1}/${filesToDownload.length})`);
 
                 try {
                     // Download file
@@ -271,6 +274,10 @@ export class IpReportService {
                     
                     console.log(`[IP REPORT DEBUG] Inserted ${logsInserted} logs from ${fileInfo.fileName}`);
                     successfulNodes++;
+                    
+                    // Update progress
+                    const progress = Math.round(((i + 1) / filesToDownload.length) * 100);
+                    this.sendProgress(wsService, userId, `Processed ${i + 1}/${filesToDownload.length} files (${totalLogsInserted.toLocaleString()} logs)`);
                     
                 } catch (fileError) {
                     console.error(`[IP REPORT DEBUG] Error processing file ${fileInfo.filePath}:`, fileError.message);
@@ -657,7 +664,8 @@ export class IpReportService {
                 };
                 const monthNum = monthMap[month];
                 if (monthNum !== undefined) {
-                    timestamp = new Date(year, monthNum, day, hour, minute, second).getTime();
+                    // Create date in UTC to match the log timestamps
+                    timestamp = new Date(Date.UTC(year, monthNum, day, hour, minute, second)).getTime();
                 }
             }
             
