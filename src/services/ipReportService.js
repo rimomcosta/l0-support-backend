@@ -80,8 +80,11 @@ export class IpReportService {
             // Step 2: Calculate time range
             let startTime, endTime;
             if (from && to) {
-                startTime = Math.floor(new Date(from).getTime() / 1000);
-                endTime = Math.floor(new Date(to).getTime() / 1000);
+                // Parse dates as UTC to avoid timezone conversion issues
+                // The frontend sends dates in format "2025-07-16T00:00"
+                startTime = Math.floor(new Date(from + 'Z').getTime() / 1000);
+                endTime = Math.floor(new Date(to + 'Z').getTime() / 1000);
+                console.log(`[IP REPORT DEBUG] Parsed dates as UTC: from=${from}Z -> ${new Date(startTime * 1000).toISOString()}, to=${to}Z -> ${new Date(endTime * 1000).toISOString()}`);
             } else {
                 // For "past X hours" - calculate from most recent log, not current time
                 const dbStats = await sqliteService.getDatabaseStats(projectId, environment);
@@ -120,7 +123,8 @@ export class IpReportService {
             // Step 4: Collect and store data if needed
             if (needsDataCollection) {
                 this.sendProgress(wsService, userId, 'Collecting access logs from servers...');
-                await this.collectAndStoreLogs(projectId, environment, nodes, apiToken, userId, wsService, { startTime, endTime });
+                const isCustomTimeRange = !!(from && to);
+                await this.collectAndStoreLogs(projectId, environment, nodes, apiToken, userId, wsService, { startTime, endTime, isCustomTimeRange });
             }
 
             // Step 5: Get top IPs from SQLite
@@ -238,13 +242,13 @@ export class IpReportService {
      */
     async collectAndStoreLogs(projectId, environment, nodes, apiToken, userId, wsService = null, options = {}) {
         try {
-            const { startTime, endTime } = options;
+            const { startTime, endTime, isCustomTimeRange = false } = options;
             
             console.log('[IP REPORT DEBUG] Starting log collection from', nodes.length, 'nodes');
-            console.log('[IP REPORT DEBUG] Time range:', { startTime, endTime });
+            console.log('[IP REPORT DEBUG] Time range:', { startTime, endTime, isCustomTimeRange });
             
             // Step 1: Determine which files to download based on time range
-            const filesToDownload = await this.getRelevantFiles(nodes, startTime, endTime);
+            const filesToDownload = await this.getRelevantFiles(nodes, startTime, endTime, isCustomTimeRange);
             console.log('[IP REPORT DEBUG] Files to download:', filesToDownload.length);
 
             // Step 2: Download and process files
@@ -288,7 +292,7 @@ export class IpReportService {
     /**
      * Get relevant files based on time range
      */
-    async getRelevantFiles(nodes, startTime, endTime) {
+    async getRelevantFiles(nodes, startTime, endTime, isCustomTimeRange = false) {
         const filesToDownload = [];
         
         for (const sshConnection of nodes) {
@@ -301,7 +305,7 @@ export class IpReportService {
                 const { stdout } = await execAsync(fileListCommand, { timeout: 30000 });
                 
                 // Parse file list and filter by relevance
-                const relevantFiles = this.parseFileList(stdout, startTime, endTime);
+                const relevantFiles = this.parseFileList(stdout, startTime, endTime, isCustomTimeRange);
                 
                 for (const fileInfo of relevantFiles) {
                     filesToDownload.push({
@@ -321,13 +325,27 @@ export class IpReportService {
         }
 
         console.log(`[IP REPORT DEBUG] Found ${filesToDownload.length} relevant files to download`);
+        
+        // Debug: Show which files are being downloaded from which nodes
+        const filesByNode = {};
+        for (const file of filesToDownload) {
+            if (!filesByNode[file.nodeNumber]) {
+                filesByNode[file.nodeNumber] = [];
+            }
+            filesByNode[file.nodeNumber].push(file.fileName);
+        }
+        
+        for (const [nodeNumber, files] of Object.entries(filesByNode)) {
+            console.log(`[IP REPORT DEBUG] Node ${nodeNumber} files: ${files.join(', ')}`);
+        }
+        
         return filesToDownload;
     }
 
     /**
      * Parse file list and filter by time relevance
      */
-    parseFileList(fileListOutput, startTime, endTime) {
+    parseFileList(fileListOutput, startTime, endTime, isCustomTimeRange = false) {
         const lines = fileListOutput.split('\n').filter(line => line.trim());
         const relevantFiles = [];
         
@@ -369,7 +387,7 @@ export class IpReportService {
                     const fileDate = new Date(year, month, day, hour, minute);
                     
                     // Check if file is relevant to our time range
-                    const isRelevant = this.isFileRelevant(fileDate, startDate, endDate, filePath);
+                    const isRelevant = this.isFileRelevant(fileDate, startDate, endDate, filePath, isCustomTimeRange);
                     
                     if (isRelevant) {
                         relevantFiles.push({
@@ -389,26 +407,107 @@ export class IpReportService {
     /**
      * Check if a file is relevant to the time range
      */
-    isFileRelevant(fileDate, startDate, endDate, filePath) {
+    isFileRelevant(fileDate, startDate, endDate, filePath, isCustomTimeRange = false) {
         // Calculate the time range duration
         const timeRangeDuration = endDate.getTime() - startDate.getTime();
         const timeRangeHours = timeRangeDuration / (1000 * 60 * 60);
         
-        console.log(`[IP REPORT DEBUG] Checking file relevance for ${filePath}, timeRange: ${timeRangeHours} hours`);
+                    console.log(`[IP REPORT DEBUG] Checking file relevance for ${filePath}, timeRange: ${timeRangeHours} hours, isCustomTimeRange: ${isCustomTimeRange}`);
+            console.log(`[IP REPORT DEBUG] Requested time range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
         
-        // For past 5, 10, 15, 30, 45, 60 minutes and past 1, 3, 6, 12 hours: only access.log
+        // Check if it's an access log file first
+        const isAccessLog = filePath.includes('access.log');
+        if (!isAccessLog) {
+            console.log(`[IP REPORT DEBUG] Not an access log file: ${filePath}`);
+            return false;
+        }
+        
+        // For custom time ranges: use date-based logic regardless of duration
+        if (isCustomTimeRange) {
+            // For custom time ranges, only include current access.log if the range extends to recent time
+            // (within the last hour from current time)
+            if (filePath.endsWith('access.log')) {
+                const currentTime = Date.now();
+                const endTimeMs = endDate.getTime();
+                const oneHourMs = 60 * 60 * 1000;
+                const isRecentRange = (currentTime - endTimeMs) <= oneHourMs;
+                
+                if (isRecentRange) {
+                    console.log(`[IP REPORT DEBUG] Custom time range: ${filePath} relevant: true (current log, recent range)`);
+                    return true;
+                } else {
+                    console.log(`[IP REPORT DEBUG] Custom time range: ${filePath} relevant: false (current log, not recent range)`);
+                    return false;
+                }
+            }
+            
+            // For .gz files, check if the file creation date is relevant to the requested time range
+            const fileDateMs = fileDate.getTime();
+            const startDateMs = startDate.getTime();
+            const endDateMs = endDate.getTime();
+            
+            // Convert to UTC dates for day comparison (avoid timezone issues)
+            const fileDay = new Date(fileDateMs).toISOString().split('T')[0];
+            const startDay = new Date(startDateMs).toISOString().split('T')[0];
+            const endDay = new Date(endDateMs).toISOString().split('T')[0];
+            
+            console.log(`[IP REPORT DEBUG] Date comparison details: fileDateMs=${fileDateMs}, startDateMs=${startDateMs}, endDateMs=${endDateMs}`);
+            
+            // For very short ranges (2 hours or less), only include files from the start day
+            // For longer ranges, include both start and end days
+            let isSameDay = false;
+            if (timeRangeHours <= 2) {
+                // For 2-hour ranges, only include files from the start day
+                isSameDay = fileDay === startDay;
+                console.log(`[IP REPORT DEBUG] 2-hour range: fileDay=${fileDay}, startDay=${startDay}, endDay=${endDay}, isSameDay=${isSameDay}`);
+            } else {
+                // For longer ranges, include files from both start and end days
+                isSameDay = fileDay === startDay || fileDay === endDay;
+            }
+            
+            // Only include day before for ranges longer than 6 hours
+            let isDayBefore = false;
+            if (timeRangeHours > 6) {
+                isDayBefore = fileDay === new Date(startDateMs - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            }
+            
+            const relevant = isSameDay || isDayBefore;
+            const dayBefore = new Date(startDateMs - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            console.log(`[IP REPORT DEBUG] Custom time range: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, dayBefore: ${dayBefore}, isSameDay: ${isSameDay}, isDayBefore: ${isDayBefore}, relevant: ${relevant}`);
+            return relevant;
+        }
+        
+        // For "past X hours" timeframes: apply the 12-hour rule
+        // For past 5, 10, 15, 30, 45, 60 minutes and past 1, 3, 6, 12 hours: 
+        // Include access.log and any .gz files that might contain data for the requested time range
         if (timeRangeHours <= 12) {
-            const relevant = filePath.endsWith('access.log');
-            console.log(`[IP REPORT DEBUG] <= 12 hours: ${filePath} relevant: ${relevant}`);
+            // Always include current access.log
+            if (filePath.endsWith('access.log')) {
+                console.log(`[IP REPORT DEBUG] <= 12 hours: ${filePath} relevant: true (current log)`);
+                return true;
+            }
+            
+            // For .gz files, check if the file creation date is relevant to the requested time range
+            const fileDateMs = fileDate.getTime();
+            const startDateMs = startDate.getTime();
+            const endDateMs = endDate.getTime();
+            
+            // Convert to UTC dates for day comparison (avoid timezone issues)
+            const fileDay = new Date(fileDateMs).toISOString().split('T')[0];
+            const startDay = new Date(startDateMs).toISOString().split('T')[0];
+            const endDay = new Date(endDateMs).toISOString().split('T')[0];
+            
+            // Check if file was created on the same day as the range
+            // For short timeframes, we only include files from the exact days of the range
+            const isSameDay = fileDay === startDay || fileDay === endDay;
+            
+            const relevant = isSameDay;
+            console.log(`[IP REPORT DEBUG] <= 12 hours: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, relevant: ${relevant}`);
             return relevant;
         }
         
         // For past 24 hours: access.log, access.log.1.gz, and any .gz files that might contain data
         if (timeRangeHours <= 24) {
-            const isAccessLog = filePath.includes('access.log');
-            if (!isAccessLog) {
-                return false;
-            }
             
             // Always include access.log and access.log.1.gz
             if (filePath.endsWith('access.log') || filePath.endsWith('access.log.1.gz')) {
@@ -427,11 +526,10 @@ export class IpReportService {
             const startDay = new Date(startDateMs).toISOString().split('T')[0];
             const endDay = new Date(endDateMs).toISOString().split('T')[0];
             
-            // Check if file was created on the same day as the range or the day before
+            // Check if file was created on the same day as the range
             const isSameDay = fileDay === startDay || fileDay === endDay;
-            const isDayBefore = new Date(fileDateMs + 24 * 60 * 60 * 1000).toISOString().split('T')[0] === startDay;
             
-            const relevant = isSameDay || isDayBefore;
+            const relevant = isSameDay;
             
             console.log(`[IP REPORT DEBUG] <= 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, relevant: ${relevant}`);
             return relevant;
@@ -439,11 +537,6 @@ export class IpReportService {
         
         // For longer ranges: smart filtering of .gz files
         // Check if file date is within or close to the requested time range
-        const isAccessLog = filePath.includes('access.log');
-        if (!isAccessLog) {
-            console.log(`[IP REPORT DEBUG] Not an access log file: ${filePath}`);
-            return false;
-        }
         
         // For .gz files, be more lenient with date matching
         // A file created on day X might contain data from day X-1 or X+1
