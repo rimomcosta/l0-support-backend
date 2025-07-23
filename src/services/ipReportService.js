@@ -80,8 +80,14 @@ export class IpReportService {
             // Step 2: Calculate time range
             let startTime, endTime;
             if (from && to) {
+                console.log('[CUSTOM DATE RANGE DEBUG] Processing custom date range:', { from, to });
                 startTime = Math.floor(new Date(from).getTime() / 1000);
                 endTime = Math.floor(new Date(to).getTime() / 1000);
+                console.log('[CUSTOM DATE RANGE DEBUG] Converted to timestamps:', { startTime, endTime });
+                console.log('[CUSTOM DATE RANGE DEBUG] Converted to dates:', { 
+                    startDate: new Date(startTime * 1000), 
+                    endDate: new Date(endTime * 1000) 
+                });
             } else {
                 // For "past X hours" - calculate from most recent log, not current time
                 const dbStats = await sqliteService.getDatabaseStats(projectId, environment);

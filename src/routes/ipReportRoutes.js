@@ -61,11 +61,14 @@ router.post('/generate', conditionalAuth, async (req, res) => {
 
         // Validate and sanitize options
         const sanitizedOptions = {};
+        console.log('[CUSTOM DATE RANGE DEBUG] Received options:', options);
         if (options.from) {
             sanitizedOptions.from = validateInput(options.from, 'timestamp');
+            console.log('[CUSTOM DATE RANGE DEBUG] Sanitized from:', sanitizedOptions.from);
         }
         if (options.to) {
             sanitizedOptions.to = validateInput(options.to, 'timestamp');
+            console.log('[CUSTOM DATE RANGE DEBUG] Sanitized to:', sanitizedOptions.to);
         }
         if (options.timeframe !== undefined) {
             const timeframe = parseInt(options.timeframe);
