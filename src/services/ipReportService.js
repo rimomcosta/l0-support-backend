@@ -5,6 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
+import { gunzipSync } from 'zlib';
 
 const execAsync = promisify(exec);
 
@@ -465,9 +466,8 @@ export class IpReportService {
             let fileContent;
             if (filePath.endsWith('.gz')) {
                 // Decompress gzipped file
-                const zlib = require('zlib');
                 const compressedData = await fs.readFile(filePath);
-                fileContent = zlib.gunzipSync(compressedData).toString('utf8');
+                fileContent = gunzipSync(compressedData).toString('utf8');
                 console.log(`[IP REPORT DEBUG] Decompressed gzipped file: ${filePath}`);
         } else {
                 // Read regular file

@@ -5,6 +5,7 @@ import { logger } from '../services/logger.js';
 import { logActivity } from '../services/activityLogger.js';
 import { conditionalAuth } from '../middleware/auth.js';
 import { WebSocketService } from '../services/webSocketService.js';
+import fs from 'fs';
 
 const router = express.Router();
 
@@ -538,6 +539,87 @@ router.get('/database-stats', conditionalAuth, async (req, res) => {
             error: 'Failed to get database statistics',
             details: error.message,
             timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * DELETE /api/v1/ip-report/cleanup
+ * Cleanup database and clear cached data for a project environment
+ */
+router.delete('/cleanup', conditionalAuth, async (req, res) => {
+    try {
+        console.log('[CLEANUP DEBUG] Request received');
+        console.log('[CLEANUP DEBUG] Query params:', req.query);
+        
+        const { projectId, environment } = req.query;
+        const userId = req.session?.user?.id || 'anonymous';
+
+        // Validate required parameters
+        if (!projectId || !environment) {
+            console.log('[CLEANUP DEBUG] Missing required parameters');
+            return res.status(400).json({
+                error: 'projectId and environment are required'
+            });
+        }
+
+        // Validate and sanitize inputs
+        const sanitizedProjectId = validateInput(projectId, 'projectId');
+        const sanitizedEnvironment = validateInput(environment, 'environment');
+
+        if (!sanitizedProjectId || !sanitizedEnvironment) {
+            return res.status(400).json({
+                error: 'Invalid input parameters'
+            });
+        }
+
+        logger.info(`[IP REPORT API] User ${userId} requested cleanup for ${sanitizedProjectId}/${sanitizedEnvironment}`);
+
+        // Delete all SQLite database files (main db, shared memory, write-ahead log)
+        const dbBasePath = `/tmp/access_logs-${sanitizedProjectId}-${sanitizedEnvironment}`;
+        const dbFiles = [
+            `${dbBasePath}.db`,
+            `${dbBasePath}.db-shm`,
+            `${dbBasePath}.db-wal`
+        ];
+        
+        let deletedFiles = [];
+        for (const filePath of dbFiles) {
+            if (fs.existsSync(filePath)) {
+                try {
+                    fs.unlinkSync(filePath);
+                    deletedFiles.push(filePath);
+                    console.log(`[CLEANUP DEBUG] Deleted file: ${filePath}`);
+                } catch (error) {
+                    console.log(`[CLEANUP DEBUG] Failed to delete file: ${filePath}`, error.message);
+                }
+            } else {
+                console.log(`[CLEANUP DEBUG] File not found: ${filePath}`);
+            }
+        }
+        
+        console.log(`[CLEANUP DEBUG] Total files deleted: ${deletedFiles.length}`);
+
+        // Close database connection if it exists
+        await sqliteService.closeDatabase(sanitizedProjectId, sanitizedEnvironment);
+
+        res.json({
+            success: true,
+            message: 'Database and cached data cleared successfully',
+            data: {
+                projectId: sanitizedProjectId,
+                environment: sanitizedEnvironment,
+                deletedFiles: deletedFiles,
+                totalDeleted: deletedFiles.length
+            }
+        });
+
+    } catch (error) {
+        console.error('[CLEANUP DEBUG] Error:', error);
+        logger.error(`[IP REPORT API] Error during cleanup:`, error);
+        res.status(500).json({
+            error: 'Failed to cleanup database',
+            details: error.message
         });
     }
 });

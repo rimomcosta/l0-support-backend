@@ -223,6 +223,9 @@ export class SQLiteService {
     async getTopIps(projectId, environment, limit = 20, startTime = null, endTime = null) {
         const db = await this.getDatabase(projectId, environment);
         
+        // Force a checkpoint to ensure we see the latest data
+        await this.runQuery(db, 'PRAGMA wal_checkpoint(FULL)');
+        
         let sql = `
             SELECT 
                 ip,
@@ -561,6 +564,9 @@ export class SQLiteService {
      */
     async getDatabaseStats(projectId, environment) {
         const db = await this.getDatabase(projectId, environment);
+        
+        // Force a checkpoint to ensure we see the latest data
+        await this.runQuery(db, 'PRAGMA wal_checkpoint(FULL)');
         
         const stats = await this.runQuerySingle(db, `
             SELECT 
