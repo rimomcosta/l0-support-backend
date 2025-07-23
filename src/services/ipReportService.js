@@ -25,12 +25,20 @@ export class IpReportService {
      * Send progress updates via WebSocket
      */
     sendProgress(wsService, userId, message) {
+        console.log('[PROGRESS DEBUG] Attempting to send progress:', { message, userId, hasWsService: !!wsService });
         if (wsService && userId) {
-            wsService.sendToUser(userId, {
-                type: 'ip_report_progress',
-                message,
+            try {
+                wsService.sendToUser(userId, {
+                    type: 'ip_report_progress',
+                    message,
                     timestamp: new Date().toISOString()
-            });
+                });
+                console.log('[PROGRESS DEBUG] Progress message sent successfully');
+            } catch (error) {
+                console.error('[PROGRESS DEBUG] Failed to send progress message:', error);
+            }
+        } else {
+            console.log('[PROGRESS DEBUG] Cannot send progress - missing wsService or userId:', { hasWsService: !!wsService, userId });
         }
     }
 
@@ -179,11 +187,31 @@ export class IpReportService {
             };
 
             console.log('[IP REPORT DEBUG] Returning response with', topIpsData.length, 'IPs and', timeSeriesData.length, 'time buckets');
+            
+            // Send completion message via WebSocket
+            if (wsService && userId) {
+                wsService.sendToUser(userId, {
+                    type: 'ip_report_complete',
+                    data: responseData,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
             return response;
 
         } catch (error) {
             console.error('[IP REPORT ERROR] Error generating report:', error);
             this.logger.error(`[IP REPORT] Error generating report:`, error);
+            
+            // Send error message via WebSocket
+            if (wsService && userId) {
+                wsService.sendToUser(userId, {
+                    type: 'ip_report_error',
+                    error: error.message,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
             throw error;
         }
     }
@@ -269,7 +297,7 @@ export class IpReportService {
                     const localPath = await this.downloadFile(fileInfo.sshConnection, fileInfo.filePath, projectId, environment);
                     
                     // Process and store logs
-                    const logsInserted = await this.processAndStoreFile(localPath, projectId, environment, fileInfo.fileName);
+                    const logsInserted = await this.processAndStoreFile(localPath, projectId, environment, fileInfo.fileName, fileInfo.nodeNumber);
                     totalLogsInserted += logsInserted;
                     
                     console.log(`[IP REPORT DEBUG] Inserted ${logsInserted} logs from ${fileInfo.fileName}`);
@@ -461,15 +489,15 @@ export class IpReportService {
             console.log(`[IP REPORT DEBUG] Date comparison details: fileDateMs=${fileDateMs}, startDateMs=${startDateMs}, endDateMs=${endDateMs}`);
             
             // For very short ranges (2 hours or less), only include files from the start day
-            // For longer ranges, include both start and end days
-            let isSameDay = false;
+            // For longer ranges, include all days within the range
+            let isWithinRange = false;
             if (timeRangeHours <= 2) {
                 // For 2-hour ranges, only include files from the start day
-                isSameDay = fileDay === startDay;
-                console.log(`[IP REPORT DEBUG] 2-hour range: fileDay=${fileDay}, startDay=${startDay}, endDay=${endDay}, isSameDay=${isSameDay}`);
+                isWithinRange = fileDay === startDay;
+                console.log(`[IP REPORT DEBUG] 2-hour range: fileDay=${fileDay}, startDay=${startDay}, endDay=${endDay}, isWithinRange=${isWithinRange}`);
             } else {
-                // For longer ranges, include files from both start and end days
-                isSameDay = fileDay === startDay || fileDay === endDay;
+                // For longer ranges, include files from all days within the range
+                isWithinRange = fileDay >= startDay && fileDay <= endDay;
             }
             
             // Only include day before for ranges longer than 6 hours
@@ -478,9 +506,9 @@ export class IpReportService {
                 isDayBefore = fileDay === new Date(startDateMs - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             }
             
-            const relevant = isSameDay || isDayBefore;
+            const relevant = isWithinRange || isDayBefore;
             const dayBefore = new Date(startDateMs - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-            console.log(`[IP REPORT DEBUG] Custom time range: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, dayBefore: ${dayBefore}, isSameDay: ${isSameDay}, isDayBefore: ${isDayBefore}, relevant: ${relevant}`);
+            console.log(`[IP REPORT DEBUG] Custom time range: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, dayBefore: ${dayBefore}, isWithinRange: ${isWithinRange}, isDayBefore: ${isDayBefore}, relevant: ${relevant}`);
             return relevant;
         }
         
@@ -504,11 +532,13 @@ export class IpReportService {
             const startDay = new Date(startDateMs).toISOString().split('T')[0];
             const endDay = new Date(endDateMs).toISOString().split('T')[0];
             
-            // Check if file was created on the same day as the range
-            // For short timeframes, we only include files from the exact days of the range
+            // Check if file was created on the same day as the range or adjacent days
+            // For short timeframes, include files from adjacent days to ensure we don't miss data
             const isSameDay = fileDay === startDay || fileDay === endDay;
+            const isAdjacentDay = fileDay === new Date(startDateMs - 24 * 60 * 60 * 1000).toISOString().split('T')[0] ||
+                                 fileDay === new Date(endDateMs + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             
-            const relevant = isSameDay;
+            const relevant = isSameDay || isAdjacentDay;
             console.log(`[IP REPORT DEBUG] <= 12 hours: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, relevant: ${relevant}`);
             return relevant;
         }
@@ -522,8 +552,8 @@ export class IpReportService {
                 return true;
             }
             
-            // For .gz files, be more conservative - only include files created on the same day as the range
-            // or the day immediately before (to catch files that might contain data from the start of the range)
+            // For .gz files, be more inclusive to ensure we don't miss data
+            // Include files from 1 day before start to 1 day after end
             const fileDateMs = fileDate.getTime();
             const startDateMs = startDate.getTime();
             const endDateMs = endDate.getTime();
@@ -533,30 +563,34 @@ export class IpReportService {
             const startDay = new Date(startDateMs).toISOString().split('T')[0];
             const endDay = new Date(endDateMs).toISOString().split('T')[0];
             
-            // Check if file was created on the same day as the range
+            // Check if file was created on the same day as the range or adjacent days
             const isSameDay = fileDay === startDay || fileDay === endDay;
+            const isAdjacentDay = fileDay === new Date(startDateMs - 24 * 60 * 60 * 1000).toISOString().split('T')[0] ||
+                                 fileDay === new Date(endDateMs + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             
-            const relevant = isSameDay;
+            const relevant = isSameDay || isAdjacentDay;
             
             console.log(`[IP REPORT DEBUG] <= 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, relevant: ${relevant}`);
             return relevant;
         }
         
-        // For longer ranges: smart filtering of .gz files
-        // Check if file date is within or close to the requested time range
-        
-        // For .gz files, be more lenient with date matching
-        // A file created on day X might contain data from day X-1 or X+1
+        // For longer ranges: include all files that could contain data for the requested range
         const fileDateMs = fileDate.getTime();
         const startDateMs = startDate.getTime();
         const endDateMs = endDate.getTime();
         
-        // Allow files created within 1 day before or after the requested range
+        // For multi-day ranges, be more inclusive to ensure we don't miss data
+        // Include files from 2 days before start to 1 day after end
+        // This accounts for:
+        // 1. Files created on different days but containing relevant data
+        // 2. Timezone differences in file creation
+        // 3. Log rotation timing variations
+        const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
         const oneDayMs = 24 * 60 * 60 * 1000;
-        const isWithinExtendedRange = fileDateMs >= (startDateMs - oneDayMs) && fileDateMs <= (endDateMs + oneDayMs);
+        const isWithinRange = fileDateMs >= (startDateMs - twoDaysMs) && fileDateMs <= (endDateMs + oneDayMs);
         
-        console.log(`[IP REPORT DEBUG] > 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, range: ${startDate.toISOString()} - ${endDate.toISOString()}, relevant: ${isWithinExtendedRange}`);
-        return isWithinExtendedRange;
+        console.log(`[IP REPORT DEBUG] > 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, range: ${startDate.toISOString()} - ${endDate.toISOString()}, relevant: ${isWithinRange}`);
+        return isWithinRange;
     }
 
     /**
@@ -597,8 +631,19 @@ export class IpReportService {
     /**
      * Process a file and store logs in SQLite
      */
-    async processAndStoreFile(filePath, projectId, environment, fileName) {
+    async processAndStoreFile(filePath, projectId, environment, fileName, nodeNumber) {
         try {
+            // Check if file has already been processed
+            // Use node-specific filename to avoid conflicts between nodes
+            const nodeSpecificFileName = `${nodeNumber}-${fileName}`;
+            const isProcessed = await sqliteService.isFileProcessed(projectId, environment, nodeSpecificFileName);
+            if (isProcessed) {
+                console.log(`[IP REPORT DEBUG] File already processed, skipping: ${nodeSpecificFileName}`);
+                // Clean up downloaded file
+                await fs.unlink(filePath).catch(() => {});
+                return 0;
+            }
+
             console.log(`[IP REPORT DEBUG] Processing file: ${filePath}`);
             
             // Read and parse file - handle gzipped files
@@ -622,7 +667,7 @@ export class IpReportService {
             for (const line of lines) {
                 const parsedLog = this.parseLogLine(line);
                 if (parsedLog) {
-                    parsedLog.fileSource = fileName;
+                    parsedLog.fileSource = `${nodeNumber}-${fileName}`;
                     parsedLogs.push(parsedLog);
                 }
             }
@@ -631,6 +676,9 @@ export class IpReportService {
             
             // Store in SQLite
             const insertedCount = await sqliteService.insertLogs(parsedLogs, projectId, environment);
+            
+            // Mark file as processed
+            await sqliteService.markFileAsProcessed(projectId, environment, nodeSpecificFileName);
             
             // Clean up downloaded file
             await fs.unlink(filePath).catch(() => {});
@@ -690,6 +738,14 @@ export class IpReportService {
             const userAgentMatch = line.match(/"([^"]*)"\s*$/);
             const userAgent = userAgentMatch ? userAgentMatch[1] : null;
 
+            // Extract response size (bytes)
+            const sizeMatch = line.match(/"\s+\d{3}\s+(\d+)\s+/);
+            const responseSize = sizeMatch ? parseInt(sizeMatch[1]) : null;
+
+            // Extract referrer (between quotes after status and size)
+            const referrerMatch = line.match(/"\s+\d{3}\s+\d+\s+"([^"]*)"\s+"([^"]*)"\s*$/);
+            const referrer = referrerMatch ? referrerMatch[1] : null;
+
             return {
                 ip,
                 timestamp: Math.floor(timestamp / 1000), // Convert to seconds for SQLite
@@ -697,6 +753,8 @@ export class IpReportService {
                 method,
                 url,
                 userAgent,
+                responseSize,
+                referrer,
                 originalLine: line
             };
 
@@ -712,11 +770,12 @@ export class IpReportService {
     calculateOptimalBucketSize(timeRangeSeconds) {
         const timeRangeMinutes = timeRangeSeconds / 60;
         
-        if (timeRangeMinutes <= 60) return 5; // 5-minute buckets for 1 hour
-        if (timeRangeMinutes <= 720) return 30; // 30-minute buckets for 12 hours
-        if (timeRangeMinutes <= 1440) return 60; // 1-hour buckets for 24 hours
-        if (timeRangeMinutes <= 4320) return 180; // 3-hour buckets for 3 days
-        return 360; // 6-hour buckets for longer periods
+        if (timeRangeMinutes <= 60) return 1; // 1-minute buckets for 1 hour
+        if (timeRangeMinutes <= 720) return 7; // 7-minute buckets for 12 hours
+        if (timeRangeMinutes <= 1440) return 15; // 15-minute buckets for 24 hours
+        if (timeRangeMinutes <= 4320) return 45; // 45-minute buckets for 3 days
+        if (timeRangeMinutes <= 10080) return 15; // 15-minute buckets for 7 days
+        return 90; // 1.5-hour buckets for longer periods
     }
 
     /**

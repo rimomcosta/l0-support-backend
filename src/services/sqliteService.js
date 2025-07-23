@@ -65,10 +65,24 @@ export class SQLiteService {
                 method TEXT,
                 url TEXT,
                 user_agent TEXT,
+                response_size INTEGER,
+                referrer TEXT,
                 original_line TEXT,
                 file_source TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(project_id, environment, ip, timestamp, original_line)
+                UNIQUE(project_id, environment, ip, timestamp, status_code, method, url, user_agent, response_size, referrer, original_line, file_source)
+            )
+        `;
+
+        const createProcessedFilesTableSQL = `
+            CREATE TABLE IF NOT EXISTS processed_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_size INTEGER,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, environment, file_name)
             )
         `;
 
@@ -83,6 +97,7 @@ export class SQLiteService {
 
         try {
             await this.runQuery(db, createTableSQL);
+            await this.runQuery(db, createProcessedFilesTableSQL);
             
             for (const indexSQL of createIndexesSQL) {
                 await this.runQuery(db, indexSQL);
@@ -144,6 +159,35 @@ export class SQLiteService {
     }
 
     /**
+     * Check if a file has been processed
+     */
+    async isFileProcessed(projectId, environment, fileName) {
+        const db = await this.getDatabase(projectId, environment);
+        
+        const result = await this.runQuerySingle(db, `
+            SELECT id FROM processed_files 
+            WHERE project_id = ? AND environment = ? AND file_name = ?
+        `, [projectId, environment, fileName]);
+        
+        return !!result;
+    }
+
+    /**
+     * Mark a file as processed
+     */
+    async markFileAsProcessed(projectId, environment, fileName, fileSize = null) {
+        const db = await this.getDatabase(projectId, environment);
+        
+        await this.runQueryAffected(db, `
+            INSERT OR IGNORE INTO processed_files 
+            (project_id, environment, file_name, file_size) 
+            VALUES (?, ?, ?, ?)
+        `, [projectId, environment, fileName, fileSize]);
+        
+        console.log(`[SQLITE DEBUG] Marked file as processed: ${fileName}`);
+    }
+
+    /**
      * Insert logs in batches for efficiency
      */
     async insertLogs(logs, projectId, environment) {
@@ -164,11 +208,11 @@ export class SQLiteService {
 
             for (let i = 0; i < logs.length; i += batchSize) {
                 const batch = logs.slice(i, i + batchSize);
-                const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
                 
                 const sql = `
                     INSERT OR IGNORE INTO access_logs 
-                    (project_id, environment, ip, timestamp, status_code, method, url, user_agent, original_line, file_source)
+                    (project_id, environment, ip, timestamp, status_code, method, url, user_agent, response_size, referrer, original_line, file_source)
                     VALUES ${placeholders}
                 `;
 
@@ -181,6 +225,8 @@ export class SQLiteService {
                     log.method || null,
                     log.url || null,
                     log.userAgent || null,
+                    log.responseSize || null,
+                    log.referrer || null,
                     log.originalLine || null,
                     log.fileSource || null
                 ]);
