@@ -80,14 +80,8 @@ export class IpReportService {
             // Step 2: Calculate time range
             let startTime, endTime;
             if (from && to) {
-                console.log('[CUSTOM DATE RANGE DEBUG] Processing custom date range:', { from, to });
                 startTime = Math.floor(new Date(from).getTime() / 1000);
                 endTime = Math.floor(new Date(to).getTime() / 1000);
-                console.log('[CUSTOM DATE RANGE DEBUG] Converted to timestamps:', { startTime, endTime });
-                console.log('[CUSTOM DATE RANGE DEBUG] Converted to dates:', { 
-                    startDate: new Date(startTime * 1000), 
-                    endDate: new Date(endTime * 1000) 
-                });
             } else {
                 // For "past X hours" - calculate from most recent log, not current time
                 const dbStats = await sqliteService.getDatabaseStats(projectId, environment);
@@ -409,21 +403,60 @@ export class IpReportService {
             return relevant;
         }
         
-        // For past 24 hours: access.log and access.log.1.gz
+        // For past 24 hours: access.log, access.log.1.gz, and any .gz files that might contain data
         if (timeRangeHours <= 24) {
-            const relevant = filePath.endsWith('access.log') || filePath.endsWith('access.log.1.gz');
-            console.log(`[IP REPORT DEBUG] <= 24 hours: ${filePath} relevant: ${relevant}`);
+            const isAccessLog = filePath.includes('access.log');
+            if (!isAccessLog) {
+                return false;
+            }
+            
+            // Always include access.log and access.log.1.gz
+            if (filePath.endsWith('access.log') || filePath.endsWith('access.log.1.gz')) {
+                console.log(`[IP REPORT DEBUG] <= 24 hours: ${filePath} relevant: true (current/previous day)`);
+                return true;
+            }
+            
+            // For .gz files, be more conservative - only include files created on the same day as the range
+            // or the day immediately before (to catch files that might contain data from the start of the range)
+            const fileDateMs = fileDate.getTime();
+            const startDateMs = startDate.getTime();
+            const endDateMs = endDate.getTime();
+            
+            // Convert to UTC dates for day comparison (avoid timezone issues)
+            const fileDay = new Date(fileDateMs).toISOString().split('T')[0];
+            const startDay = new Date(startDateMs).toISOString().split('T')[0];
+            const endDay = new Date(endDateMs).toISOString().split('T')[0];
+            
+            // Check if file was created on the same day as the range or the day before
+            const isSameDay = fileDay === startDay || fileDay === endDay;
+            const isDayBefore = new Date(fileDateMs + 24 * 60 * 60 * 1000).toISOString().split('T')[0] === startDay;
+            
+            const relevant = isSameDay || isDayBefore;
+            
+            console.log(`[IP REPORT DEBUG] <= 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, fileDay: ${fileDay}, startDay: ${startDay}, endDay: ${endDay}, relevant: ${relevant}`);
             return relevant;
         }
         
-        // For past 2, 3, 7 days: access.log.x.gz files + access.log and access.log.1.gz
-        // Check if file date is within the requested time range
-        const isWithinRange = fileDate >= startDate && fileDate <= endDate;
+        // For longer ranges: smart filtering of .gz files
+        // Check if file date is within or close to the requested time range
         const isAccessLog = filePath.includes('access.log');
-        const relevant = isAccessLog && isWithinRange;
+        if (!isAccessLog) {
+            console.log(`[IP REPORT DEBUG] Not an access log file: ${filePath}`);
+            return false;
+        }
         
-        console.log(`[IP REPORT DEBUG] > 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, range: ${startDate.toISOString()} - ${endDate.toISOString()}, relevant: ${relevant}`);
-        return relevant;
+        // For .gz files, be more lenient with date matching
+        // A file created on day X might contain data from day X-1 or X+1
+        const fileDateMs = fileDate.getTime();
+        const startDateMs = startDate.getTime();
+        const endDateMs = endDate.getTime();
+        
+        // Allow files created within 1 day before or after the requested range
+        const oneDayMs = 24 * 60 * 60 * 1000;
+        const isWithinExtendedRange = fileDateMs >= (startDateMs - oneDayMs) && fileDateMs <= (endDateMs + oneDayMs);
+        
+        console.log(`[IP REPORT DEBUG] > 24 hours: ${filePath} fileDate: ${fileDate.toISOString()}, range: ${startDate.toISOString()} - ${endDate.toISOString()}, relevant: ${isWithinExtendedRange}`);
+        return isWithinExtendedRange;
     }
 
     /**
