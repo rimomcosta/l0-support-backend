@@ -506,67 +506,7 @@ router.get('/user-agents/:ip', conditionalAuth, async (req, res) => {
     }
 });
 
-/**
- * GET /api/v1/ip-report/database-stats
- * Get database statistics for a project environment
- */
-router.get('/database-stats', conditionalAuth, async (req, res) => {
-    try {
-        const { projectId, environment } = req.query;
-        const userId = req.session?.user?.id || 'anonymous';
 
-        // Validate required parameters
-        if (!projectId || !environment) {
-            return res.status(400).json({
-                error: 'projectId and environment are required'
-            });
-        }
-
-        // Validate and sanitize inputs
-        const sanitizedProjectId = validateInput(projectId, 'projectId');
-        const sanitizedEnvironment = validateInput(environment, 'environment');
-
-        if (!sanitizedProjectId || !sanitizedEnvironment) {
-            return res.status(400).json({
-                error: 'Invalid projectId or environment'
-            });
-        }
-
-        logger.info(`[IP REPORT API] User ${userId} requested database stats for ${sanitizedProjectId}/${sanitizedEnvironment}`);
-
-        // Get NewRelic statistics (not database stats since we're using NewRelic)
-        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
-        
-        // For NewRelic, we'll return a simplified stats object
-        const stats = {
-            total_logs: 0, // Not applicable for NewRelic
-            unique_ips: 0, // Not applicable for NewRelic
-            earliest_timestamp: null,
-            latest_timestamp: null,
-            database_size_mb: 0, // Not applicable for NewRelic
-            source: 'newrelic',
-            account_id: accountId
-        };
-
-        res.json({
-            success: true,
-            data: {
-                projectId: sanitizedProjectId,
-                environment: sanitizedEnvironment,
-                stats
-            }
-        });
-
-    } catch (error) {
-        logger.error('[IP REPORT API] Error getting database stats:', error);
-        
-        res.status(500).json({
-            error: 'Failed to get database statistics',
-            details: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
 
 /**
  * DELETE /api/v1/ip-report/cleanup
