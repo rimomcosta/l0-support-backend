@@ -1,11 +1,13 @@
 import express from 'express';
-import { ipReportService } from '../services/ipReportService.js';
-import { sqliteService } from '../services/sqliteService.js';
+import { NewRelicIpReportService } from '../services/newRelicIpReportService.js';
 import { logger } from '../services/logger.js';
 import { logActivity } from '../services/activityLogger.js';
 import { conditionalAuth } from '../middleware/auth.js';
 import { WebSocketService } from '../services/webSocketService.js';
 import fs from 'fs';
+
+// Initialize NewRelic service
+const newRelicService = new NewRelicIpReportService();
 
 const router = express.Router();
 
@@ -113,8 +115,8 @@ router.post('/generate', conditionalAuth, async (req, res) => {
         const wsService = WebSocketService; // Use the static class directly
         console.log('[IP REPORT DEBUG] WebSocket service obtained:', !!wsService);
 
-        // Generate the report using V2 service
-        console.log('[IP REPORT DEBUG] About to call generateIpReport with:', { 
+        // Generate the report using NewRelic service
+        console.log('[IP REPORT DEBUG] About to call NewRelic generateIpReport with:', { 
             projectId: sanitizedProjectId, 
             environment: sanitizedEnvironment, 
             options: sanitizedOptions,
@@ -122,7 +124,7 @@ router.post('/generate', conditionalAuth, async (req, res) => {
             userId 
         });
         
-        const result = await ipReportService.generateIpReport(
+        const result = await newRelicService.generateIpReport(
             sanitizedProjectId,
             sanitizedEnvironment,
             sanitizedOptions,
@@ -193,13 +195,15 @@ router.get('/chart-data', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested chart data for ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get chart data from SQLite
-        const timeSeriesData = await sqliteService.getTimeSeriesData(
+        // Get chart data from NewRelic
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const timeSeriesData = await newRelicService.getTimeSeriesData(
+            accountId,
             sanitizedProjectId,
             sanitizedEnvironment,
-            ipArray,
             startTimestamp,
             endTimestamp,
+            ipArray,
             bucketSizeMinutes
         );
 
@@ -276,11 +280,14 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested details for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get IP details from SQLite
-        console.log('[IP DETAILS DEBUG] Calling getIpDetails for:', sanitizedIp);
-        const ipDetails = await sqliteService.getIpDetails(
+        // Get IP details from NewRelic
+        console.log('[IP DETAILS DEBUG] Calling NewRelic getIpDetails for:', sanitizedIp);
+        
+        // Get account ID first
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const ipDetails = await newRelicService.getIpDetails(
+            accountId,
             sanitizedProjectId,
-            sanitizedEnvironment,
             sanitizedIp,
             startTimestamp,
             endTimestamp
@@ -371,11 +378,14 @@ router.get('/urls/:ip', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested URLs page ${pageNum} for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get paginated URLs from SQLite
-        console.log('[IP URLS DEBUG] Calling getIpUrls for:', sanitizedIp, 'page:', pageNum);
-        const urlsData = await sqliteService.getIpUrls(
+        // Get paginated URLs from NewRelic
+        console.log('[IP URLS DEBUG] Calling NewRelic getIpUrls for:', sanitizedIp, 'page:', pageNum);
+        
+        // Get account ID first
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const urlsData = await newRelicService.getIpUrls(
+            accountId,
             sanitizedProjectId,
-            sanitizedEnvironment,
             sanitizedIp,
             startTimestamp,
             endTimestamp,
@@ -463,10 +473,11 @@ router.get('/user-agents/:ip', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested UserAgent data for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get UserAgent data from SQLite
-        const userAgents = await sqliteService.getIpUserAgents(
+        // Get UserAgent data from NewRelic
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const userAgents = await newRelicService.getIpUserAgents(
+            accountId,
             sanitizedProjectId,
-            sanitizedEnvironment,
             sanitizedIp,
             startTimestamp,
             endTimestamp
@@ -523,8 +534,19 @@ router.get('/database-stats', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested database stats for ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get database statistics
-        const stats = await sqliteService.getDatabaseStats(sanitizedProjectId, sanitizedEnvironment);
+        // Get NewRelic statistics (not database stats since we're using NewRelic)
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        
+        // For NewRelic, we'll return a simplified stats object
+        const stats = {
+            total_logs: 0, // Not applicable for NewRelic
+            unique_ips: 0, // Not applicable for NewRelic
+            earliest_timestamp: null,
+            latest_timestamp: null,
+            database_size_mb: 0, // Not applicable for NewRelic
+            source: 'newrelic',
+            account_id: accountId
+        };
 
         res.json({
             success: true,
@@ -578,33 +600,12 @@ router.delete('/cleanup', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested cleanup for ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Delete all SQLite database files (main db, shared memory, write-ahead log)
-        const dbBasePath = `/tmp/access_logs-${sanitizedProjectId}-${sanitizedEnvironment}`;
-        const dbFiles = [
-            `${dbBasePath}.db`,
-            `${dbBasePath}.db-shm`,
-            `${dbBasePath}.db-wal`
-        ];
+        // For NewRelic, there's no local database to clean up
+        // The cleanup is mainly for clearing any cached data
+        console.log('[CLEANUP DEBUG] NewRelic implementation - no local database to clean up');
         
-        let deletedFiles = [];
-        for (const filePath of dbFiles) {
-            if (fs.existsSync(filePath)) {
-                try {
-                    fs.unlinkSync(filePath);
-                    deletedFiles.push(filePath);
-                    console.log(`[CLEANUP DEBUG] Deleted file: ${filePath}`);
-                } catch (error) {
-                    console.log(`[CLEANUP DEBUG] Failed to delete file: ${filePath}`, error.message);
-                }
-            } else {
-                console.log(`[CLEANUP DEBUG] File not found: ${filePath}`);
-            }
-        }
-        
-        console.log(`[CLEANUP DEBUG] Total files deleted: ${deletedFiles.length}`);
-
-        // Close database connection if it exists
-        await sqliteService.closeDatabase(sanitizedProjectId, sanitizedEnvironment);
+        // In the future, we could add cache clearing logic here if needed
+        const deletedFiles = [];
 
         res.json({
             success: true,
