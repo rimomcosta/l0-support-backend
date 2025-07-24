@@ -477,14 +477,51 @@ export class NewRelicIpReportService {
     }
 
     /**
+     * Calculate optimal bucket size for time series queries
+     * New Relic has a limit of 366 buckets maximum
+     */
+    calculateOptimalBucketSize(startTimestamp, endTimestamp, maxBuckets = 366) {
+        const durationSeconds = endTimestamp - startTimestamp;
+        const durationHours = durationSeconds / 3600;
+        const durationDays = durationHours / 24;
+        
+        // Calculate minimum bucket size needed to stay under maxBuckets
+        const minBucketSizeSeconds = Math.ceil(durationSeconds / maxBuckets);
+        
+        // Convert to minutes and round up to nearest reasonable interval
+        let bucketSizeMinutes = Math.ceil(minBucketSizeSeconds / 60);
+        
+        // Round to nearest reasonable interval for better readability
+        if (bucketSizeMinutes <= 5) bucketSizeMinutes = 5;
+        else if (bucketSizeMinutes <= 15) bucketSizeMinutes = 15;
+        else if (bucketSizeMinutes <= 30) bucketSizeMinutes = 30;
+        else if (bucketSizeMinutes <= 60) bucketSizeMinutes = 60;
+        else if (bucketSizeMinutes <= 120) bucketSizeMinutes = 120;
+        else if (bucketSizeMinutes <= 240) bucketSizeMinutes = 240;
+        else if (bucketSizeMinutes <= 480) bucketSizeMinutes = 480;
+        else bucketSizeMinutes = 1440; // 24 hours
+        
+        const bucketSizeSeconds = bucketSizeMinutes * 60;
+        const actualBuckets = Math.ceil(durationSeconds / bucketSizeSeconds);
+        
+        console.log(`[NEWRELIC DEBUG] Time range: ${durationHours.toFixed(1)} hours (${durationDays.toFixed(1)} days)`);
+        console.log(`[NEWRELIC DEBUG] Calculated bucket size: ${bucketSizeMinutes} minutes (${bucketSizeSeconds} seconds)`);
+        console.log(`[NEWRELIC DEBUG] Expected buckets: ${actualBuckets} (max allowed: ${maxBuckets})`);
+        
+        return bucketSizeMinutes;
+    }
+
+    /**
      * Get time series data for IPs (OPTIMIZED VERSION)
      */
     async getTimeSeriesData(accountId, projectId, environment, startTimestamp, endTimestamp, ips, bucketSizeMinutes = 5) {
         try {
-            const bucketSizeSeconds = bucketSizeMinutes * 60;
+            // Calculate optimal bucket size based on time range
+            const optimalBucketSizeMinutes = this.calculateOptimalBucketSize(startTimestamp, endTimestamp);
+            const bucketSizeSeconds = optimalBucketSizeMinutes * 60;
             const allIps = ips.map(ip => ip.ip);
             
-            console.log(`[NEWRELIC DEBUG] Generating time series data for ${allIps.length} IPs with ${bucketSizeMinutes}-minute buckets (OPTIMIZED)`);
+            console.log(`[NEWRELIC DEBUG] Generating time series data for ${allIps.length} IPs with ${optimalBucketSizeMinutes}-minute buckets (OPTIMIZED)`);
             console.log(`[NEWRELIC DEBUG] Time range: ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
             
             const filePath = this.getFilePath(projectId, environment);
