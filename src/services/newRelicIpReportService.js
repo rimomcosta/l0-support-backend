@@ -414,7 +414,7 @@ export class NewRelicIpReportService {
                     hasDetails: true
                 };
             });
-            
+                
             // Fetch status codes for all IPs in a single query
             if (ipStats.length > 0) {
                 console.log('[NEWRELIC DEBUG] Fetching status codes for all IPs...');
@@ -558,7 +558,7 @@ export class NewRelicIpReportService {
             console.log('[NEWRELIC DEBUG] Executing status codes query for all IPs...');
                 const results = await this.executeNRQL(accountId, query);
             console.log(`[NEWRELIC DEBUG] Retrieved ${results.length} status code entries`);
-            
+                    
             // Process results into IP-based status code breakdowns
             const statusCodesData = {};
             
@@ -676,7 +676,7 @@ export class NewRelicIpReportService {
                     const method = facets[1];
                     const statusCode = facets[2];
                     const userAgent = facets[3];
-                    
+            
                     // Aggregate URLs
                     if (path) {
                         urls[path] = (urls[path] || 0) + count;
