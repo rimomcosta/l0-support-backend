@@ -1,11 +1,13 @@
 import express from 'express';
-import { ipReportService } from '../services/ipReportService.js';
-import { sqliteService } from '../services/sqliteService.js';
+import { NewRelicIpReportService } from '../services/newRelicIpReportService.js';
 import { logger } from '../services/logger.js';
 import { logActivity } from '../services/activityLogger.js';
 import { conditionalAuth } from '../middleware/auth.js';
 import { WebSocketService } from '../services/webSocketService.js';
 import fs from 'fs';
+
+// Initialize NewRelic service
+const newRelicService = new NewRelicIpReportService();
 
 const router = express.Router();
 
@@ -113,8 +115,8 @@ router.post('/generate', conditionalAuth, async (req, res) => {
         const wsService = WebSocketService; // Use the static class directly
         console.log('[IP REPORT DEBUG] WebSocket service obtained:', !!wsService);
 
-        // Generate the report using V2 service
-        console.log('[IP REPORT DEBUG] About to call generateIpReport with:', { 
+        // Generate the report using NewRelic service
+        console.log('[IP REPORT DEBUG] About to call NewRelic generateIpReport with:', { 
             projectId: sanitizedProjectId, 
             environment: sanitizedEnvironment, 
             options: sanitizedOptions,
@@ -122,7 +124,7 @@ router.post('/generate', conditionalAuth, async (req, res) => {
             userId 
         });
         
-        const result = await ipReportService.generateIpReport(
+        const result = await newRelicService.generateIpReport(
             sanitizedProjectId,
             sanitizedEnvironment,
             sanitizedOptions,
@@ -193,13 +195,15 @@ router.get('/chart-data', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested chart data for ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get chart data from SQLite
-        const timeSeriesData = await sqliteService.getTimeSeriesData(
+        // Get chart data from NewRelic
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const timeSeriesData = await newRelicService.getTimeSeriesData(
+            accountId,
             sanitizedProjectId,
             sanitizedEnvironment,
-            ipArray,
             startTimestamp,
             endTimestamp,
+            ipArray,
             bucketSizeMinutes
         );
 
@@ -227,16 +231,18 @@ router.get('/chart-data', conditionalAuth, async (req, res) => {
     }
 });
 
+
+
 /**
  * GET /api/v1/ip-report/ip-details/:ip
- * Get detailed information for a specific IP
+ * Get paginated IP details with optional filters
  */
 router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
     try {
         console.log('[IP DETAILS DEBUG] Request received for IP:', req.params.ip);
         console.log('[IP DETAILS DEBUG] Query params:', req.query);
         
-        const { projectId, environment, startTime, endTime } = req.query;
+        const { projectId, environment, startTime, endTime, statusCode, method, url, userAgent, lastTimestamp } = req.query;
         const { ip } = req.params;
         const userId = req.session?.user?.id || 'anonymous';
 
@@ -262,6 +268,7 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
         // Parse timestamps if provided
         let startTimestamp = null;
         let endTimestamp = null;
+        let parsedLastTimestamp = null;
         
         if (startTime && endTime) {
             startTimestamp = parseInt(startTime);
@@ -274,30 +281,54 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
             }
         }
 
-        logger.info(`[IP REPORT API] User ${userId} requested details for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
+        if (lastTimestamp) {
+            parsedLastTimestamp = parseInt(lastTimestamp);
+            if (isNaN(parsedLastTimestamp)) {
+                return res.status(400).json({
+                    error: 'Invalid lastTimestamp format'
+                });
+            }
+        }
 
-        // Get IP details from SQLite
-        console.log('[IP DETAILS DEBUG] Calling getIpDetails for:', sanitizedIp);
-        const ipDetails = await sqliteService.getIpDetails(
+        // Build filters object
+        const filters = {};
+        if (statusCode) filters.statusCode = statusCode;
+        if (method) filters.method = method;
+        if (url) filters.url = url;
+        if (userAgent) filters.userAgent = userAgent;
+
+        logger.info(`[IP REPORT API] User ${userId} requested IP details for ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment} with filters:`, filters);
+
+        // Get IP details from NewRelic
+        console.log('[IP DETAILS DEBUG] Calling NewRelic getIpDetails for:', sanitizedIp, 'with filters:', filters, 'lastTimestamp:', parsedLastTimestamp);
+        
+        // Get account ID first
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const details = await newRelicService.getIpDetails(
+            accountId,
             sanitizedProjectId,
-            sanitizedEnvironment,
             sanitizedIp,
             startTimestamp,
-            endTimestamp
+            endTimestamp,
+            filters,
+            parsedLastTimestamp
         );
         
-        console.log('[IP DETAILS DEBUG] IP details result:', {
-            topUrlsCount: ipDetails.topUrls?.length || 0,
-            userAgentsCount: ipDetails.userAgents?.length || 0,
-            statusCodesCount: Object.keys(ipDetails.statusCodes || {}).length,
-            methodsCount: Object.keys(ipDetails.methods || {}).length
+        console.log('[IP DETAILS DEBUG] Details result:', {
+            requestsCount: details.requests?.length || 0,
+            hasMore: details.hasMore,
+            lastTimestamp: details.lastTimestamp
         });
 
-                 const response = {
+        const response = {
             success: true,
             data: {
                 ip: sanitizedIp,
-                details: ipDetails,
+                requests: details.requests,
+                totalCount: details.totalCount,
+                hasMore: details.hasMore,
+                lastTimestamp: details.lastTimestamp,
+                appliedFilters: filters,
                 timeRange: startTimestamp && endTimestamp ? {
                     start: new Date(startTimestamp * 1000).toISOString(),
                     end: new Date(endTimestamp * 1000).toISOString()
@@ -305,7 +336,7 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
             }
         };
         
-        console.log('[IP DETAILS DEBUG] Sending response with details');
+        console.log('[IP DETAILS DEBUG] Sending response with paginated details');
         res.json(response);
 
     } catch (error) {
@@ -371,11 +402,14 @@ router.get('/urls/:ip', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested URLs page ${pageNum} for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get paginated URLs from SQLite
-        console.log('[IP URLS DEBUG] Calling getIpUrls for:', sanitizedIp, 'page:', pageNum);
-        const urlsData = await sqliteService.getIpUrls(
+        // Get paginated URLs from NewRelic
+        console.log('[IP URLS DEBUG] Calling NewRelic getIpUrls for:', sanitizedIp, 'page:', pageNum);
+        
+        // Get account ID first
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const urlsData = await newRelicService.getIpUrls(
+            accountId,
             sanitizedProjectId,
-            sanitizedEnvironment,
             sanitizedIp,
             startTimestamp,
             endTimestamp,
@@ -463,10 +497,11 @@ router.get('/user-agents/:ip', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested UserAgent data for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Get UserAgent data from SQLite
-        const userAgents = await sqliteService.getIpUserAgents(
+        // Get UserAgent data from NewRelic
+        const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
+        const userAgents = await newRelicService.getIpUserAgents(
+            accountId,
             sanitizedProjectId,
-            sanitizedEnvironment,
             sanitizedIp,
             startTimestamp,
             endTimestamp
@@ -495,56 +530,7 @@ router.get('/user-agents/:ip', conditionalAuth, async (req, res) => {
     }
 });
 
-/**
- * GET /api/v1/ip-report/database-stats
- * Get database statistics for a project environment
- */
-router.get('/database-stats', conditionalAuth, async (req, res) => {
-    try {
-        const { projectId, environment } = req.query;
-        const userId = req.session?.user?.id || 'anonymous';
 
-        // Validate required parameters
-        if (!projectId || !environment) {
-            return res.status(400).json({
-                error: 'projectId and environment are required'
-            });
-        }
-
-        // Validate and sanitize inputs
-        const sanitizedProjectId = validateInput(projectId, 'projectId');
-        const sanitizedEnvironment = validateInput(environment, 'environment');
-
-        if (!sanitizedProjectId || !sanitizedEnvironment) {
-            return res.status(400).json({
-                error: 'Invalid projectId or environment'
-            });
-        }
-
-        logger.info(`[IP REPORT API] User ${userId} requested database stats for ${sanitizedProjectId}/${sanitizedEnvironment}`);
-
-        // Get database statistics
-        const stats = await sqliteService.getDatabaseStats(sanitizedProjectId, sanitizedEnvironment);
-
-        res.json({
-            success: true,
-            data: {
-                projectId: sanitizedProjectId,
-                environment: sanitizedEnvironment,
-                stats
-            }
-        });
-
-    } catch (error) {
-        logger.error('[IP REPORT API] Error getting database stats:', error);
-        
-        res.status(500).json({
-            error: 'Failed to get database statistics',
-            details: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
 
 /**
  * DELETE /api/v1/ip-report/cleanup
@@ -578,33 +564,12 @@ router.delete('/cleanup', conditionalAuth, async (req, res) => {
 
         logger.info(`[IP REPORT API] User ${userId} requested cleanup for ${sanitizedProjectId}/${sanitizedEnvironment}`);
 
-        // Delete all SQLite database files (main db, shared memory, write-ahead log)
-        const dbBasePath = `/tmp/access_logs-${sanitizedProjectId}-${sanitizedEnvironment}`;
-        const dbFiles = [
-            `${dbBasePath}.db`,
-            `${dbBasePath}.db-shm`,
-            `${dbBasePath}.db-wal`
-        ];
+        // For NewRelic, there's no local database to clean up
+        // The cleanup is mainly for clearing any cached data
+        console.log('[CLEANUP DEBUG] NewRelic implementation - no local database to clean up');
         
-        let deletedFiles = [];
-        for (const filePath of dbFiles) {
-            if (fs.existsSync(filePath)) {
-                try {
-                    fs.unlinkSync(filePath);
-                    deletedFiles.push(filePath);
-                    console.log(`[CLEANUP DEBUG] Deleted file: ${filePath}`);
-                } catch (error) {
-                    console.log(`[CLEANUP DEBUG] Failed to delete file: ${filePath}`, error.message);
-                }
-            } else {
-                console.log(`[CLEANUP DEBUG] File not found: ${filePath}`);
-            }
-        }
-        
-        console.log(`[CLEANUP DEBUG] Total files deleted: ${deletedFiles.length}`);
-
-        // Close database connection if it exists
-        await sqliteService.closeDatabase(sanitizedProjectId, sanitizedEnvironment);
+        // In the future, we could add cache clearing logic here if needed
+        const deletedFiles = [];
 
         res.json({
             success: true,
