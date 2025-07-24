@@ -82,7 +82,7 @@ export class NewRelicIpReportService {
                         'Content-Type': 'application/json',
                         'API-Key': this.apiKey
                     },
-                    timeout: 30000
+                    timeout: 500000
                 }
             );
             
@@ -132,7 +132,7 @@ export class NewRelicIpReportService {
                     'Api-Key': this.apiKey,
                     'Content-Type': 'application/json'
                 },
-                timeout: 30000
+                timeout: 500000
             });
             
             if (response.data.errors) {
@@ -175,7 +175,7 @@ export class NewRelicIpReportService {
                             'Api-Key': this.apiKey,
                             'Content-Type': 'application/json'
                         },
-                        timeout: 10000
+                        timeout: 500000
                     });
                     
                     if (testResponse.data.errors) {
