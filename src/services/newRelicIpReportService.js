@@ -45,6 +45,8 @@ export class NewRelicIpReportService {
     async executeNRQL(accountId, query) {
         try {
             console.log('[NEWRELIC DEBUG] Executing NRQL query via GraphQL API');
+            console.log('[NEWRELIC DEBUG] Account ID:', accountId);
+            console.log('[NEWRELIC DEBUG] Original NRQL query:', query);
             
             // Properly escape the NRQL query for GraphQL
             const escapedQuery = query
@@ -53,6 +55,8 @@ export class NewRelicIpReportService {
                 .replace(/\n/g, ' ')     // Replace newlines with spaces
                 .replace(/\s+/g, ' ')    // Normalize whitespace
                 .trim();
+            
+            console.log('[NEWRELIC DEBUG] Escaped NRQL query:', escapedQuery);
             
             const graphqlQuery = `
                 {
@@ -65,6 +69,8 @@ export class NewRelicIpReportService {
                     }
                 }
             `;
+            
+            console.log('[NEWRELIC DEBUG] GraphQL query:', graphqlQuery);
             
             const response = await axios.post(
                 'https://api.newrelic.com/graphql',
@@ -369,6 +375,19 @@ export class NewRelicIpReportService {
             const filePath = this.getFilePath(projectId, environment);
             console.log('[NEWRELIC DEBUG] Using filePath:', filePath);
             
+            // First, test a simple query to see if data exists
+            const simpleTestQuery = `
+                SELECT count(*)
+                FROM Log
+                WHERE filePath = '${filePath}'
+                SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
+                LIMIT MAX
+            `;
+            
+            console.log('[NEWRELIC DEBUG] Testing simple query first...');
+            const simpleResults = await this.executeNRQL(accountId, simpleTestQuery);
+            console.log('[NEWRELIC DEBUG] Simple query results:', simpleResults);
+            
             // Get IP statistics using aparse for efficient parsing
             const query = `
                 WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
@@ -380,14 +399,22 @@ export class NewRelicIpReportService {
                     filter(count(*), WHERE statusCode >= '400') as error_count
                 FROM Log
                 WHERE filePath = '${filePath}'
-                    AND timestamp >= ${startTimestamp * 1000} 
-                    AND timestamp <= ${endTimestamp * 1000}
+                SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
                 FACET ip
                 ORDER BY total_requests DESC
                 LIMIT ${limit}
             `;
             
             console.log('[NEWRELIC DEBUG] Executing IP statistics query...');
+            console.log('[NEWRELIC DEBUG] Raw NRQL query:', query);
+            console.log('[NEWRELIC DEBUG] Query parameters:', {
+                filePath,
+                startTimestamp,
+                endTimestamp,
+                startTimestampMs: startTimestamp * 1000,
+                endTimestampMs: endTimestamp * 1000,
+                limit
+            });
             const results = await this.executeNRQL(accountId, query);
             console.log(`[NEWRELIC DEBUG] Retrieved ${results.length} IP statistics`);
             
@@ -475,9 +502,8 @@ export class NewRelicIpReportService {
                 SELECT count(*) as request_count
                 FROM Log
                 WHERE filePath = '${filePath}'
-                    AND timestamp >= ${startTimestamp * 1000} 
-                    AND timestamp <= ${endTimestamp * 1000}
                     AND ip IN (${ipList})
+                SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
                 FACET ip
                 TIMESERIES ${bucketSizeSeconds} seconds
                 ORDER BY timestamp ASC
@@ -568,9 +594,8 @@ export class NewRelicIpReportService {
                 SELECT count(*) as count
                     FROM Log
                     WHERE filePath = '${filePath}'
-                        AND timestamp >= ${startTimestamp * 1000} 
-                        AND timestamp <= ${endTimestamp * 1000}
                     AND ip IN (${ipList})
+                    SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
                 FACET ip, statusCode
                     LIMIT MAX
                 ORDER BY count DESC
