@@ -260,7 +260,7 @@ export class NewRelicIpReportService {
 
             // Step 4: Get time series data
             this.sendProgress(wsService, userId, 'Generating time series data...');
-            const timeSeriesData = await this.getTimeSeriesData(accountId, projectId, environment, startTimestamp, endTimestamp, ipStats.slice(0, 10));
+            const timeSeriesData = await this.getTimeSeriesData(accountId, projectId, environment, startTimestamp, endTimestamp, ipStats);
             console.log('[NEWRELIC IP REPORT DEBUG] Got time series data');
 
             // Step 5: Prepare response
@@ -467,6 +467,9 @@ export class NewRelicIpReportService {
             const ipList = allIps.map(ip => `'${ip.replace(/'/g, "\\'")}'`).join(',');
             
             // Single optimized query using FACET and TIMESERIES
+            // Note: New Relic FACET query only returns IPs that have data in each time bucket
+            // IPs with 0 requests in a time period won't appear in the results
+            // IMPORTANT: Add LIMIT MAX to ensure all IPs are returned (New Relic has default limits)
             const query = `
                 WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
                 SELECT count(*) as request_count
@@ -478,11 +481,19 @@ export class NewRelicIpReportService {
                 FACET ip
                 TIMESERIES ${bucketSizeSeconds} seconds
                 ORDER BY timestamp ASC
+                LIMIT MAX
             `;
             
             console.log('[NEWRELIC DEBUG] Executing OPTIMIZED time series query (single API call)...');
             const results = await this.executeNRQL(accountId, query);
             console.log(`[NEWRELIC DEBUG] Retrieved ${results.length} time series data points`);
+            
+            // Debug: Check what IPs are actually returned by New Relic
+            const returnedIps = [...new Set(results.map(result => result.facet || result.ip))];
+            console.log('[NEWRELIC DEBUG] IPs returned by New Relic query:', returnedIps.length);
+            console.log('[NEWRELIC DEBUG] Sample returned IPs:', returnedIps.slice(0, 10));
+            console.log('[NEWRELIC DEBUG] Missing IPs (should be 0 if all IPs have data):', 
+                allIps.filter(ip => !returnedIps.includes(ip)));
             
             // Process results into buckets
             const buckets = {};
@@ -527,6 +538,16 @@ export class NewRelicIpReportService {
             // Calculate total requests across all buckets
             const totalRequests = timeSeriesData.reduce((sum, bucket) => sum + bucket.totalRequests, 0);
             console.log(`[NEWRELIC DEBUG] Generated optimized time series data with ${timeSeriesData.length} buckets, total requests: ${totalRequests}`);
+            
+            // Debug: Check what's in the final buckets
+            if (timeSeriesData.length > 0) {
+                const firstBucket = timeSeriesData[0];
+                const bucketIps = Object.keys(firstBucket.ipCounts);
+                const nonZeroIps = bucketIps.filter(ip => firstBucket.ipCounts[ip] > 0);
+                console.log('[NEWRELIC DEBUG] IPs in first bucket:', bucketIps.length);
+                console.log('[NEWRELIC DEBUG] IPs with non-zero data in first bucket:', nonZeroIps.length);
+                console.log('[NEWRELIC DEBUG] Sample non-zero IPs:', nonZeroIps.slice(0, 10));
+            }
             
             return timeSeriesData;
         } catch (error) {
