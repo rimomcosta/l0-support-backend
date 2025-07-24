@@ -45,6 +45,8 @@ export class NewRelicIpReportService {
     async executeNRQL(accountId, query) {
         try {
             console.log('[NEWRELIC DEBUG] Executing NRQL query via GraphQL API');
+            console.log('[NEWRELIC DEBUG] Account ID:', accountId);
+            console.log('[NEWRELIC DEBUG] Original NRQL query:', query);
             
             // Properly escape the NRQL query for GraphQL
             const escapedQuery = query
@@ -53,6 +55,8 @@ export class NewRelicIpReportService {
                 .replace(/\n/g, ' ')     // Replace newlines with spaces
                 .replace(/\s+/g, ' ')    // Normalize whitespace
                 .trim();
+            
+            console.log('[NEWRELIC DEBUG] Escaped NRQL query:', escapedQuery);
             
             const graphqlQuery = `
                 {
@@ -65,6 +69,8 @@ export class NewRelicIpReportService {
                     }
                 }
             `;
+            
+            console.log('[NEWRELIC DEBUG] GraphQL query:', graphqlQuery);
             
             const response = await axios.post(
                 'https://api.newrelic.com/graphql',
@@ -369,6 +375,19 @@ export class NewRelicIpReportService {
             const filePath = this.getFilePath(projectId, environment);
             console.log('[NEWRELIC DEBUG] Using filePath:', filePath);
             
+            // First, test a simple query to see if data exists
+            const simpleTestQuery = `
+                SELECT count(*)
+                FROM Log
+                WHERE filePath = '${filePath}'
+                SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
+                LIMIT MAX
+            `;
+            
+            console.log('[NEWRELIC DEBUG] Testing simple query first...');
+            const simpleResults = await this.executeNRQL(accountId, simpleTestQuery);
+            console.log('[NEWRELIC DEBUG] Simple query results:', simpleResults);
+            
             // Get IP statistics using aparse for efficient parsing
             const query = `
                 WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
@@ -380,14 +399,22 @@ export class NewRelicIpReportService {
                     filter(count(*), WHERE statusCode >= '400') as error_count
                 FROM Log
                 WHERE filePath = '${filePath}'
-                    AND timestamp >= ${startTimestamp * 1000} 
-                    AND timestamp <= ${endTimestamp * 1000}
+                SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
                 FACET ip
                 ORDER BY total_requests DESC
                 LIMIT ${limit}
             `;
             
             console.log('[NEWRELIC DEBUG] Executing IP statistics query...');
+            console.log('[NEWRELIC DEBUG] Raw NRQL query:', query);
+            console.log('[NEWRELIC DEBUG] Query parameters:', {
+                filePath,
+                startTimestamp,
+                endTimestamp,
+                startTimestampMs: startTimestamp * 1000,
+                endTimestampMs: endTimestamp * 1000,
+                limit
+            });
             const results = await this.executeNRQL(accountId, query);
             console.log(`[NEWRELIC DEBUG] Retrieved ${results.length} IP statistics`);
             
@@ -475,9 +502,8 @@ export class NewRelicIpReportService {
                 SELECT count(*) as request_count
                 FROM Log
                 WHERE filePath = '${filePath}'
-                    AND timestamp >= ${startTimestamp * 1000} 
-                    AND timestamp <= ${endTimestamp * 1000}
                     AND ip IN (${ipList})
+                SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
                 FACET ip
                 TIMESERIES ${bucketSizeSeconds} seconds
                 ORDER BY timestamp ASC
@@ -568,9 +594,8 @@ export class NewRelicIpReportService {
                 SELECT count(*) as count
                     FROM Log
                     WHERE filePath = '${filePath}'
-                        AND timestamp >= ${startTimestamp * 1000} 
-                        AND timestamp <= ${endTimestamp * 1000}
                     AND ip IN (${ipList})
+                    SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
                 FACET ip, statusCode
                     LIMIT MAX
                 ORDER BY count DESC
@@ -652,21 +677,33 @@ export class NewRelicIpReportService {
     async getIpDetails(accountId, projectId, ip, startTimestamp, endTimestamp) {
         try {
             const filePath = this.getFilePath(projectId, 'production'); // Use the file path helper
-            const timeFilter = startTimestamp && endTimestamp 
-                ? `AND timestamp >= ${startTimestamp * 1000} AND timestamp <= ${endTimestamp * 1000}`
-                : 'SINCE 24 hours ago';
-
-            // Single optimized query to get all details at once
-            const query = `
-                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
-                SELECT count(*) as count
-                FROM Log 
-                WHERE filePath = '${filePath}'
-                    AND ip = '${ip.replace(/'/g, "\\'")}'
-                    ${timeFilter}
-                FACET path, method, statusCode, userAgent
-                LIMIT MAX
-            `.trim();
+            
+            let query;
+            if (startTimestamp && endTimestamp) {
+                // Use SINCE/UNTIL for custom time range
+                query = `
+                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                    SELECT count(*) as count
+                    FROM Log 
+                    WHERE filePath = '${filePath}'
+                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                    SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
+                    FACET path, method, statusCode, userAgent
+                    LIMIT MAX
+                `.trim();
+            } else {
+                // Use SINCE for relative time range
+                query = `
+                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                    SELECT count(*) as count
+                    FROM Log 
+                    WHERE filePath = '${filePath}'
+                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                    SINCE 24 hours ago
+                    FACET path, method, statusCode, userAgent
+                    LIMIT MAX
+                `.trim();
+            }
 
             console.log('[NEWRELIC DEBUG] Executing optimized IP details query for:', ip);
             const results = await this.executeNRQL(accountId, query);
@@ -779,10 +816,7 @@ export class NewRelicIpReportService {
     async getIpDetails(accountId, projectId, ip, startTimestamp, endTimestamp, filters = {}, lastTimestamp = null) {
         try {
             const filePath = this.getFilePath(projectId, 'production');
-            const timeFilter = startTimestamp && endTimestamp 
-                ? `AND timestamp >= ${startTimestamp * 1000} AND timestamp <= ${endTimestamp * 1000}`
-                : 'SINCE 24 hours ago';
-
+            
             // Build filter conditions
             let filterConditions = [];
             
@@ -810,23 +844,46 @@ export class NewRelicIpReportService {
             const filterClause = filterConditions.join(' ');
 
             // Query to get paginated results (10 per page)
-            const query = `
-                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
-                SELECT
-                    timestamp,  
-                    ip,
-                    method,
-                    statusCode,
-                    path AS url,
-                    userAgent
-                FROM Log
-                WHERE filePath = '${filePath}'
-                    AND ip = '${ip.replace(/'/g, "\\'")}'
-                    ${timeFilter}
-                    ${filterClause}
-                ORDER BY timestamp DESC
-                LIMIT 10
-            `.trim();
+            let query;
+            if (startTimestamp && endTimestamp) {
+                // Use SINCE/UNTIL for custom time range
+                query = `
+                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                    SELECT
+                        timestamp,  
+                        ip,
+                        method,
+                        statusCode,
+                        path AS url,
+                        userAgent
+                    FROM Log
+                    WHERE filePath = '${filePath}'
+                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                        ${filterClause}
+                    SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                `.trim();
+            } else {
+                // Use SINCE for relative time range
+                query = `
+                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                    SELECT
+                        timestamp,  
+                        ip,
+                        method,
+                        statusCode,
+                        path AS url,
+                        userAgent
+                    FROM Log
+                    WHERE filePath = '${filePath}'
+                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                        ${filterClause}
+                    SINCE 24 hours ago
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                `.trim();
+            }
 
             console.log('[NEWRELIC DEBUG] Executing paginated IP details query for:', ip, 'with filters:', filters, 'lastTimestamp:', lastTimestamp);
             const results = await this.executeNRQL(accountId, query);
@@ -875,26 +932,45 @@ export class NewRelicIpReportService {
     async getIpUrls(accountId, projectId, ip, startTimestamp, endTimestamp, limit = 10, offset = 0) {
         try {
             const filePath = this.getFilePath(projectId, 'production'); // Use the file path helper
-            const timeFilter = startTimestamp && endTimestamp 
-                ? `AND timestamp >= ${startTimestamp * 1000} AND timestamp <= ${endTimestamp * 1000}`
-                : 'SINCE 24 hours ago';
-
-            const query = `
-                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
-                SELECT 
-                    path as url,
-                    timestamp,
-                    statusCode as status,
-                    method,
-                    0 as responseTime
-                FROM Log 
-                WHERE filePath = '${filePath}'
-                    AND ip = '${ip.replace(/'/g, "\\'")}'
-                    ${timeFilter}
-                ORDER BY timestamp DESC
-                LIMIT ${limit}
-                OFFSET ${offset}
-            `.trim();
+            
+            let query;
+            if (startTimestamp && endTimestamp) {
+                // Use SINCE/UNTIL for custom time range
+                query = `
+                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                    SELECT 
+                        path as url,
+                        timestamp,
+                        statusCode as status,
+                        method,
+                        0 as responseTime
+                    FROM Log 
+                    WHERE filePath = '${filePath}'
+                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                    SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
+                    ORDER BY timestamp DESC
+                    LIMIT ${limit}
+                    OFFSET ${offset}
+                `.trim();
+            } else {
+                // Use SINCE for relative time range
+                query = `
+                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                    SELECT 
+                        path as url,
+                        timestamp,
+                        statusCode as status,
+                        method,
+                        0 as responseTime
+                    FROM Log 
+                    WHERE filePath = '${filePath}'
+                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                    SINCE 24 hours ago
+                    ORDER BY timestamp DESC
+                    LIMIT ${limit}
+                    OFFSET ${offset}
+                `.trim();
+            }
 
             console.log('[NEWRELIC DEBUG] Executing IP URLs query for:', ip);
             const results = await this.executeNRQL(accountId, query);
@@ -924,23 +1000,38 @@ export class NewRelicIpReportService {
      */
     async getIpUserAgents(accountId, projectId, ip, startTimestamp, endTimestamp) {
         try {
-            const timeFilter = startTimestamp && endTimestamp 
-                ? `AND timestamp >= ${startTimestamp * 1000} AND timestamp <= ${endTimestamp * 1000}`
-                : 'SINCE 24 hours ago';
-
-            const query = `
-                SELECT 
-                    count(*) as count,
-                    latest(timestamp) as latest_timestamp,
-                    earliest(timestamp) as earliest_timestamp
-                FROM Log 
-                WHERE filePath = '/var/log/platform/${projectId.replace(/'/g, "\\'")}/access.log'
-                    AND client_ip = '${ip.replace(/'/g, "\\'")}'
-                    ${timeFilter}
-                FACET user_agent
-                ORDER BY count DESC
-                LIMIT 10
-            `.trim();
+            let query;
+            if (startTimestamp && endTimestamp) {
+                // Use SINCE/UNTIL for custom time range
+                query = `
+                    SELECT 
+                        count(*) as count,
+                        latest(timestamp) as latest_timestamp,
+                        earliest(timestamp) as earliest_timestamp
+                    FROM Log 
+                    WHERE filePath = '/var/log/platform/${projectId.replace(/'/g, "\\'")}/access.log'
+                        AND client_ip = '${ip.replace(/'/g, "\\'")}'
+                    SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
+                    FACET user_agent
+                    ORDER BY count DESC
+                    LIMIT 10
+                `.trim();
+            } else {
+                // Use SINCE for relative time range
+                query = `
+                    SELECT 
+                        count(*) as count,
+                        latest(timestamp) as latest_timestamp,
+                        earliest(timestamp) as earliest_timestamp
+                    FROM Log 
+                    WHERE filePath = '/var/log/platform/${projectId.replace(/'/g, "\\'")}/access.log'
+                        AND client_ip = '${ip.replace(/'/g, "\\'")}'
+                    SINCE 24 hours ago
+                    FACET user_agent
+                    ORDER BY count DESC
+                    LIMIT 10
+                `.trim();
+            }
 
             console.log('[NEWRELIC DEBUG] Executing IP user agents query for:', ip);
             const results = await this.executeNRQL(accountId, query);
@@ -977,9 +1068,8 @@ export class NewRelicIpReportService {
                 average(time_elapsed) as avg_response_time
             FROM Log 
             WHERE filePath = '/var/log/platform/${projectId.replace(/'/g, "\\'")}/access.log'
-                AND timestamp >= ${startTimestamp * 1000} 
-                AND timestamp <= ${endTimestamp * 1000}
                 AND client_ip IN (${ipList})
+            SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
             FACET client_ip
             TIMESERIES ${bucketSizeSeconds} seconds
             ORDER BY timestamp ASC
