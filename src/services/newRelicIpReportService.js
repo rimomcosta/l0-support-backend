@@ -719,15 +719,15 @@ export class NewRelicIpReportService {
             if (startTimestamp && endTimestamp) {
                 // Use SINCE/UNTIL for custom time range
                 query = `
-                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
-                    SELECT count(*) as count
-                    FROM Log 
-                    WHERE filePath = '${filePath}'
-                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                SELECT count(*) as count
+                FROM Log 
+                WHERE filePath = '${filePath}'
+                    AND ip = '${ip.replace(/'/g, "\\'")}'
                     SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
-                    FACET path, method, statusCode, userAgent
-                    LIMIT MAX
-                `.trim();
+                FACET path, method, statusCode, userAgent
+                LIMIT MAX
+            `.trim();
             } else {
                 // Use SINCE for relative time range
                 query = `
@@ -853,7 +853,7 @@ export class NewRelicIpReportService {
     async getIpDetails(accountId, projectId, ip, startTimestamp, endTimestamp, filters = {}, lastTimestamp = null) {
         try {
             const filePath = this.getFilePath(projectId, 'production');
-            
+
             // Build filter conditions
             let filterConditions = [];
             
@@ -885,22 +885,22 @@ export class NewRelicIpReportService {
             if (startTimestamp && endTimestamp) {
                 // Use SINCE/UNTIL for custom time range
                 query = `
-                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
-                    SELECT
-                        timestamp,  
-                        ip,
-                        method,
-                        statusCode,
-                        path AS url,
-                        userAgent
-                    FROM Log
-                    WHERE filePath = '${filePath}'
-                        AND ip = '${ip.replace(/'/g, "\\'")}'
-                        ${filterClause}
+                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                SELECT
+                    timestamp,  
+                    ip,
+                    method,
+                    statusCode,
+                    path AS url,
+                    userAgent
+                FROM Log
+                WHERE filePath = '${filePath}'
+                    AND ip = '${ip.replace(/'/g, "\\'")}'
+                    ${filterClause}
                     SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
-                    ORDER BY timestamp DESC
-                    LIMIT 10
-                `.trim();
+                ORDER BY timestamp DESC
+                LIMIT 10
+            `.trim();
             } else {
                 // Use SINCE for relative time range
                 query = `
@@ -969,26 +969,26 @@ export class NewRelicIpReportService {
     async getIpUrls(accountId, projectId, ip, startTimestamp, endTimestamp, limit = 10, offset = 0) {
         try {
             const filePath = this.getFilePath(projectId, 'production'); // Use the file path helper
-            
+
             let query;
             if (startTimestamp && endTimestamp) {
                 // Use SINCE/UNTIL for custom time range
                 query = `
-                    WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
-                    SELECT 
-                        path as url,
-                        timestamp,
-                        statusCode as status,
-                        method,
-                        0 as responseTime
-                    FROM Log 
-                    WHERE filePath = '${filePath}'
-                        AND ip = '${ip.replace(/'/g, "\\'")}'
+                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                SELECT 
+                    path as url,
+                    timestamp,
+                    statusCode as status,
+                    method,
+                    0 as responseTime
+                FROM Log 
+                WHERE filePath = '${filePath}'
+                    AND ip = '${ip.replace(/'/g, "\\'")}'
                     SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
-                    ORDER BY timestamp DESC
-                    LIMIT ${limit}
-                    OFFSET ${offset}
-                `.trim();
+                ORDER BY timestamp DESC
+                LIMIT ${limit}
+                OFFSET ${offset}
+            `.trim();
             } else {
                 // Use SINCE for relative time range
                 query = `
@@ -1041,18 +1041,18 @@ export class NewRelicIpReportService {
             if (startTimestamp && endTimestamp) {
                 // Use SINCE/UNTIL for custom time range
                 query = `
-                    SELECT 
-                        count(*) as count,
-                        latest(timestamp) as latest_timestamp,
-                        earliest(timestamp) as earliest_timestamp
-                    FROM Log 
-                    WHERE filePath = '/var/log/platform/${projectId.replace(/'/g, "\\'")}/access.log'
-                        AND client_ip = '${ip.replace(/'/g, "\\'")}'
+                SELECT 
+                    count(*) as count,
+                    latest(timestamp) as latest_timestamp,
+                    earliest(timestamp) as earliest_timestamp
+                FROM Log 
+                WHERE filePath = '/var/log/platform/${projectId.replace(/'/g, "\\'")}/access.log'
+                    AND client_ip = '${ip.replace(/'/g, "\\'")}'
                     SINCE ${startTimestamp * 1000} UNTIL ${endTimestamp * 1000}
-                    FACET user_agent
-                    ORDER BY count DESC
-                    LIMIT 10
-                `.trim();
+                FACET user_agent
+                ORDER BY count DESC
+                LIMIT 10
+            `.trim();
             } else {
                 // Use SINCE for relative time range
                 query = `
@@ -1159,10 +1159,34 @@ export class NewRelicIpReportService {
             return { isValid: false, message: 'Start date must be before end date' };
         }
         
-        const maxDuration = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-        if (toDate.getTime() - fromDate.getTime() > maxDuration) {
-            return { isValid: false, message: 'Date range cannot exceed 7 days' };
+        // Calculate exact duration in milliseconds
+        const durationMs = toDate.getTime() - fromDate.getTime();
+        const maxDurationMs = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+        
+        if (durationMs > maxDurationMs) {
+            // Calculate the excess time for better error message
+            const excessMs = durationMs - maxDurationMs;
+            const excessHours = Math.ceil(excessMs / (60 * 60 * 1000));
+            const excessMinutes = Math.ceil(excessMs / (60 * 1000));
+            
+            let excessMessage;
+            if (excessHours >= 1) {
+                excessMessage = `${excessHours} hour${excessHours > 1 ? 's' : ''}`;
+            } else {
+                excessMessage = `${excessMinutes} minute${excessMinutes > 1 ? 's' : ''}`;
+            }
+            
+            return { 
+                isValid: false, 
+                message: `Date range cannot exceed 7 days. Your selection is ${excessMessage} too long.` 
+            };
         }
+        
+        // Calculate and log the actual duration for debugging
+        const durationHours = durationMs / (60 * 60 * 1000);
+        const durationDays = durationHours / 24;
+        
+        console.log(`[NEWRELIC DEBUG] Date range validation: ${durationDays.toFixed(2)} days (${durationHours.toFixed(1)} hours)`);
         
         return { isValid: true };
     }
