@@ -231,16 +231,18 @@ router.get('/chart-data', conditionalAuth, async (req, res) => {
     }
 });
 
+
+
 /**
  * GET /api/v1/ip-report/ip-details/:ip
- * Get detailed information for a specific IP
+ * Get paginated IP details with optional filters
  */
 router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
     try {
         console.log('[IP DETAILS DEBUG] Request received for IP:', req.params.ip);
         console.log('[IP DETAILS DEBUG] Query params:', req.query);
         
-        const { projectId, environment, startTime, endTime } = req.query;
+        const { projectId, environment, startTime, endTime, statusCode, method, url, userAgent, lastTimestamp } = req.query;
         const { ip } = req.params;
         const userId = req.session?.user?.id || 'anonymous';
 
@@ -266,6 +268,7 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
         // Parse timestamps if provided
         let startTimestamp = null;
         let endTimestamp = null;
+        let parsedLastTimestamp = null;
         
         if (startTime && endTime) {
             startTimestamp = parseInt(startTime);
@@ -278,33 +281,54 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
             }
         }
 
-        logger.info(`[IP REPORT API] User ${userId} requested details for IP ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment}`);
+        if (lastTimestamp) {
+            parsedLastTimestamp = parseInt(lastTimestamp);
+            if (isNaN(parsedLastTimestamp)) {
+                return res.status(400).json({
+                    error: 'Invalid lastTimestamp format'
+                });
+            }
+        }
+
+        // Build filters object
+        const filters = {};
+        if (statusCode) filters.statusCode = statusCode;
+        if (method) filters.method = method;
+        if (url) filters.url = url;
+        if (userAgent) filters.userAgent = userAgent;
+
+        logger.info(`[IP REPORT API] User ${userId} requested IP details for ${sanitizedIp} in ${sanitizedProjectId}/${sanitizedEnvironment} with filters:`, filters);
 
         // Get IP details from NewRelic
-        console.log('[IP DETAILS DEBUG] Calling NewRelic getIpDetails for:', sanitizedIp);
+        console.log('[IP DETAILS DEBUG] Calling NewRelic getIpDetails for:', sanitizedIp, 'with filters:', filters, 'lastTimestamp:', parsedLastTimestamp);
         
         // Get account ID first
         const accountId = await newRelicService.getAccountByProjectId(sanitizedProjectId);
-        const ipDetails = await newRelicService.getIpDetails(
+        const details = await newRelicService.getIpDetails(
             accountId,
             sanitizedProjectId,
             sanitizedIp,
             startTimestamp,
-            endTimestamp
+            endTimestamp,
+            filters,
+            parsedLastTimestamp
         );
         
-        console.log('[IP DETAILS DEBUG] IP details result:', {
-            topUrlsCount: ipDetails.topUrls?.length || 0,
-            userAgentsCount: ipDetails.userAgents?.length || 0,
-            statusCodesCount: Object.keys(ipDetails.statusCodes || {}).length,
-            methodsCount: Object.keys(ipDetails.methods || {}).length
+        console.log('[IP DETAILS DEBUG] Details result:', {
+            requestsCount: details.requests?.length || 0,
+            hasMore: details.hasMore,
+            lastTimestamp: details.lastTimestamp
         });
 
-                 const response = {
+        const response = {
             success: true,
             data: {
                 ip: sanitizedIp,
-                details: ipDetails,
+                requests: details.requests,
+                totalCount: details.totalCount,
+                hasMore: details.hasMore,
+                lastTimestamp: details.lastTimestamp,
+                appliedFilters: filters,
                 timeRange: startTimestamp && endTimestamp ? {
                     start: new Date(startTimestamp * 1000).toISOString(),
                     end: new Date(endTimestamp * 1000).toISOString()
@@ -312,7 +336,7 @@ router.get('/ip-details/:ip', conditionalAuth, async (req, res) => {
             }
         };
         
-        console.log('[IP DETAILS DEBUG] Sending response with details');
+        console.log('[IP DETAILS DEBUG] Sending response with paginated details');
         res.json(response);
 
     } catch (error) {

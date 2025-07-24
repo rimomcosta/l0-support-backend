@@ -752,6 +752,103 @@ export class NewRelicIpReportService {
     }
 
     /**
+     * Get paginated IP details with optional filters
+     * This method fetches 10 results per page using timestamp-based pagination
+     */
+    async getIpDetails(accountId, projectId, ip, startTimestamp, endTimestamp, filters = {}, lastTimestamp = null) {
+        try {
+            const filePath = this.getFilePath(projectId, 'production');
+            const timeFilter = startTimestamp && endTimestamp 
+                ? `AND timestamp >= ${startTimestamp * 1000} AND timestamp <= ${endTimestamp * 1000}`
+                : 'SINCE 24 hours ago';
+
+            // Build filter conditions
+            let filterConditions = [];
+            
+            if (filters.statusCode) {
+                filterConditions.push(`AND statusCode = '${filters.statusCode.replace(/'/g, "\\'")}'`);
+            }
+            
+            if (filters.method) {
+                filterConditions.push(`AND method = '${filters.method.replace(/'/g, "\\'")}'`);
+            }
+            
+            if (filters.url) {
+                filterConditions.push(`AND path LIKE '%${filters.url.replace(/'/g, "\\'")}%'`);
+            }
+            
+            if (filters.userAgent) {
+                filterConditions.push(`AND userAgent LIKE '%${filters.userAgent.replace(/'/g, "\\'")}%'`);
+            }
+
+            // Add timestamp-based pagination
+            if (lastTimestamp) {
+                filterConditions.push(`AND timestamp < ${lastTimestamp}`);
+            }
+
+            const filterClause = filterConditions.join(' ');
+
+            // Query to get paginated results (10 per page)
+            const query = `
+                WITH aparse(message, '* - - [*] "* * *" * * "*" "*"') AS (ip, datetime, method, path, protocol, statusCode, size, referer, userAgent)
+                SELECT
+                    timestamp,  
+                    ip,
+                    method,
+                    statusCode,
+                    path AS url,
+                    userAgent
+                FROM Log
+                WHERE filePath = '${filePath}'
+                    AND ip = '${ip.replace(/'/g, "\\'")}'
+                    ${timeFilter}
+                    ${filterClause}
+                ORDER BY timestamp DESC
+                LIMIT 10
+            `.trim();
+
+            console.log('[NEWRELIC DEBUG] Executing paginated IP details query for:', ip, 'with filters:', filters, 'lastTimestamp:', lastTimestamp);
+            const results = await this.executeNRQL(accountId, query);
+            
+            if (!results || results.length === 0) {
+            return {
+                    requests: [],
+                    totalCount: 0,
+                    hasMore: false,
+                    lastTimestamp: null
+                };
+            }
+            
+            console.log(`[NEWRELIC DEBUG] Paginated query successful for: ${ip}, returned ${results.length} results`);
+            
+            // Process results
+            const requests = results.map(result => ({
+                timestamp: result.timestamp,
+                ip: result.ip,
+                method: result.method || 'Unknown',
+                statusCode: result.statusCode || 'Unknown',
+                url: result.url || '/unknown',
+                userAgent: result.userAgent || 'Unknown'
+            }));
+
+            // Check if there are more results by getting the last timestamp
+            const lastResultTimestamp = results[results.length - 1].timestamp;
+            const hasMore = results.length === 10; // If we got exactly 10 results, there might be more
+
+            return {
+                requests,
+                totalCount: results.length,
+                hasMore,
+                lastTimestamp: lastResultTimestamp
+            };
+            
+        } catch (error) {
+            console.error('[NEWRELIC ERROR] Failed to get IP details:', error);
+            throw new Error(`Failed to get IP details from New Relic: ${error.message}`);
+        }
+    }
+
+    /**
      * Get paginated URLs for a specific IP
      */
     async getIpUrls(accountId, projectId, ip, startTimestamp, endTimestamp, limit = 10, offset = 0) {
