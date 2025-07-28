@@ -362,7 +362,7 @@ export async function runCommands(req, res) {
         });
 
         // Get nodes for the project/environment
-        const nodes = await getNodes(req, res);
+        const nodes = await getNodes(projectId, environment, apiToken, userId);
         
         if (!nodes || nodes.length === 0) {
             logSSHOperation('error', 'No nodes found for project/environment', {
@@ -382,21 +382,21 @@ export async function runCommands(req, res) {
             environment: environment,
             userId: userId,
             nodeCount: nodes.length,
-            nodes: nodes.map(node => ({ id: node.id, name: node.name })),
+            nodes: nodes.map(node => ({ id: node.id, sshUrl: node.sshUrl, status: node.status })),
             timestamp: new Date().toISOString()
         });
 
         const magentoCloud = new MagentoCloudAdapter();
+        const isSingleNode = !nodes || nodes.length <= 1;
         const results = [];
 
-        // Execute commands on each node
-        for (const node of nodes) {
-            logSSHOperation('debug', `Executing commands on node: ${node.name}`, {
+        if (isSingleNode) {
+            // Execute commands on single node
+            logSSHOperation('debug', 'Executing commands on single node', {
                 projectId: projectId,
                 environment: environment,
                 userId: userId,
-                nodeId: node.id,
-                nodeName: node.name,
+                nodeId: 'single-node',
                 commandCount: commands.length,
                 timestamp: new Date().toISOString()
             });
@@ -405,20 +405,123 @@ export async function runCommands(req, res) {
                 magentoCloud,
                 projectId,
                 environment,
-                node.id,
+                null, // nodeId is null for single node
                 commands,
-                false, // isSingleNode
+                true, // isSingleNode
                 apiToken,
                 userId
             );
 
             results.push(...nodeResults);
+        } else {
+            // Multi-node execution
+            const allNodesCommands = commands.filter(cmd => cmd.executeOnAllNodes);
+            const singleNodeCommands = commands.filter(cmd => !cmd.executeOnAllNodes);
+
+            // Execute single-node commands on first node only
+            if (singleNodeCommands.length > 0) {
+                logSSHOperation('debug', `Executing single-node commands on first node: ${nodes[0].sshUrl}`, {
+                    projectId: projectId,
+                    environment: environment,
+                    userId: userId,
+                    nodeId: nodes[0].id,
+                    sshUrl: nodes[0].sshUrl,
+                    commandCount: singleNodeCommands.length,
+                    timestamp: new Date().toISOString()
+                });
+
+                const nodeResults = await executeSSHCommandsOnNode(
+                    magentoCloud,
+                    projectId,
+                    environment,
+                    nodes[0].id,
+                    singleNodeCommands,
+                    false, // isSingleNode
+                    apiToken,
+                    userId
+                );
+
+                results.push(...nodeResults);
+            }
+
+            // Execute all-nodes commands on all nodes
+            if (allNodesCommands.length > 0) {
+                for (const node of nodes) {
+                    logSSHOperation('debug', `Executing all-nodes commands on node: ${node.sshUrl}`, {
+                        projectId: projectId,
+                        environment: environment,
+                        userId: userId,
+                        nodeId: node.id,
+                        sshUrl: node.sshUrl,
+                        commandCount: allNodesCommands.length,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    const nodeResults = await executeSSHCommandsOnNode(
+                        magentoCloud,
+                        projectId,
+                        environment,
+                        node.id,
+                        allNodesCommands,
+                        false, // isSingleNode
+                        apiToken,
+                        userId
+                    );
+
+                    results.push(...nodeResults);
+                }
+            }
         }
 
+        // Group results by command
+        const commandResults = [];
+        const commandsById = {};
+        
+        // Initialize command results structure
+        commands.forEach(cmd => {
+            commandsById[cmd.id] = {
+                id: cmd.id,
+                title: cmd.title,
+                command: cmd.command,
+                allowAi: cmd.allowAi,
+                results: [],
+                summary: {
+                    total: 0,
+                    successful: 0,
+                    failed: 0
+                }
+            };
+        });
+
+        // Group node results by command
+        results.forEach(result => {
+            const commandResult = commandsById[result.commandId];
+            if (commandResult) {
+                commandResult.results.push({
+                    nodeId: result.nodeId,
+                    output: result.output,
+                    error: result.error,
+                    status: result.status
+                });
+                
+                commandResult.summary.total++;
+                if (result.status === 'SUCCESS') {
+                    commandResult.summary.successful++;
+                } else {
+                    commandResult.summary.failed++;
+                }
+            }
+        });
+
+        // Convert to array
+        Object.values(commandsById).forEach(cmd => {
+            commandResults.push(cmd);
+        });
+
         // Calculate overall statistics
-        const totalCommands = results.length;
-        const successfulCommands = results.filter(r => r.status === 'SUCCESS').length;
-        const failedCommands = results.filter(r => r.status === 'ERROR').length;
+        const totalCommands = commandResults.length;
+        const successfulCommands = commandResults.filter(cmd => cmd.summary.successful > 0).length;
+        const failedCommands = commandResults.filter(cmd => cmd.summary.failed > 0).length;
 
         logSSHOperation('info', 'SSH command execution completed', {
             projectId: projectId,
@@ -432,13 +535,8 @@ export async function runCommands(req, res) {
         });
 
         res.json({
-            results,
-            summary: {
-                totalCommands,
-                successfulCommands,
-                failedCommands,
-                successRate: totalCommands > 0 ? (successfulCommands / totalCommands * 100).toFixed(2) + '%' : '0%'
-            }
+            timestamp: new Date().toISOString(),
+            results: commandResults
         });
 
     } catch (error) {
