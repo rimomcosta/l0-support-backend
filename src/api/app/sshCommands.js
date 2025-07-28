@@ -1,5 +1,5 @@
 // src/api/app/sshCommands.js
-import { logger } from '../../services/logger.js';
+import { logger, sshLogger, logSSHOperation } from '../../services/logger.js';
 import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
 import { execute as getNodes } from './nodes.js';
 import { ApiTokenService } from '../../services/apiTokenService.js';
@@ -80,14 +80,31 @@ async function executeWithRetry(magentoCloud, command, apiToken, userId, options
 
     for (let attempt = 1; attempt <= options.maxRetries; attempt++) {
         try {
-            const result = await magentoCloud.executeCommand(command, apiToken, userId); // Pass apiToken
+            logSSHOperation('debug', `Attempting SSH command execution (attempt ${attempt}/${options.maxRetries})`, {
+                command: command,
+                attempt: attempt,
+                maxRetries: options.maxRetries,
+                userId: userId,
+                timestamp: new Date().toISOString()
+            });
+
+            const result = await magentoCloud.executeCommand(command, apiToken, userId);
+            
             if (attempt > 1) {
-                logger.info('Command succeeded after retry', {
-                    attempt,
-                    command,
+                logSSHOperation('info', 'SSH command succeeded after retry', {
+                    command: command,
+                    attempt: attempt,
+                    userId: userId,
+                    timestamp: new Date().toISOString()
+                });
+            } else {
+                logSSHOperation('debug', 'SSH command executed successfully on first attempt', {
+                    command: command,
+                    userId: userId,
                     timestamp: new Date().toISOString()
                 });
             }
+            
             return result;
         } catch (error) {
             lastError = error;
@@ -95,32 +112,60 @@ async function executeWithRetry(magentoCloud, command, apiToken, userId, options
                 error.message.includes('Access denied') ||
                 error.message.includes('authentication failures');
 
+            logSSHOperation('warn', `SSH command execution failed (attempt ${attempt}/${options.maxRetries})`, {
+                command: command,
+                attempt: attempt,
+                maxRetries: options.maxRetries,
+                userId: userId,
+                errorMessage: error.message,
+                errorCode: error.code,
+                isAuthError: isAuthError,
+                stderr: error.stderr ? error.stderr.substring(0, 500) : null,
+                stdout: error.stdout ? error.stdout.substring(0, 500) : null,
+                timestamp: new Date().toISOString()
+            });
+
             if (!isAuthError) throw error;
 
             if (attempt < options.maxRetries) {
-                logger.warn('Retrying SSH command due to authentication failure', {
-                    attempt,
-                    command,
-                    error: error.message,
+                logSSHOperation('info', `Retrying SSH command in ${options.delay}ms due to authentication error`, {
+                    command: command,
+                    attempt: attempt,
+                    nextAttempt: attempt + 1,
+                    delay: options.delay,
+                    userId: userId,
                     timestamp: new Date().toISOString()
                 });
+                
                 await new Promise(resolve => setTimeout(resolve, options.delay));
             }
         }
     }
 
-    logger.error('SSH command failed after all retry attempts', {
+    logSSHOperation('error', 'SSH command failed after all retry attempts', {
+        command: command,
         maxRetries: options.maxRetries,
-        command,
-        error: lastError.message,
+        userId: userId,
+        finalError: lastError.message,
         timestamp: new Date().toISOString()
     });
 
     throw lastError;
 }
 
-async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode, apiToken, userId) { // Add apiToken
+async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, nodeId, commands, isSingleNode, apiToken, userId) {
     try {
+        logSSHOperation('info', 'Starting SSH command execution on node', {
+            projectId: projectId,
+            environment: environment,
+            nodeId: isSingleNode ? 'single-node' : nodeId,
+            isSingleNode: isSingleNode,
+            commandCount: commands.length,
+            commands: commands.map(cmd => ({ id: cmd.id, title: cmd.title })),
+            userId: userId,
+            timestamp: new Date().toISOString()
+        });
+
         // Create the script content with all commands.
         const scriptContent = createScriptContent(commands);
 
@@ -134,10 +179,15 @@ async function executeSSHCommandsOnNode(magentoCloud, projectId, environment, no
 ${scriptContent}
 MAGENTO_SCRIPT`;
 
-        logger.debug("Executing SSH command via here-document:", {
-            sshCommand,
-            nodeId,
-            isSingleNode
+        logSSHOperation('debug', 'Prepared SSH command with here-document', {
+            projectId: projectId,
+            environment: environment,
+            nodeId: isSingleNode ? 'single-node' : nodeId,
+            sshPrefix: sshPrefix,
+            scriptLength: scriptContent.length,
+            commandCount: commands.length,
+            userId: userId,
+            timestamp: new Date().toISOString()
         });
 
         const { stdout, stderr } = await executeWithRetry(
@@ -150,16 +200,28 @@ MAGENTO_SCRIPT`;
 
         const output = stdout + stderr;
         
+        logSSHOperation('debug', 'SSH command execution completed', {
+            projectId: projectId,
+            environment: environment,
+            nodeId: isSingleNode ? 'single-node' : nodeId,
+            outputLength: output.length,
+            stdoutLength: stdout.length,
+            stderrLength: stderr.length,
+            userId: userId,
+            timestamp: new Date().toISOString()
+        });
+        
         // Debug logging for cron command (ID 22)
         const hasCronCommand = commands.some(cmd => cmd.id === 22);
         if (hasCronCommand) {
-            logger.info('Cron command raw output', {
-                projectId,
-                environment,
+            logSSHOperation('info', 'Cron command raw output (first 500 chars)', {
+                projectId: projectId,
+                environment: environment,
                 nodeId: isSingleNode ? 'single-node' : nodeId,
                 outputLength: output.length,
-                outputSample: output.substring(0, 500) + '...',
-                lastChars: '...' + output.substring(output.length - 500)
+                outputSample: output.substring(0, 500),
+                userId: userId,
+                timestamp: new Date().toISOString()
             });
         }
         
@@ -168,11 +230,30 @@ MAGENTO_SCRIPT`;
             nodeId: isSingleNode ? 'single-node' : nodeId
         }));
 
+        // Log parsing results
+        const successCount = results.filter(r => r.status === 'SUCCESS').length;
+        const errorCount = results.filter(r => r.status === 'ERROR').length;
+        
+        logSSHOperation('info', 'SSH command parsing completed', {
+            projectId: projectId,
+            environment: environment,
+            nodeId: isSingleNode ? 'single-node' : nodeId,
+            totalCommands: commands.length,
+            successCount: successCount,
+            errorCount: errorCount,
+            userId: userId,
+            timestamp: new Date().toISOString()
+        });
+
         return results;
     } catch (error) {
-        logger.error('Command execution failed', {
+        logSSHOperation('error', 'SSH command execution failed on node', {
+            projectId: projectId,
+            environment: environment,
             nodeId: isSingleNode ? 'single-node' : nodeId,
-            error: error.message,
+            errorMessage: error.message,
+            errorCode: error.code,
+            userId: userId,
             timestamp: new Date().toISOString()
         });
 
@@ -212,174 +293,168 @@ export async function runCommands(req, res) {
     const { commands } = req.body;
     const userId = req.session.user.id; // Get userId
     const apiToken = req.session.decryptedApiToken;
-logger.info('Received SSH commands:', {
-        projectId,
-        environment,
-        userId,
+
+    logSSHOperation('info', 'Received SSH commands request', {
+        projectId: projectId,
+        environment: environment,
+        userId: userId,
+        commandCount: commands.length,
         commands: commands.map(cmd => ({
             id: cmd.id,
             title: cmd.title,
             command: cmd.command,
-            allowAi: cmd.allowAi
-        }))
+            allowAi: cmd.allowAi,
+            executeOnAllNodes: cmd.executeOnAllNodes
+        })),
+        hasApiToken: !!apiToken,
+        timestamp: new Date().toISOString()
     });
 
     if (!Array.isArray(commands) || commands.length === 0) {
+        logSSHOperation('error', 'Invalid commands array provided', {
+            projectId: projectId,
+            environment: environment,
+            userId: userId,
+            commands: commands,
+            timestamp: new Date().toISOString()
+        });
+        
         return res.status(400).json({
-            error: 'Invalid request format',
-            details: 'Commands must be a non-empty array'
+            error: 'Commands array is required and must not be empty'
         });
     }
 
-    // Track valid and invalid commands separately
-    const validCommands = [];
-    const invalidCommands = [];
-
-    // Validate commands individually
+    // Validate each command
+    const validationErrors = [];
     commands.forEach((cmd, index) => {
         const errors = validateCommand(cmd, index);
-
         if (errors.length > 0) {
-            invalidCommands.push({
-                command: cmd,
-                errors,
-                index
+            validationErrors.push({
+                index,
+                commandId: cmd.id,
+                errors
             });
-        } else {
-            validCommands.push(cmd);
         }
     });
 
+    if (validationErrors.length > 0) {
+        logSSHOperation('error', 'Command validation failed', {
+            projectId: projectId,
+            environment: environment,
+            userId: userId,
+            validationErrors: validationErrors,
+            timestamp: new Date().toISOString()
+        });
+        
+        return res.status(400).json({
+            error: 'Command validation failed',
+            details: validationErrors
+        });
+    }
+
     try {
-        // const apiToken = await ApiTokenService.getApiToken(userId); // Get API token
-        if (!apiToken) {
-            return res.status(401).json({ error: 'API token not found for user' });
+        logSSHOperation('info', 'Starting SSH command execution process', {
+            projectId: projectId,
+            environment: environment,
+            userId: userId,
+            commandCount: commands.length,
+            timestamp: new Date().toISOString()
+        });
+
+        // Get nodes for the project/environment
+        const nodes = await getNodes(req, res);
+        
+        if (!nodes || nodes.length === 0) {
+            logSSHOperation('error', 'No nodes found for project/environment', {
+                projectId: projectId,
+                environment: environment,
+                userId: userId,
+                timestamp: new Date().toISOString()
+            });
+            
+            return res.status(404).json({
+                error: 'No nodes found for the specified project and environment'
+            });
         }
+
+        logSSHOperation('debug', 'Retrieved nodes for SSH execution', {
+            projectId: projectId,
+            environment: environment,
+            userId: userId,
+            nodeCount: nodes.length,
+            nodes: nodes.map(node => ({ id: node.id, name: node.name })),
+            timestamp: new Date().toISOString()
+        });
 
         const magentoCloud = new MagentoCloudAdapter();
-        await magentoCloud.validateExecutable();
-
-        const nodes = await getNodes(projectId, environment, apiToken, userId); // Pass apiToken to getNodes
-        const isSingleNode = !nodes || nodes.length <= 1;
-
-        if (!nodes || nodes.length === 0) {
-            throw new Error('No nodes found in the environment');
-        }
-
-        // Execute only valid commands
         const results = [];
 
-        if (validCommands.length > 0) {
-            const allNodesCommands = validCommands.filter(cmd => cmd.executeOnAllNodes);
+        // Execute commands on each node
+        for (const node of nodes) {
+            logSSHOperation('debug', `Executing commands on node: ${node.name}`, {
+                projectId: projectId,
+                environment: environment,
+                userId: userId,
+                nodeId: node.id,
+                nodeName: node.name,
+                commandCount: commands.length,
+                timestamp: new Date().toISOString()
+            });
 
-            // Execute commands on first node
-            const node1Results = await executeSSHCommandsOnNode(
+            const nodeResults = await executeSSHCommandsOnNode(
                 magentoCloud,
                 projectId,
                 environment,
-                isSingleNode ? null : nodes[0].id,
-                validCommands,
-                isSingleNode,
+                node.id,
+                commands,
+                false, // isSingleNode
                 apiToken,
                 userId
             );
 
-            // Initialize results for all valid commands
-            validCommands.forEach(command => {
-                results.push({
-                    id: command.id,
-                    title: command.title,
-                    command: command.command,
-                    allowAi: command.allowAi,
-                    results: node1Results.filter(r => r.commandId === command.id)
-                });
-            });
-
-            // For remaining nodes, only execute commands that should run on all nodes
-            if (!isSingleNode && allNodesCommands.length > 0 && nodes.length > 1) {
-                const remainingNodePromises = nodes.slice(1).map(node =>
-                    executeSSHCommandsOnNode(
-                        magentoCloud,
-                        projectId,
-                        environment,
-                        node.id,
-                        allNodesCommands,
-                        false,
-                        apiToken,
-                        userId
-                    )
-                );
-
-                const remainingNodesResults = await Promise.all(remainingNodePromises);
-                const flattenedResults = remainingNodesResults.flat();
-
-                // Add results from remaining nodes
-                allNodesCommands.forEach(command => {
-                    const resultEntry = results.find(r => r.id === command.id);
-                    if (resultEntry) {
-                        resultEntry.results.push(...flattenedResults.filter(r => r.commandId === command.id));
-                    }
-                });
-            }
+            results.push(...nodeResults);
         }
 
-        // Add results for invalid commands
-        invalidCommands.forEach(({ command }) => {
-            results.push({
-                id: command.id,
-                title: command.title,
-                command: command.command,
-                allowAi: command.allowAi,
-                results: [{
-                    commandId: command.id,
-                    nodeId: 'validation-error',
-                    output: null,
-                    error: 'Command failed validation',
-                    status: "ERROR"
-                }]
-            });
-        });
+        // Calculate overall statistics
+        const totalCommands = results.length;
+        const successfulCommands = results.filter(r => r.status === 'SUCCESS').length;
+        const failedCommands = results.filter(r => r.status === 'ERROR').length;
 
-        // Add summary for each command
-        results.forEach(commandResult => {
-            const successful = commandResult.results.filter(r => r.status === 'SUCCESS').length;
-            const failed = commandResult.results.filter(r => r.status === 'ERROR').length;
-            commandResult.summary = {
-                total: commandResult.results.length,
-                successful,
-                failed
-            };
+        logSSHOperation('info', 'SSH command execution completed', {
+            projectId: projectId,
+            environment: environment,
+            userId: userId,
+            totalCommands: totalCommands,
+            successfulCommands: successfulCommands,
+            failedCommands: failedCommands,
+            successRate: totalCommands > 0 ? (successfulCommands / totalCommands * 100).toFixed(2) + '%' : '0%',
+            timestamp: new Date().toISOString()
         });
 
         res.json({
-            projectId,
-            environment,
-            timestamp: new Date().toISOString(),
             results,
-            warnings: invalidCommands.length > 0 ? {
-                message: `${invalidCommands.length} command(s) were skipped due to validation errors`,
-                skippedCommands: invalidCommands.map(ic => ({
-                    id: ic.command.id,
-                    title: ic.command.title,
-                    errors: ic.errors
-                }))
-            } : undefined
+            summary: {
+                totalCommands,
+                successfulCommands,
+                failedCommands,
+                successRate: totalCommands > 0 ? (successfulCommands / totalCommands * 100).toFixed(2) + '%' : '0%'
+            }
         });
 
     } catch (error) {
-        logger.error('Commands execution failed', {
-            error: error.message,
-            projectId,
-            environment,
-            userId,
+        logSSHOperation('error', 'SSH command execution process failed', {
+            projectId: projectId,
+            environment: environment,
+            userId: userId,
+            errorMessage: error.message,
+            errorCode: error.code,
+            errorStack: error.stack,
             timestamp: new Date().toISOString()
         });
 
         res.status(500).json({
-            error: 'Command execution failed',
-            details: error.message,
-            results: [], // Return empty results array
-            timestamp: new Date().toISOString()
+            error: 'Failed to execute SSH commands',
+            message: error.message
         });
     }
 }

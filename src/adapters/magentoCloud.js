@@ -2,7 +2,7 @@
 import { access, constants, mkdir } from 'fs/promises';
 import { promisify } from 'util';
 import { exec } from 'child_process';
-import { logger } from '../services/logger.js';
+import { logger, magentoLogger, logMagentoOperation } from '../services/logger.js';
 import { paths } from '../config/paths.js';
 import path from 'path';
 import os from 'os';
@@ -13,6 +13,12 @@ class MagentoCloudAdapter {
     constructor() {
         this.executablePath = paths.resources.magentoCloud;
         this.baseHomeDir = path.join(os.tmpdir(), 'magento-cloud'); // Base directory for all users
+        
+        logMagentoOperation('info', 'MagentoCloudAdapter initialized', {
+            executablePath: this.executablePath,
+            baseHomeDir: this.baseHomeDir,
+            timestamp: new Date().toISOString()
+        });
     }
 
     /**
@@ -21,11 +27,15 @@ class MagentoCloudAdapter {
     async validateExecutable() {
         try {
             await access(this.executablePath, constants.X_OK);
-            logger.debug('Magento Cloud executable validated');
+            logMagentoOperation('debug', 'Magento Cloud executable validated successfully', {
+                executablePath: this.executablePath,
+                timestamp: new Date().toISOString()
+            });
         } catch (err) {
-            logger.error('Magento Cloud executable validation failed:', {
+            logMagentoOperation('error', 'Magento Cloud executable validation failed', {
                 error: err.message,
-                path: this.executablePath,
+                errorCode: err.code,
+                executablePath: this.executablePath,
                 timestamp: new Date().toISOString()
             });
             throw new Error('Magento Cloud executable not found or not executable');
@@ -40,7 +50,15 @@ class MagentoCloudAdapter {
     generateHomeDir(userId) {
         // Sanitize userId to prevent directory traversal or injection
         const sanitizedUserId = userId.replace(/[^a-zA-Z0-9-_]/g, '');
-        return path.join(this.baseHomeDir, `user-${sanitizedUserId}`);
+        const homeDir = path.join(this.baseHomeDir, `user-${sanitizedUserId}`);
+        
+        logMagentoOperation('debug', 'Generated Magento Cloud home directory', {
+            userId: sanitizedUserId,
+            homeDir: homeDir,
+            timestamp: new Date().toISOString()
+        });
+        
+        return homeDir;
     }
 
     /**
@@ -50,11 +68,15 @@ class MagentoCloudAdapter {
     async ensureHomeDir(homeDir) {
         try {
             await mkdir(homeDir, { recursive: true, mode: 0o700 });
-            logger.debug(`Ensured Magento Cloud home directory exists---::: ${homeDir}`);
+            logMagentoOperation('debug', 'Ensured Magento Cloud home directory exists', {
+                homeDir: homeDir,
+                timestamp: new Date().toISOString()
+            });
         } catch (err) {
-            logger.error('Failed to create Magento Cloud home directory:', {
+            logMagentoOperation('error', 'Failed to create Magento Cloud home directory', {
                 error: err.message,
-                homeDir,
+                errorCode: err.code,
+                homeDir: homeDir,
                 timestamp: new Date().toISOString()
             });
             throw new Error('Failed to create Magento Cloud home directory');
@@ -70,20 +92,38 @@ class MagentoCloudAdapter {
      */
     async executeCommand(command, apiToken, userId) {
         if (!apiToken) {
+            logMagentoOperation('error', 'API token is required for Magento Cloud CLI commands', {
+                userId: userId,
+                command: command,
+                timestamp: new Date().toISOString()
+            });
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
 
         if (!userId) {
+            logMagentoOperation('error', 'User ID is required to generate Magento Cloud home directory', {
+                command: command,
+                hasApiToken: !!apiToken,
+                timestamp: new Date().toISOString()
+            });
             throw new Error("User ID is required to generate Magento Cloud home directory.");
         }
 
-        // Add logging for debugging
-        logger.info('Executing Magento Cloud command', {
+        // Extract command details for logging
+        const commandParts = command.split(' ');
+        const commandType = commandParts[0];
+        const projectId = command.match(/-p\s+(\S+)/)?.[1] || 'unknown';
+        const environment = command.match(/-e\s+(\S+)/)?.[1] || 'unknown';
+
+        // Log command execution start
+        logMagentoOperation('info', 'Executing Magento Cloud command', {
             command: command,
+            commandType: commandType,
+            projectId: projectId,
+            environment: environment,
             userId: userId,
             hasApiToken: !!apiToken,
-            // Extract project ID from command if present
-            projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown'
+            timestamp: new Date().toISOString()
         });
 
         // Generate and ensure the home directory exists
@@ -93,22 +133,38 @@ class MagentoCloudAdapter {
         // Destructure to exclude unwanted environment variables
         const { MAGENTO_CLOUD_APPLICATION_NAME, MAGENTO_CLOUD_BRANCH, ...cleanEnv } = process.env;
 
+        const envVars = {
+            ...cleanEnv,
+            PATH: `/usr/local/bin:/usr/bin:${cleanEnv.PATH}`, // To allow using PHP from PATH
+            MAGENTO_CLOUD_CLI_TOKEN: apiToken,
+            MAGENTO_CLOUD_HOME: homeDir
+        };
+
+        logMagentoOperation('debug', 'Command environment prepared', {
+            commandType: commandType,
+            projectId: projectId,
+            environment: environment,
+            homeDir: homeDir,
+            hasPath: !!envVars.PATH,
+            hasToken: !!envVars.MAGENTO_CLOUD_CLI_TOKEN,
+            timestamp: new Date().toISOString()
+        });
+
         try {
             const { stdout, stderr } = await execAsync(`${this.executablePath} ${command}`, {
-                env: {
-                    ...cleanEnv,
-                    PATH: `/usr/local/bin:/usr/bin:${cleanEnv.PATH}`, // To allow using PHP from PATH
-                    MAGENTO_CLOUD_CLI_TOKEN: apiToken,
-                    MAGENTO_CLOUD_HOME: homeDir
-                },
+                env: envVars,
                 maxBuffer: 10 * 1024 * 1024 // 10MB buffer
             });
 
-            logger.debug('Command executed successfully', {
-                commandType: command.split(' ')[0],
+            logMagentoOperation('debug', 'Command executed successfully', {
+                commandType: commandType,
+                projectId: projectId,
+                environment: environment,
                 hasOutput: Boolean(stdout),
                 hasError: Boolean(stderr),
-                projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown'
+                outputLength: stdout ? stdout.length : 0,
+                errorLength: stderr ? stderr.length : 0,
+                timestamp: new Date().toISOString()
             });
 
             return { stdout, stderr };
@@ -136,10 +192,14 @@ class MagentoCloudAdapter {
             );
             
             if (isAuthError) {
-                logger.error('Authentication error detected', {
-                    command: command.split(' ')[0],
-                    projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown',
-                    userId,
+                logMagentoOperation('error', 'Authentication error detected', {
+                    commandType: commandType,
+                    projectId: projectId,
+                    environment: environment,
+                    userId: userId,
+                    errorMessage: error.message,
+                    stderr: stderr.substring(0, 500), // Log first 500 chars of stderr
+                    stdout: stdout.substring(0, 500), // Log first 500 chars of stdout
                     timestamp: new Date().toISOString()
                 });
                 
@@ -152,18 +212,24 @@ class MagentoCloudAdapter {
             }
             
             if (command.startsWith('tunnel:info') && error.message.includes('No tunnels found')) {
-                logger.info('Magento Cloud command execution (tunnel:info) returned no tunnel info (expected when tunnel is closed).', {
-                    command,
+                logMagentoOperation('info', 'Magento Cloud command execution (tunnel:info) returned no tunnel info (expected when tunnel is closed)', {
+                    command: command,
+                    commandType: commandType,
+                    projectId: projectId,
+                    environment: environment,
                     timestamp: new Date().toISOString()
                 });
                 return { stdout: '', stderr: error.message };
             } else {
-                logger.error('Magento Cloud command execution failed:', {
-                    error: error.message,
-                    stderr: error.stderr,
-                    stdout: error.stdout,
-                    command,
-                    projectId: command.match(/-p\s+(\S+)/)?.[1] || 'unknown',
+                logMagentoOperation('error', 'Magento Cloud command execution failed', {
+                    commandType: commandType,
+                    projectId: projectId,
+                    environment: environment,
+                    userId: userId,
+                    errorMessage: error.message,
+                    errorCode: error.code,
+                    stderr: stderr.substring(0, 1000), // Log first 1000 chars of stderr
+                    stdout: stdout.substring(0, 1000), // Log first 1000 chars of stdout
                     timestamp: new Date().toISOString()
                 });
                 throw error;
@@ -180,19 +246,29 @@ class MagentoCloudAdapter {
      */
     executeCommandStream(command, apiToken, userId) {
         if (!apiToken) {
+            logMagentoOperation('error', 'API token is required for Magento Cloud CLI commands', {
+                userId: userId,
+                command: command,
+                timestamp: new Date().toISOString()
+            });
             throw new Error("API token is required for Magento Cloud CLI commands.");
         }
 
         if (!userId) {
+            logMagentoOperation('error', 'User ID is required to generate Magento Cloud home directory', {
+                command: command,
+                hasApiToken: !!apiToken,
+                timestamp: new Date().toISOString()
+            });
             throw new Error("User ID is required to generate Magento Cloud home directory.");
         }
 
         // Generate and ensure the home directory exists
         const homeDir = this.generateHomeDir(userId);
         this.ensureHomeDir(homeDir).catch(err => {
-            logger.error('Failed to ensure Magento Cloud home directory:', {
+            logMagentoOperation('error', 'Failed to ensure Magento Cloud home directory', {
                 error: err.message,
-                homeDir,
+                homeDir: homeDir,
                 timestamp: new Date().toISOString()
             });
             throw err;
@@ -212,19 +288,25 @@ class MagentoCloudAdapter {
         });
         // Log output to console for debugging
         tunnelProcess.stdout.on('data', (data) => {
-            logger.debug('Stream output received', {
-                dataLength: data.toString().length
+            logMagentoOperation('debug', 'Stream output received', {
+                dataLength: data.toString().length,
+                timestamp: new Date().toISOString()
             });
         });
 
         tunnelProcess.stderr.on('data', (data) => {
-            logger.debug('Stream error output received', {
-                dataLength: data.toString().length
+            logMagentoOperation('debug', 'Stream error output received', {
+                dataLength: data.toString().length,
+                timestamp: new Date().toISOString()
             });
         });
 
         tunnelProcess.on('close', (code) => {
+            logMagentoOperation('debug', 'Stream process closed', {
+                code: code,
+                timestamp: new Date().toISOString()
             });
+        });
         return { tunnelProcess };
     }
 }
