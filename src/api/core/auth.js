@@ -331,6 +331,70 @@ export async function sessionHealth(req, res) {
     }
 }
 
+export async function extendSession(req, res) {
+    try {
+        if (!req.session?.user) {
+            return res.status(401).json({ 
+                error: 'Not authenticated',
+                code: 'SESSION_EXPIRED'
+            });
+        }
+
+        const useOkta = process.env.USE_OKTA !== 'false';
+        const isDevelopment = process.env.NODE_ENV !== 'production';
+        
+        if (useOkta) {
+            // For Okta sessions, we need to refresh the token
+            // This would typically involve calling Okta's token refresh endpoint
+            // For now, we'll just regenerate the session with a new expiry
+            req.session.cookie.maxAge = sessionConfig.cookie.maxAge;
+            await AuthService.saveSession(req.session);
+            
+            logger.info('Okta session extended', {
+                userId: req.session.user.id,
+                sessionId: req.sessionID
+            });
+            
+            res.json({ 
+                success: true, 
+                user: req.session.user,
+                message: 'Session extended successfully'
+            });
+        } else {
+            // For mock sessions in development, refresh the mock user
+            const oldUser = req.session?.user;
+            const currentConfigHash = getConfigHash();
+            
+            // Force refresh the mock user session
+            req.session.user = getMockUserForSession();
+            req.session.cookie.maxAge = sessionConfig.cookie.maxAge;
+            
+            await AuthService.saveSession(req.session);
+            
+            logger.info('Mock user session extended', {
+                userId: req.session.user.id,
+                email: req.session.user.email,
+                isAdmin: req.session.user.isAdmin,
+                isUser: req.session.user.isUser,
+                oldConfigHash: oldUser?.configHash,
+                newConfigHash: currentConfigHash,
+                sessionId: req.sessionID
+            });
+            
+            res.json({ 
+                success: true, 
+                user: req.session.user,
+                message: 'Mock user session extended successfully',
+                configHash: currentConfigHash
+            });
+        }
+        
+    } catch (error) {
+        logger.error('Session extension failed:', error);
+        res.status(500).json({ error: 'Failed to extend session' });
+    }
+}
+
 export async function refreshMockSession(req, res) {
     try {
         const useOkta = process.env.USE_OKTA !== 'false';

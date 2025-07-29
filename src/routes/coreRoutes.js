@@ -1,6 +1,6 @@
 // src/routes/coreRoutes.js
 import express from 'express';
-import { login, callback, getUser, logout, sessionHealth, claimSession, refreshMockSession } from '../api/core/auth.js';
+import { login, callback, getUser, logout, sessionHealth, claimSession, refreshMockSession, extendSession } from '../api/core/auth.js';
 import { conditionalAuth } from '../middleware/auth.js';
 import * as health from '../api/core/health.js';
 import * as apiToken from '../api/core/apiToken.js';
@@ -16,6 +16,7 @@ router.get('/auth/session-health', sessionHealth);
 router.post('/auth/logout', logout);
 router.post('/auth/claim-session', claimSession);
 router.post('/auth/refresh-mock-session', refreshMockSession);
+router.post('/auth/extend-session', extendSession);
 
 // Health routes
 router.get('/health', health.checkHealth);

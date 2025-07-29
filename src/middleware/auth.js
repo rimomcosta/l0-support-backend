@@ -15,6 +15,32 @@ export function requireAuth(req, res, next) {
     next();
 }
 
+export function requireAdmin(req, res, next) {
+    if (!req.session?.user) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const useOkta = process.env.USE_OKTA !== 'false';
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+
+    // In development mode with USE_OKTA=false, all users are admin
+    if (isDevelopment && !useOkta) {
+        return next();
+    }
+
+    // Check if user has admin group from Okta
+    const isAdmin = req.session.user.groups?.includes('GRP-L0SUPPORT-ADMIN');
+    
+    if (!isAdmin) {
+        return res.status(403).json({ 
+            error: 'Access denied. Admin privileges required.',
+            code: 'ADMIN_REQUIRED'
+        });
+    }
+
+    next();
+}
+
 export function sessionDebug(req, res, next) {
     logger.debug('Session Debug:', {
         sessionID: req.sessionID,
@@ -87,6 +113,14 @@ export function conditionalAuth(req, res, next) {
                 });
             }
         }
+        
+        // In development mode with USE_OKTA=false, ensure all users have admin privileges
+        if (req.session?.user) {
+            req.session.user.isAdmin = true;
+            req.session.user.groups = ['GRP-L0SUPPORT-ADMIN', 'GRP-L0SUPPORT-USER'];
+            req.session.user.role = 'admin';
+        }
+        
         return next();
     }
     

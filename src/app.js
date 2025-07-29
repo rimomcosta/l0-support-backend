@@ -5,12 +5,14 @@ import session from 'express-session';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { userContextMiddleware } from './middleware/userContext.js';
+import { trackUserActivity } from './middleware/activityTracking.js';
 import { logger } from './services/logger.js';
 import { initializeRedis, createSessionStore } from './services/redisService.js';
 import { initializeOIDCClient } from './services/oidcService.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { corsConfig } from './config/cors.js';
 import { sessionConfig } from './config/session.js';
+import { initializeElasticsearch } from './config/elasticsearch.js';
 import routes from './routes.js';
 import { initializeTables } from './config/initDatabase.js';
 // import path from 'path';
@@ -29,6 +31,7 @@ export async function initializeApp() {
         await initializeRedis();
         await initializeOIDCClient();
         await initializeTables();
+        await initializeElasticsearch();
 
         // Middlewares and configurations
         app.set('trust proxy', 1);
@@ -72,6 +75,15 @@ export async function initializeApp() {
         // Use the sessionParser in app
         app.use(sessionParser);
         app.use(userContextMiddleware);
+        
+        // Add comprehensive activity tracking middleware
+        app.use(trackUserActivity);
+        
+        // In development mode with USE_OKTA=false, apply conditional auth to all routes
+        if (process.env.NODE_ENV !== 'production' && process.env.USE_OKTA === 'false') {
+            const { conditionalAuth } = await import('./middleware/auth.js');
+            app.use(conditionalAuth);
+        }
 
         routes(app);
 

@@ -3,6 +3,7 @@
 
 import { CommandService } from '../../services/commandsManagerService.js';
 import { WebSocketService } from '../../services/webSocketService.js';
+import { UserActivityService } from '../../services/userActivityService.js';
 import { logger } from '../../services/logger.js';
 import { logActivity } from '../../services/activityLogger.js';
 import { tunnelManager } from '../../services/tunnelService.js';
@@ -414,11 +415,20 @@ export async function executeAllCommands(req, res) {
                     userId
                 });
 
+                // Create a more user-friendly tunnel error message
+                let tunnelErrorMessage = error.message;
+                if (error.message.includes('tunnel failed health check') || error.message.includes('New tunnel failed health check')) {
+                    tunnelErrorMessage = 'Tunnel connection failed. This is a temporary issue with the cloud environment. Please try again.';
+                } else if (error.message.includes('timeout')) {
+                    tunnelErrorMessage = 'Tunnel connection timed out. Please try again.';
+                }
+
                 WebSocketService.broadcastToTab({
                     type: 'service_error',
                     serviceType: 'tunnel',
                     timestamp: new Date().toISOString(),
-                    error: error.message
+                    error: tunnelErrorMessage,
+                    shouldRetry: true
                 }, tabId);
 
                 throw error;
@@ -436,14 +446,39 @@ export async function executeAllCommands(req, res) {
         const servicePromises = Object.entries(commandsByService).map(
             async ([serviceType, commands]) => {
                 try {
-                    const serviceResults = await executeServiceCommands(
-                        serviceType,
-                        commands,
-                        projectId,
-                        environment,
-                        userId,
-                        apiToken
-                    );
+                            const serviceResults = await executeServiceCommands(
+            serviceType,
+            commands,
+            projectId,
+            environment,
+            userId,
+            apiToken
+        );
+
+        // Track command execution activity
+        try {
+            const userSession = {
+                id: userId,
+                sessionId: req.sessionID,
+                groups: req.session.user.groups,
+                ip_address: req.ip,
+                user_agent: req.get('User-Agent')
+            };
+
+            for (const command of commands) {
+                await UserActivityService.trackCommandExecution(userSession, {
+                    command_id: command.id,
+                    command_name: command.title,
+                    command_type: serviceType,
+                    project_id: projectId,
+                    environment: environment,
+                    output: serviceResults.results?.[command.id]?.output || null,
+                    execution_time: serviceResults.results?.[command.id]?.executionTime || 0
+                });
+            }
+        } catch (trackingError) {
+            logger.error('Failed to track command execution activity:', trackingError);
+        }
 
                     WebSocketService.broadcastToTab({
                         type: 'service_complete',
@@ -454,16 +489,36 @@ export async function executeAllCommands(req, res) {
 
                     return { serviceType, results: serviceResults };
                 } catch (error) {
+                    // Create a more user-friendly service error message
+                    let serviceErrorMessage = error.message;
+                    let shouldRetry = false;
+                    
+                    if (error.message.includes('tunnel failed health check') || error.message.includes('New tunnel failed health check')) {
+                        serviceErrorMessage = 'Tunnel connection failed. This is a temporary issue with the cloud environment.';
+                        shouldRetry = true;
+                    } else if (error.message.includes('timeout') || error.message.includes('ETIMEDOUT')) {
+                        serviceErrorMessage = 'Service request timed out. Please try again.';
+                        shouldRetry = true;
+                    } else if (error.message.includes('ECONNREFUSED') || error.message.includes('connection refused')) {
+                        serviceErrorMessage = 'Service connection refused. Please try again.';
+                        shouldRetry = true;
+                    } else if (error.message.includes('authentication') || error.message.includes('unauthorized')) {
+                        serviceErrorMessage = 'Service authentication failed. Please check your credentials.';
+                        shouldRetry = false;
+                    }
+                    
                     WebSocketService.broadcastToTab({
                         type: 'service_error',
                         serviceType,
                         timestamp: new Date().toISOString(),
-                        error: error.message
+                        error: serviceErrorMessage,
+                        shouldRetry: shouldRetry
                     }, tabId);
 
                     return {
                         serviceType,
-                        error: error.message
+                        error: serviceErrorMessage,
+                        shouldRetry: shouldRetry
                     };
                 }
             }
@@ -480,7 +535,8 @@ export async function executeAllCommands(req, res) {
             summary: results.reduce((acc, result) => {
                 acc[result.serviceType] = {
                     status: result.error ? 'error' : 'success',
-                    error: result.error
+                    error: result.error,
+                    shouldRetry: result.shouldRetry || false
                 };
                 return acc;
             }, {})
@@ -494,6 +550,7 @@ export async function executeAllCommands(req, res) {
             services: results.reduce((acc, result) => {
                 acc[result.serviceType] = result.results || {
                     error: result.error,
+                    shouldRetry: result.shouldRetry || false,
                     timestamp: new Date().toISOString()
                 };
                 return acc;
@@ -518,9 +575,31 @@ export async function executeAllCommands(req, res) {
             sessionId: req.sessionID
         });
 
+        // Create a more user-friendly error message
+        let userFriendlyMessage = 'Failed to execute commands';
+        let shouldRetry = false;
+        
+        if (error.message.includes('tunnel failed health check') || error.message.includes('New tunnel failed health check')) {
+            userFriendlyMessage = 'Tunnel connection failed. This is a temporary issue with the cloud environment.';
+            shouldRetry = true;
+        } else if (error.message.includes('timeout') || error.message.includes('ETIMEDOUT')) {
+            userFriendlyMessage = 'Request timed out. The service may be temporarily unavailable.';
+            shouldRetry = true;
+        } else if (error.message.includes('ECONNREFUSED') || error.message.includes('connection refused')) {
+            userFriendlyMessage = 'Connection refused. The service may be temporarily unavailable.';
+            shouldRetry = true;
+        } else if (error.message.includes('authentication') || error.message.includes('unauthorized')) {
+            userFriendlyMessage = 'Authentication failed. Please check your credentials and try again.';
+            shouldRetry = false;
+        } else if (error.message.includes('not found') || error.message.includes('404')) {
+            userFriendlyMessage = 'Resource not found. Please check the project ID and environment.';
+            shouldRetry = false;
+        }
+        
         const errorResponse = {
-            error: 'Failed to execute commands',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            error: userFriendlyMessage,
+            details: error.message,
+            shouldRetry: shouldRetry,
             timestamp: new Date().toISOString()
         };
 
@@ -655,6 +734,28 @@ export async function getCommands(req, res) {
 export async function createCommand(req, res) {
     try {
         const id = await commandService.create(req.body);
+        
+        // Track command creation activity
+        try {
+            const userSession = {
+                id: req.session.user.id,
+                sessionId: req.sessionID,
+                groups: req.session.user.groups,
+                ip_address: req.ip,
+                user_agent: req.get('User-Agent')
+            };
+
+            await UserActivityService.trackCommandCreation(userSession, {
+                command_id: id,
+                command_name: req.body.title,
+                command_type: req.body.service_type,
+                project_id: req.body.project_id,
+                environment: req.body.environment
+            });
+        } catch (trackingError) {
+            logger.error('Failed to track command creation activity:', trackingError);
+        }
+
         res.status(201).json({ id });
     } catch (error) {
         logger.error('Failed to create command:', error);
