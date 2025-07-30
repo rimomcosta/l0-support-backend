@@ -183,10 +183,15 @@ class TunnelManager {
         if (!tunnelInfo) return false;
 
         try {
-            if (serviceName === 'redis' && tunnelInfo.redis?.[0]) {
-                const { host, port } = tunnelInfo.redis[0];
-                const { stdout } = await execAsync(`redis-cli -h ${host} -p ${port} ping`);
-                return stdout.trim() === 'PONG';
+            // Support both Redis and Valkey as Redis-compatible services
+            if ((serviceName === 'redis' || serviceName === 'valkey')) {
+                // Prefer redis if present, otherwise try valkey
+                const redisInfo = tunnelInfo.redis?.[0] || tunnelInfo.valkey?.[0];
+                if (redisInfo) {
+                    const { host, port } = redisInfo;
+                    const { stdout } = await execAsync(`redis-cli -h ${host} -p ${port} ping`);
+                    return stdout.trim() === 'PONG';
+                }
             }
             if (serviceName === 'sql' && tunnelInfo.database?.[0]) {
                 const sqlService = new SQLService({ database: [tunnelInfo.database[0]] });
