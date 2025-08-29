@@ -12,7 +12,7 @@ import { OpenSearchService } from './openSearchService.js';
 const execAsync = promisify(exec);
 
 // Times in ms
-const TUNNEL_READY_TIMEOUT = 10000; // 10s waiting for "tunnel:open" to respond
+const TUNNEL_READY_TIMEOUT = 30000; // 30s waiting for "tunnel:open" to respond (increased from 10s)
 const IDLE_TIMEOUT = 120000;        // 2 minutes
 const LOCK_TIMEOUT = 30000;         // 30s for lock acquisition
 const LOCK_RETRY_DELAY = 1000;      // 1s between lock retries
@@ -189,20 +189,48 @@ class TunnelManager {
                 const redisInfo = tunnelInfo.redis?.[0] || tunnelInfo.valkey?.[0];
                 if (redisInfo) {
                     const { host, port } = redisInfo;
-                    const { stdout } = await execAsync(`redis-cli -h ${host} -p ${port} ping`);
-                    return stdout.trim() === 'PONG';
+                    try {
+                        const { stdout } = await execAsync(`redis-cli -h ${host} -p ${port} ping`, { timeout: 5000 });
+                        return stdout.trim() === 'PONG';
+                    } catch (redisError) {
+                        // If redis-cli is not available or connection fails, consider it a temporary issue
+                        logger.debug(`Redis health check failed (may be temporary):`, { 
+                            error: redisError.message, 
+                            host, 
+                            port,
+                            serviceName 
+                        });
+                        // Don't fail immediately - let the retry logic handle it
+                        return false;
+                    }
                 }
             }
             if (serviceName === 'sql' && tunnelInfo.database?.[0]) {
-                const sqlService = new SQLService({ database: [tunnelInfo.database[0]] });
-                await sqlService.executeQuery('SELECT 1');
-                return true;
+                try {
+                    const sqlService = new SQLService({ database: [tunnelInfo.database[0]] });
+                    await sqlService.executeQuery('SELECT 1');
+                    return true;
+                } catch (sqlError) {
+                    logger.debug(`SQL health check failed (may be temporary):`, { 
+                        error: sqlError.message, 
+                        serviceName 
+                    });
+                    return false;
+                }
             }
             if (serviceName === 'opensearch' && tunnelInfo.opensearch?.[0]) {
-                const osService = new OpenSearchService({ opensearch: [tunnelInfo.opensearch[0]] });
-                // A simple GET request to the root is a good health check.
-                await osService.executeCommand({ method: 'GET', path: '/' });
-                return true;
+                try {
+                    const osService = new OpenSearchService({ opensearch: [tunnelInfo.opensearch[0]] });
+                    // A simple GET request to the root is a good health check.
+                    await osService.executeCommand({ method: 'GET', path: '/' });
+                    return true;
+                } catch (osError) {
+                    logger.debug(`OpenSearch health check failed (may be temporary):`, { 
+                        error: osError.message, 
+                        serviceName 
+                    });
+                    return false;
+                }
             }
         } catch (error) {
             logger.debug(`Tunnel health check failed for ${serviceName}:`, { error: error.message });
@@ -216,8 +244,8 @@ class TunnelManager {
      * Polls the tunnel until a specific service is healthy and ready.
      */
     async waitForServiceReady(projectId, environment, serviceName, apiToken, userId) {
-        const POLL_INTERVAL = 2000; // 2 seconds
-        const MAX_WAIT_TIME = 30000; // 30 seconds
+        const POLL_INTERVAL = 3000; // 3 seconds (increased from 2s)
+        const MAX_WAIT_TIME = 60000; // 60 seconds (increased from 30s)
         const startTime = Date.now();
 
         while (Date.now() - startTime < MAX_WAIT_TIME) {
@@ -457,6 +485,11 @@ class TunnelManager {
 
                     if (progressCallback) progressCallback('opening_tunnel');
                     const newTunnelInfo = await this.waitForTunnelOpen(projectId, environment, apiToken, userId, serviceType);
+
+                    // Add a grace period for the tunnel to stabilize before health checks
+                    if (progressCallback) progressCallback('tunnel_stabilizing');
+                    logger.info('Tunnel created, waiting for stabilization...', { projectId, environment });
+                    await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second grace period
 
                     // Verify the new tunnel is healthy for the specific service
                     if (progressCallback) progressCallback('verifying_tunnel');
