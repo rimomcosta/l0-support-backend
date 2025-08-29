@@ -377,17 +377,126 @@ export async function executeAllCommands(req, res) {
             return acc;
         }, {});
 
-        const tunnelNeeded = Object.keys(commandsByService).some(serviceType => ['redis', 'sql', 'opensearch'].includes(serviceType));
+        // Separate services by tunnel requirements
+        const tunnelDependentServices = ['redis', 'sql', 'opensearch'];
+        const tunnelIndependentServices = Object.keys(commandsByService).filter(serviceType => 
+            !tunnelDependentServices.includes(serviceType)
+        );
+        const servicesNeedingTunnel = Object.keys(commandsByService).filter(serviceType => 
+            tunnelDependentServices.includes(serviceType)
+        );
+
+        logger.info('Services separated by tunnel requirements', {
+            projectId,
+            environment,
+            tunnelIndependentServices,
+            servicesNeedingTunnel,
+            totalServices: Object.keys(commandsByService).length
+        });
 
         let tunnelInfo = null;
-        if (tunnelNeeded) {
-            try {
-                // Since multiple services might need a tunnel, we must ensure each one is ready.
-                // For simplicity, we'll check the first one that needs it, as opening the tunnel
-                // should make all services available. A more advanced implementation might check all.
-                const firstTunnelService = Object.keys(commandsByService).find(st => ['redis', 'sql', 'opensearch'].includes(st));
+        let tunnelIndependentResults = []; // Declare at function level
+        
+        // Execute tunnel-independent services immediately (SSH, Bash, RabbitMQ, etc.)
+        if (tunnelIndependentServices.length > 0) {
+            logger.info('Executing tunnel-independent services immediately', {
+                projectId,
+                environment,
+                services: tunnelIndependentServices
+            });
 
-                // Modify openTunnel to accept a callback for progress updates
+            // Execute tunnel-independent services in parallel without waiting for tunnel
+            const tunnelIndependentPromises = tunnelIndependentServices.map(async (serviceType) => {
+                try {
+                    const commands = commandsByService[serviceType];
+                    const serviceResults = await executeServiceCommands(
+                        serviceType,
+                        commands,
+                        projectId,
+                        environment,
+                        userId,
+                        apiToken
+                    );
+
+                    // Track command execution activity
+                    try {
+                        const userSession = {
+                            id: userId,
+                            sessionId: req.sessionID,
+                            groups: req.session.user.groups,
+                            ip_address: req.ip,
+                            user_agent: req.get('User-Agent')
+                        };
+
+                        for (const command of commands) {
+                            await UserActivityService.trackCommandExecution(userSession, {
+                                command_id: command.id,
+                                command_name: command.title,
+                                command_type: serviceType,
+                                project_id: projectId,
+                                environment: environment,
+                                output: serviceResults.results?.[command.id]?.output || null,
+                                execution_time: serviceResults.results?.[command.id]?.executionTime || 0
+                            });
+                        }
+                    } catch (trackingError) {
+                        logger.error('Failed to track command execution activity:', trackingError);
+                    }
+
+                    WebSocketService.broadcastToTab({
+                        type: 'service_complete',
+                        serviceType,
+                        timestamp: new Date().toISOString(),
+                        results: serviceResults.results
+                    }, tabId);
+
+                    return { serviceType, results: serviceResults };
+                } catch (error) {
+                    logger.error(`Failed to execute tunnel-independent service ${serviceType}`, {
+                        error: error.message,
+                        projectId,
+                        environment,
+                        serviceType
+                    });
+
+                    WebSocketService.broadcastToTab({
+                        type: 'service_error',
+                        serviceType,
+                        timestamp: new Date().toISOString(),
+                        error: error.message,
+                        shouldRetry: false
+                    }, tabId);
+
+                    return { serviceType, error: error.message };
+                }
+            });
+
+            // Start executing tunnel-independent services immediately
+            const tunnelIndependentResults = await Promise.allSettled(tunnelIndependentPromises);
+            logger.info('Tunnel-independent services completed', {
+                projectId,
+                environment,
+                results: tunnelIndependentResults.map((result, index) => ({
+                    serviceType: tunnelIndependentServices[index],
+                    status: result.status,
+                    hasError: result.status === 'rejected' || (result.value && result.value.error)
+                }))
+            });
+        }
+
+        // Only establish tunnel if we have services that need it
+        if (servicesNeedingTunnel.length > 0) {
+            try {
+                logger.info('Establishing tunnel for dependent services', {
+                    projectId,
+                    environment,
+                    services: servicesNeedingTunnel
+                });
+
+                // Use the first service that needs a tunnel
+                const firstTunnelService = servicesNeedingTunnel[0];
+
+                // Open tunnel with progress updates
                 tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId, firstTunnelService, (status) => {
                     WebSocketService.broadcastToTab({
                         type: 'tunnel_status',
@@ -408,7 +517,7 @@ export async function executeAllCommands(req, res) {
                 }, tabId);
 
             } catch (error) {
-                logger.error('Failed to establish tunnel before executing services', {
+                logger.error('Failed to establish tunnel for dependent services', {
                     error: error.message,
                     projectId,
                     environment,
@@ -442,43 +551,51 @@ export async function executeAllCommands(req, res) {
             services: Object.keys(commandsByService)
         }, tabId);
 
-        // Execute services in parallel
-        const servicePromises = Object.entries(commandsByService).map(
-            async ([serviceType, commands]) => {
+        // Execute tunnel-dependent services (only if tunnel was established successfully)
+        let tunnelDependentResults = [];
+        if (servicesNeedingTunnel.length > 0 && tunnelInfo) {
+            logger.info('Executing tunnel-dependent services', {
+                projectId,
+                environment,
+                services: servicesNeedingTunnel
+            });
+
+            const tunnelDependentPromises = servicesNeedingTunnel.map(async (serviceType) => {
                 try {
-                            const serviceResults = await executeServiceCommands(
-            serviceType,
-            commands,
-            projectId,
-            environment,
-            userId,
-            apiToken
-        );
+                    const commands = commandsByService[serviceType];
+                    const serviceResults = await executeServiceCommands(
+                        serviceType,
+                        commands,
+                        projectId,
+                        environment,
+                        userId,
+                        apiToken
+                    );
 
-        // Track command execution activity
-        try {
-            const userSession = {
-                id: userId,
-                sessionId: req.sessionID,
-                groups: req.session.user.groups,
-                ip_address: req.ip,
-                user_agent: req.get('User-Agent')
-            };
+                    // Track command execution activity
+                    try {
+                        const userSession = {
+                            id: userId,
+                            sessionId: req.sessionID,
+                            groups: req.session.user.groups,
+                            ip_address: req.ip,
+                            user_agent: req.get('User-Agent')
+                        };
 
-            for (const command of commands) {
-                await UserActivityService.trackCommandExecution(userSession, {
-                    command_id: command.id,
-                    command_name: command.title,
-                    command_type: serviceType,
-                    project_id: projectId,
-                    environment: environment,
-                    output: serviceResults.results?.[command.id]?.output || null,
-                    execution_time: serviceResults.results?.[command.id]?.executionTime || 0
-                });
-            }
-        } catch (trackingError) {
-            logger.error('Failed to track command execution activity:', trackingError);
-        }
+                        for (const command of commands) {
+                            await UserActivityService.trackCommandExecution(userSession, {
+                                command_id: command.id,
+                                command_name: command.title,
+                                command_type: serviceType,
+                                project_id: projectId,
+                                environment: environment,
+                                output: serviceResults.results?.[command.id]?.output || null,
+                                execution_time: serviceResults.results?.[command.id]?.executionTime || 0
+                            });
+                        }
+                    } catch (trackingError) {
+                        logger.error('Failed to track command execution activity:', trackingError);
+                    }
 
                     WebSocketService.broadcastToTab({
                         type: 'service_complete',
@@ -521,11 +638,54 @@ export async function executeAllCommands(req, res) {
                         shouldRetry: shouldRetry
                     };
                 }
-            }
-        );
+            });
 
-        // Wait for all services to complete
-        const results = await Promise.all(servicePromises);
+            tunnelDependentResults = await Promise.allSettled(tunnelDependentPromises);
+            logger.info('Tunnel-dependent services completed', {
+                projectId,
+                environment,
+                results: tunnelDependentResults.map((result, index) => ({
+                    serviceType: servicesNeedingTunnel[index],
+                    status: result.status,
+                    hasError: result.status === 'rejected' || (result.value && result.value.error)
+                }))
+            });
+        }
+
+        // Combine results from both execution phases
+        const allResults = [];
+        
+        // Add tunnel-independent results
+        if (tunnelIndependentServices.length > 0) {
+            allResults.push(...tunnelIndependentResults.map((result, index) => {
+                if (result.status === 'fulfilled') {
+                    return result.value;
+                } else {
+                    return {
+                        serviceType: tunnelIndependentServices[index],
+                        error: result.reason.message,
+                        shouldRetry: false
+                    };
+                }
+            }));
+        }
+        
+        // Add tunnel-dependent results
+        if (tunnelDependentResults.length > 0) {
+            allResults.push(...tunnelDependentResults.map((result, index) => {
+                if (result.status === 'fulfilled') {
+                    return result.value;
+                } else {
+                    return {
+                        serviceType: servicesNeedingTunnel[index],
+                        error: result.reason.message,
+                        shouldRetry: true
+                    };
+                }
+            }));
+        }
+
+        const results = allResults;
 
         WebSocketService.broadcastToTab({
             type: 'execution_complete',

@@ -12,7 +12,7 @@ import { OpenSearchService } from './openSearchService.js';
 const execAsync = promisify(exec);
 
 // Times in ms
-const TUNNEL_READY_TIMEOUT = 30000; // 30s waiting for "tunnel:open" to respond (increased from 10s)
+const TUNNEL_READY_TIMEOUT = 15000; // 15s waiting for "tunnel:open" to respond (increased from 10s)
 const IDLE_TIMEOUT = 120000;        // 2 minutes
 const LOCK_TIMEOUT = 30000;         // 30s for lock acquisition
 const LOCK_RETRY_DELAY = 1000;      // 1s between lock retries
