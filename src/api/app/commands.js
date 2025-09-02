@@ -472,7 +472,7 @@ export async function executeAllCommands(req, res) {
             });
 
             // Start executing tunnel-independent services immediately
-            const tunnelIndependentResults = await Promise.allSettled(tunnelIndependentPromises);
+            tunnelIndependentResults = await Promise.allSettled(tunnelIndependentPromises);
             logger.info('Tunnel-independent services completed', {
                 projectId,
                 environment,
