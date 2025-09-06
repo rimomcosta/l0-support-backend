@@ -4,6 +4,7 @@ import { WebSocketService } from '../../webSocketService.js';
 import { logger } from '../../logger.js';
 import { ChatDao } from '../../dao/chatDao.js';
 import { AiSettingsDao } from '../../dao/aiSettingsDao.js';
+import transactionAnalysisService from '../../transactionAnalysisService.js';
 import fs from 'fs/promises';
 
 const defaultConfig = {
@@ -33,6 +34,34 @@ const formatServerData = (dashboardData) => {
       }
     }
   });
+
+  return formattedData;
+};
+
+// Format transaction analysis data for AI context
+const formatTransactionAnalysisData = (analyses) => {
+  if (!analyses || !Array.isArray(analyses) || analyses.length === 0) {
+    return '';
+  }
+
+  let formattedData = '\n\nTransaction Analysis Context:\n';
+  formattedData += 'The following transaction analyses have been selected for AI context and may be relevant to the current conversation:\n\n';
+
+  analyses.forEach((analysis, index) => {
+    formattedData += `--- Analysis ${index + 1}: ${analysis.analysis_name} ---\n`;
+    formattedData += `Created: ${new Date(analysis.created_at).toLocaleString()}\n`;
+    formattedData += `Token Count: ${analysis.token_count || 'N/A'}\n\n`;
+    
+    // Truncate analysis result if too long (keep first 2000 characters)
+    const analysisResult = analysis.analysis_result || '';
+    const truncatedResult = analysisResult.length > 2000 
+      ? analysisResult.substring(0, 2000) + '...\n[Analysis truncated - full content available in transaction analysis page]'
+      : analysisResult;
+    
+    formattedData += `Analysis Result:\n${truncatedResult}\n\n`;
+  });
+
+  formattedData += 'Note: These analyses provide context about performance issues, bottlenecks, and optimization opportunities that may be relevant to current troubleshooting efforts.\n';
 
   return formattedData;
 };
@@ -142,7 +171,22 @@ const chatAgent = {
         serverDataText = `\n\nCurrent Environment: You are now working with the \"${environment}\" environment${projectId ? ` for project \"${projectId}\"` : ''}.\n\nNo server data is attached. Click the \"Attach Server Data\" button to include real-time server information in this conversation.`;
       }
 
-      // 4) Format messages for the AI
+      // 4) Get transaction analysis context if project and environment are available
+      let transactionAnalysisText = '';
+      if (projectId && environment) {
+        try {
+          const analysisResult = await transactionAnalysisService.getAnalysesForAiContext(projectId, environment, 3);
+          if (analysisResult.success && analysisResult.analyses.length > 0) {
+            transactionAnalysisText = formatTransactionAnalysisData(analysisResult.analyses);
+            logger.debug(`Including ${analysisResult.analyses.length} transaction analyses in AI context for project ${projectId}/${environment}`);
+          }
+        } catch (err) {
+          logger.error(`Failed to retrieve transaction analysis context for project ${projectId}/${environment}:`, err);
+          // Continue without transaction analysis context - don't fail the entire request
+        }
+      }
+
+      // 5) Format messages for the AI
       // Build messages array and append server data to the most recent user message
       const messages = conversation.map(msg => ({
         role: msg.role,
@@ -159,15 +203,16 @@ const chatAgent = {
         }
       }
 
-      // Append server data text to the last user message (i.e., the one just sent)
+      // Append server data and transaction analysis text to the last user message (i.e., the one just sent)
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'user') {
-          messages[i].content = 'This is the server data just for context: ===SERVER DATA START==='+ serverDataText + '===SERVER DATA END=== \n\n Now focus on the user message and only check the server data if the user requests or if it is relevant to answer the user: '+ messages[i].content;
+          const contextData = serverDataText + transactionAnalysisText;
+          messages[i].content = 'This is the server data and transaction analysis context just for context: ===CONTEXT DATA START==='+ contextData + '===CONTEXT DATA END=== \n\n Now focus on the user message and only check the context data if the user requests or if it is relevant to answer the user: '+ messages[i].content;
           break;
         }
       }
 
-      // 5) Get adapter with user config
+      // 6) Get adapter with user config
       let adapter;
       try {
         adapter = aiService.getAdapter(aiConfig.provider, {
@@ -184,7 +229,7 @@ const chatAgent = {
         throw new Error(`AI adapter initialization error: ${err.message}`);
       }
 
-      // 6) Generate stream  
+      // 7) Generate stream  
       let stream;
       try {
         logger.debug(`Starting AI stream generation for chatId: ${chatId}`, {
@@ -216,7 +261,7 @@ const chatAgent = {
         throw new Error(`AI stream generation error: ${err.message}`);
       }
 
-      // 7) Handle streaming response
+      // 8) Handle streaming response
       let fullAssistantReply = '';
       let fullThinkingContent = '';
       let hasStartedContent = false;

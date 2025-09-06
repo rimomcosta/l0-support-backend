@@ -194,6 +194,24 @@ class TransactionAnalysisService {
         }
     }
 
+    async getAnalysesForAiContext(projectId, environment, limit = 5) {
+        try {
+            const analyses = await this.dao.getAnalysesForAiContext(projectId, environment, limit);
+            
+            return {
+                success: true,
+                analyses
+            };
+
+        } catch (error) {
+            this.logger.error('Error getting analyses for AI context:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
     async getRecentAnalyses(limit = 10) {
         try {
             const analyses = await this.dao.getRecentAnalyses(limit);
