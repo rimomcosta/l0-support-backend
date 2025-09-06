@@ -1,33 +1,10 @@
 // src/api/app/nodes.js
-import { logger } from '../../services/logger.js';
-import MagentoCloudAdapter from '../../adapters/magentoCloud.js';
-import { ApiTokenService } from '../../services/apiTokenService.js'; // Import ApiTokenService
+import { NodesManagementService } from '../../services/nodesManagementService.js';
 
-/**
- * Fetches all nodes for a given project and environment.
- * 
- * @param {string} projectId - Magento Cloud project identifier
- * @param {string} environment - Environment name (e.g., 'production', 'staging')
- * @param {string} apiToken - The user's API token
- * @returns {Promise<Array<Object>>} Array of node objects with id, sshUrl, and status
- */
+// Export the execute function for backward compatibility with other modules
 export async function execute(projectId, environment, apiToken, userId) {
-    const magentoCloud = new MagentoCloudAdapter();
-    await magentoCloud.validateExecutable();
-
-    const { stdout } = await magentoCloud.executeCommand(
-        `ssh -p ${projectId} -e ${environment} --all`,
-        apiToken,
-        userId
-    );
-
-    return stdout.split('\n')
-        .filter(line => line.trim())
-        .map((line, index) => ({
-            id: index + 1,
-            sshUrl: line.trim(),
-            status: 'active'
-        }));
+    const nodesService = new NodesManagementService();
+    return await nodesService.execute(projectId, environment, apiToken, userId);
 }
 
 /**
@@ -38,34 +15,25 @@ export async function execute(projectId, environment, apiToken, userId) {
  */
 export async function getNodes(req, res) {
     const { projectId, environment } = req.params;
-    const userId = req.session.user.id; // Get userId
+    const userId = req.session.user.id;
     const apiToken = req.session.decryptedApiToken;
 
+    if (!apiToken) {
+        return res.status(401).json({ error: 'API token not found for user' });
+    }
+
     try {
-        logger.info('Fetching nodes', {
-            projectId,
-            environment,
-            userId,
-            timestamp: new Date().toISOString()
+        // Delegate to service
+        const nodesService = new NodesManagementService();
+        const result = await nodesService.getNodes(projectId, environment, apiToken, userId);
+
+        res.status(result.statusCode).json(result.success ? { nodes: result.nodes } : {
+            error: result.error,
+            details: result.details
         });
-
-        if (!apiToken) {
-            return res.status(401).json({ error: 'API token not found for user' });
-        }
-
-        const nodes = await execute(projectId, environment, apiToken, userId); // Pass apiToken
-        res.json({ nodes });
     } catch (error) {
-        logger.error('Failed to fetch nodes', {
-            error: error.message,
-            projectId,
-            environment,
-            userId,
-            timestamp: new Date().toISOString()
-        });
-
         res.status(500).json({
-            error: 'Failed to fetch nodes',
+            error: 'Internal server error',
             details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
