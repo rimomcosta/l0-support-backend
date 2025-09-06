@@ -7,17 +7,21 @@ const execAsync = promisify(exec);
 
 export class RedisCliService {
     constructor(tunnelInfo) {
-        if (!tunnelInfo?.redis?.[0]) {
-            throw new Error('Invalid tunnel info: missing redis configuration');
+        // Support both Redis and Valkey services
+        const redisInfo = tunnelInfo.redis?.[0] || tunnelInfo.valkey?.[0];
+        
+        if (!redisInfo) {
+            throw new Error('Invalid tunnel info: missing redis or valkey configuration');
         }
 
-        const redisInfo = tunnelInfo.redis[0];
         this.host = redisInfo.host;
         this.port = redisInfo.port;
+        this.serviceType = tunnelInfo.redis?.[0] ? 'redis' : 'valkey';
 
         logger.debug('Redis CLI Service initialized with config:', {
             host: this.host,
-            port: this.port
+            port: this.port,
+            serviceType: this.serviceType
         });
     }
 

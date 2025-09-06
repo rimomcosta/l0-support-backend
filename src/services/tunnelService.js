@@ -629,7 +629,9 @@ class TunnelManager {
     async getServiceTunnelInfo(projectId, environment, serviceName, apiToken, userId) {
         const alternativeServices = {
             opensearch: 'elasticsearch',
-            elasticsearch: 'opensearch'
+            elasticsearch: 'opensearch',
+            redis: 'valkey',
+            valkey: 'redis'
         };
     
         try {
