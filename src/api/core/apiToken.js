@@ -1,8 +1,6 @@
 // src/api/core/apiToken.js
-import { ApiTokenService } from '../../services/apiTokenService.js';
+import { ApiTokenManagementService } from '../../services/apiTokenManagementService.js';
 import { logger } from '../../services/logger.js';
-import { logActivity } from '../../services/activityLogger.js';
-import { EncryptionService } from '../../services/encryptionService.js';
 
 /**
  * Encrypts and saves the API token, then stores the decrypted token in the session.
@@ -13,50 +11,22 @@ export async function encryptAndSaveApiToken(req, res) {
         const userId = req.session.user.id;
         const userEmail = req.session.user.email;
 
-        if (!apiToken) {
-            return res.status(400).json({ error: 'API token is required' });
+        // Delegate to service
+        const managementService = new ApiTokenManagementService();
+        const result = await managementService.encryptAndSaveApiToken(apiToken, password, userId, userEmail);
+
+        if (result.success) {
+            // Store the decrypted API token and flags in the session
+            req.session.decryptedApiToken = result.decryptedApiToken;
+            req.session.hasApiToken = true;
+            req.session.isApiTokenDecrypted = true;
+            await req.session.save(); // Ensure session is saved
         }
 
-        if (!password) {
-            return res.status(400).json({ error: 'Password is required for encrypting the API token' });
-        }
-
-        // Get the user's salt from the database
-        const user = await ApiTokenService.getUserById(userId);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        let salt = user.salt;
-        
-        // If user doesn't have a salt (e.g., first time setting API token), generate one
-        if (!salt) {
-            salt = EncryptionService.generateSalt();
-            // Update the user with the new salt
-            await ApiTokenService.updateUserSalt(userId, salt);
-            logger.info('Generated new salt for user', { userId });
-        }
-
-        // Encrypt the API token using the provided password and salt
-        const encryptedApiToken = EncryptionService.encrypt(apiToken, password, salt);
-
-        // Save the encrypted API token
-        await ApiTokenService.saveApiToken(userId, encryptedApiToken);
-
-        // Decrypt the API token immediately to store in session
-        const decryptedApiToken = EncryptionService.decrypt(encryptedApiToken, password, salt);
-
-        // Store the decrypted API token and flags in the session
-        req.session.decryptedApiToken = decryptedApiToken;
-        req.session.hasApiToken = true;
-        req.session.isApiTokenDecrypted = true;
-
-        await req.session.save(); // Ensure session is saved
-
-        // Log activity
-        logActivity.apiToken.saved(userId, userEmail);
-
-        res.json({ success: true, message: 'API token saved and decrypted successfully' });
+        res.status(result.statusCode).json({
+            success: result.success,
+            message: result.message || result.error
+        });
     } catch (error) {
         logger.error('Failed to save API token:', {
             error: error.message,
@@ -75,46 +45,22 @@ export async function decryptApiToken(req, res) {
         const userId = req.session.user.id;
         const userEmail = req.session.user.email;
 
-        if (!password) {
-            return res.status(400).json({ error: 'Password is required for decrypting the API token' });
+        // Delegate to service
+        const managementService = new ApiTokenManagementService();
+        const result = await managementService.decryptApiToken(password, userId, userEmail);
+
+        if (result.success) {
+            // Store the decrypted API token and update flags in the session
+            req.session.decryptedApiToken = result.decryptedApiToken;
+            req.session.isApiTokenDecrypted = true;
+            req.session.hasApiToken = true;
+            await req.session.save(); // Ensure session is saved
         }
 
-        // Retrieve the encrypted API token
-        const encryptedApiToken = await ApiTokenService.getApiToken(userId);
-        if (!encryptedApiToken) {
-            return res.status(404).json({ error: 'API token not found for user' });
-        }
-
-        // Get the user's salt from the database
-        const user = await ApiTokenService.getUserById(userId);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        const salt = user.salt;
-
-        // Decrypt the API token using the provided password and salt
-        let decryptedApiToken;
-        try {
-            decryptedApiToken = EncryptionService.decrypt(encryptedApiToken, password, salt);
-        } catch (decryptError) {
-            logger.warn('Failed to decrypt API token:', {
-                error: decryptError.message,
-                userId
-            });
-            return res.status(401).json({ error: 'Failed to decrypt API token' });
-        }
-
-        // Store the decrypted API token and update flags in the session
-        req.session.decryptedApiToken = decryptedApiToken;
-        req.session.isApiTokenDecrypted = true;
-        req.session.hasApiToken = true;
-
-        await req.session.save(); // Ensure session is saved
-
-        // Log activity
-        logActivity.apiToken.decrypted(userId, userEmail);
-
-        res.json({ success: true, message: 'API token decrypted successfully' });
+        res.status(result.statusCode).json({
+            success: result.success,
+            message: result.message || result.error
+        });
     } catch (error) {
         logger.error('Failed to decrypt API token:', {
             error: error.message,
@@ -131,10 +77,16 @@ export async function decryptApiToken(req, res) {
 export async function getApiToken(req, res) {
     try {
         const userId = req.session.user.id;
-        const hasToken = Boolean(await ApiTokenService.getApiToken(userId));
         const isDecrypted = req.session.isApiTokenDecrypted || false;
 
-        res.json({ hasToken, isDecrypted });
+        // Delegate to service
+        const managementService = new ApiTokenManagementService();
+        const result = await managementService.getApiTokenStatus(userId, isDecrypted);
+
+        res.status(result.statusCode).json({
+            hasToken: result.hasToken,
+            isDecrypted: result.isDecrypted
+        });
     } catch (error) {
         logger.error('Failed to check API token:', {
             error: error.message,
@@ -152,24 +104,22 @@ export async function revokeApiToken(req, res) {
         const userId = req.session.user.id;
         const userEmail = req.session.user.email;
 
-        // Delete the API token from the database
-        await ApiTokenService.deleteApiToken(userId);
+        // Delegate to service
+        const managementService = new ApiTokenManagementService();
+        const result = await managementService.revokeApiToken(userId, userEmail);
 
-        // Clear the decrypted API token from session
-        delete req.session.decryptedApiToken;
-        delete req.session.hasApiToken;
-        delete req.session.isApiTokenDecrypted;
+        if (result.success) {
+            // Clear the decrypted API token from session
+            delete req.session.decryptedApiToken;
+            delete req.session.hasApiToken;
+            delete req.session.isApiTokenDecrypted;
+            await req.session.save(); // Ensure session is saved
+        }
 
-        await req.session.save(); // Ensure session is saved
-
-        logger.info('API token revoked successfully:', {
-            userId
+        res.status(result.statusCode).json({
+            success: result.success,
+            message: result.message || result.error
         });
-
-        // Log activity
-        logActivity.apiToken.revoked(userId, userEmail);
-
-        res.json({ success: true, message: 'API token revoked successfully' });
     } catch (error) {
         logger.error('Failed to revoke API token:', {
             error: error.message,

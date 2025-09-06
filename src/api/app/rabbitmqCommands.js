@@ -1,11 +1,12 @@
 // src/api/app/rabbitmqCommands.js
 import { logger } from '../../services/logger.js';
-import { RabbitMQAdminService } from '../../services/rabbitmqAdminService.js';
+import { CommandValidationService } from '../../services/commandValidationService.js';
+import { ServiceExecutionService } from '../../services/serviceExecutionService.js';
 
 export async function runCommands(req, res) {
     const { projectId, environment } = req.params;
     const { commands } = req.body;
-    const userId = req.session.user.id; // Get userId
+    const userId = req.session.user.id;
     const apiToken = req.session.decryptedApiToken;
 
     if (!Array.isArray(commands)) {
@@ -15,60 +16,32 @@ export async function runCommands(req, res) {
         });
     }
 
+    if (!apiToken) {
+        return res.status(401).json({ error: 'API token not found for user' });
+    }
+
+    // Validate commands using service
+    const validationService = new CommandValidationService();
+    const validation = validationService.validateRabbitMQCommands(commands);
+    if (!validation.valid) {
+        return res.status(400).json({
+            error: 'Invalid command format',
+            details: validation.errors
+        });
+    }
+
     try {
-        if (!apiToken) {
-            return res.status(401).json({ error: 'API token not found for user' });
-        }
-
-        // Initialize RabbitMQAdminService with projectId, environment, and apiToken
-        const rabbitmqService = new RabbitMQAdminService(projectId, environment, apiToken, userId);
-const results = [];
-
-        for (const command of commands) {
-            const commandResult = {
-                id: command.id,
-                title: command.title,
-                command: command.command,
-                results: [],
-                allowAi: command.allowAi
-            };
-
-            try {
-                const output = await rabbitmqService.executeCommand(command.command);
-                commandResult.results.push({
-                    nodeId: 'single-node', // Update as needed for your use case
-                    output,
-                    error: null,
-                    status: 'SUCCESS'
-                });
-            } catch (error) {
-                logger.error('RabbitMQ command execution failed:', {
-                    error: error.message,
-                    command: command.title
-                });
-                commandResult.results.push({
-                    nodeId: 'single-node', // Update as needed for your use case
-                    output: null,
-                    error: error.message,
-                    status: 'ERROR'
-                });
-            }
-
-            commandResult.summary = {
-                total: commandResult.results.length,
-                successful: commandResult.results.filter(r => r.status === 'SUCCESS').length,
-                failed: commandResult.results.filter(r => r.status === 'ERROR').length
-            };
-
-            results.push(commandResult);
-        }
-
-        res.json({
+        // Delegate to service
+        const serviceExecutionService = new ServiceExecutionService();
+        const result = await serviceExecutionService.executeRabbitMQCommands(
             projectId,
             environment,
-            timestamp: new Date().toISOString(),
-            results
-        });
+            commands,
+            apiToken,
+            userId
+        );
+
+        res.json(result);
     } catch (error) {
         logger.error('RabbitMQ command execution failed:', {
             error: error.message,

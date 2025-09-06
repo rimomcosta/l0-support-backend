@@ -1,7 +1,7 @@
 // src/api/app/redisCommands.js
 import { logger } from '../../services/logger.js';
-import { tunnelManager } from '../../services/tunnelService.js';
-import { RedisCliService } from '../../services/redisCliService.js';
+import { CommandValidationService } from '../../services/commandValidationService.js';
+import { ServiceExecutionService } from '../../services/serviceExecutionService.js';
 
 export async function runQueries(req, res) {
     const { projectId, environment } = req.params;
@@ -14,78 +14,28 @@ export async function runQueries(req, res) {
         return res.status(401).json({ error: 'User ID not found in session' });
     }
 
-    if (!Array.isArray(queries)) {
+    // Validate queries using service
+    const validationService = new CommandValidationService();
+    const validation = validationService.validateRedisCommands(queries);
+    if (!validation.valid) {
         return res.status(400).json({
             error: 'Invalid request format',
-            details: 'Queries must be an array'
+            details: validation.errors
         });
     }
 
     try {
-        // Get Redis-specific tunnel info, passing userId
-        const tunnelInfo = await tunnelManager.getServiceTunnelInfo(projectId, environment, 'redis', apiToken, userId);
-
-        if (!tunnelInfo) {
-            logger.error('Failed to retrieve tunnel information for Redis', {
-                projectId,
-                environment,
-                userId
-            });
-            return res.status(500).json({ error: 'Failed to retrieve tunnel information' });
-        }
-
-        const redisService = new RedisCliService(tunnelInfo);
-
-        const results = [];
-
-        for (const query of queries) {
-            const queryResult = {
-                id: query.id,
-                title: query.title,
-                query: query.query,
-                results: [],
-                allowAi: query.allowAi,
-            };
-
-            try {
-                const output = await redisService.executeCommand(query.query);
-                queryResult.results.push({
-                    nodeId: 'tunnel',
-                    output,
-                    error: null,
-                    status: 'SUCCESS'
-                });
-            } catch (error) {
-                logger.error('Redis query execution failed:', {
-                    error: error.message,
-                    query: query.title,
-                    projectId,
-                    environment,
-                    userId
-                });
-                queryResult.results.push({
-                    nodeId: 'tunnel',
-                    output: null,
-                    error: error.message,
-                    status: 'ERROR'
-                });
-            }
-
-            queryResult.summary = {
-                total: queryResult.results.length,
-                successful: queryResult.results.filter(r => r.status === 'SUCCESS').length,
-                failed: queryResult.results.filter(r => r.status === 'ERROR').length
-            };
-
-            results.push(queryResult);
-        }
-
-        res.json({
+        // Delegate to service
+        const serviceExecutionService = new ServiceExecutionService();
+        const result = await serviceExecutionService.executeRedisCommands(
             projectId,
             environment,
-            timestamp: new Date().toISOString(),
-            results
-        });
+            queries,
+            apiToken,
+            userId
+        );
+
+        res.json(result);
     } catch (error) {
         logger.error('Redis query execution failed:', {
             error: error.message,
