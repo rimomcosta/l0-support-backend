@@ -8,7 +8,7 @@ import * as sqlCommands from '../api/app/sqlCommands.js';
 import * as redisCommands from '../api/app/redisCommands.js';
 import * as openSearchCommands from '../api/app/openSearchCommands.js';
 import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
-import * as commands from '../api/app/commands.js';
+import * as commandsController from '../api/app/commandsController.js';
 import * as bashCommands from '../api/app/bashCommands.js';
 import { openTunnel } from '../api/app/tunnel.js';
 import * as ai from '../api/app/ai.js';
@@ -33,32 +33,21 @@ router.post('/:projectId/:environment/sqlquery', requireAuth, sqlCommands.runQue
 router.post('/:projectId/:environment/redisquery', requireAuth, redisCommands.runQueries);
 router.post('/:projectId/:environment/searchquery', requireAuth, openSearchCommands.runQueries);
 router.post('/:projectId/:environment/magentocloud/:instance?', requireAuth, magentoCloudDirectAccess.executeCommands);
-router.get('/command/:id', requireAuth, commands.getCommand);
-router.get('/commands', requireAuth, commands.getCommands);
-router.post('/commands', requireAuth, commands.createCommand);
-router.put('/commands/:id', requireAuth, commands.updateCommand);
-router.put('/commands/toggle/:id', requireAuth, commands.toggleCommand);
-router.delete('/command/:id', requireAuth, commands.deleteCommand);
+router.get('/command/:id', requireAuth, commandsController.getCommand);
+router.get('/commands', requireAuth, commandsController.getCommands);
+router.post('/commands', requireAuth, commandsController.createCommand);
+router.put('/commands/:id', requireAuth, commandsController.updateCommand);
+router.put('/commands/toggle/:id', requireAuth, commandsController.toggleCommand);
+router.delete('/command/:id', requireAuth, commandsController.deleteCommand);
 router.get('/:projectId/:environment/commands', 
-    (req, res, next) => {
-        console.log('=== COMMANDS ROUTE HIT ===', {
-            projectId: req.params.projectId,
-            environment: req.params.environment,
-            url: req.url,
-            path: req.path,
-            method: req.method,
-            hasSession: !!req.session,
-            hasUser: !!req.session?.user
-        });
-        next();
-    },
+    commandsController.logCommandRouteHit,
     requireAuth, 
-    commands.executeAllCommands
+    commandsController.executeAllCommands
 );
 // New route for single command execution
-router.post('/command/execute', requireAuth, commands.executeSingleCommand);
+router.post('/command/execute', requireAuth, commandsController.executeSingleCommand);
 router.post('/bashcommand', requireAuth, bashCommands.runCommands);
-router.post('/command/refresh-service', requireAuth, commands.refreshService);
+router.post('/command/refresh-service', requireAuth, commandsController.refreshService);
 router.post('/ai/generate-component-code', requireAuth, ai.generateComponentCode);
 router.get('/ai/chat/:chatId', requireAuth, getChatMessages); //Use in IntelligencePage.js
 
