@@ -414,19 +414,23 @@ export async function runCommands(req, res) {
 
             results.push(...nodeResults);
         } else {
-            // Multi-node execution
+            // Multi-node execution - Optimized to reduce duplicate connections to node 1
             const allNodesCommands = commands.filter(cmd => cmd.executeOnAllNodes);
             const singleNodeCommands = commands.filter(cmd => !cmd.executeOnAllNodes);
 
-            // Execute single-node commands on first node only
-            if (singleNodeCommands.length > 0) {
-                logSSHOperation('debug', `Executing single-node commands on first node: ${nodes[0].sshUrl}`, {
+            // Execute combined commands on first node (single-node + all-nodes commands)
+            if (singleNodeCommands.length > 0 || allNodesCommands.length > 0) {
+                const node1Commands = [...singleNodeCommands, ...allNodesCommands];
+                
+                logSSHOperation('debug', `Executing combined commands on first node: ${nodes[0].sshUrl}`, {
                     projectId: projectId,
                     environment: environment,
                     userId: userId,
                     nodeId: nodes[0].id,
                     sshUrl: nodes[0].sshUrl,
-                    commandCount: singleNodeCommands.length,
+                    singleNodeCommandCount: singleNodeCommands.length,
+                    allNodesCommandCount: allNodesCommands.length,
+                    totalCommandCount: node1Commands.length,
                     timestamp: new Date().toISOString()
                 });
 
@@ -435,7 +439,7 @@ export async function runCommands(req, res) {
                     projectId,
                     environment,
                     nodes[0].id,
-                    singleNodeCommands,
+                    node1Commands,
                     false, // isSingleNode
                     apiToken,
                     userId
@@ -444,9 +448,11 @@ export async function runCommands(req, res) {
                 results.push(...nodeResults);
             }
 
-            // Execute all-nodes commands on all nodes
-            if (allNodesCommands.length > 0) {
-                for (const node of nodes) {
+            // Execute all-nodes commands on remaining nodes (skip first node to avoid duplication)
+            if (allNodesCommands.length > 0 && nodes.length > 1) {
+                for (let i = 1; i < nodes.length; i++) {
+                    const node = nodes[i];
+                    
                     logSSHOperation('debug', `Executing all-nodes commands on node: ${node.sshUrl}`, {
                         projectId: projectId,
                         environment: environment,
