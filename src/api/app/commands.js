@@ -4,6 +4,7 @@
 import { CommandService } from '../../services/commandsManagerService.js';
 import { CommandExecutionService } from '../../services/commandExecutionService.js';
 import { UserActivityService } from '../../services/userActivityService.js';
+import { WebSocketService } from '../../services/webSocketService.js';
 import { logger } from '../../services/logger.js';
 
 const commandService = new CommandService();

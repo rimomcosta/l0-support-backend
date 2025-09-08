@@ -1,13 +1,8 @@
-import { redisClient } from '../../services/redisService.js';
-import { oidcClient } from '../../services/oidcService.js';
+import { HealthManagementService } from '../../services/healthManagementService.js';
 
 export function checkHealth(req, res) {
-    const healthData = {
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        redis: redisClient.isReady ? 'connected' : 'disconnected',
-        oidc: !!oidcClient ? 'initialized' : 'not initialized',
-        websocket: req.app.locals.wss ? 'initialized' : 'not initialized'
-    };
-    res.json(healthData);
+    const healthService = new HealthManagementService();
+    const result = healthService.checkHealth(req);
+    
+    res.status(result.statusCode).json(result.data);
 }

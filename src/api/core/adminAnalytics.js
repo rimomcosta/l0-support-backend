@@ -1,7 +1,6 @@
 // src/api/core/adminAnalytics.js
-import { AnalyticsService, elasticsearchClient, elasticsearchConfig } from '../../services/analyticsService.js';
+import { AdminAnalyticsManagementService } from '../../services/adminAnalyticsManagementService.js';
 import { logger } from '../../services/logger.js';
-import { pool } from '../../config/database.js';
 
 console.log('=== ADMIN ANALYTICS CONTROLLER LOADED ===');
 
@@ -12,112 +11,35 @@ export async function getUserDetails(req, res) {
     try {
         const { userId } = req.params;
         
-        let user;
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getUserDetails(userId);
         
-        try {
-            // Get user from database
-            const [users] = await pool.execute(
-                'SELECT * FROM users WHERE user_id = ?',
-                [userId]
-            );
-            
-            if (users.length === 0) {
-                return res.status(404).json({ error: 'User not found' });
-            }
-            
-            user = users[0];
-        } catch (dbError) {
-            console.error('=== DATABASE ERROR ===', dbError);
-            res.status(500).json({ error: 'Database error: ' + dbError.message });
-            return;
-        }
-        
-        // Get basic analytics for the user
-        try {
-            // Use a simpler query without complex aggregations
-            const response = await elasticsearchClient.search({
-                index: elasticsearchConfig.index.user_activities,
-                body: {
-                    query: {
-                        bool: {
-                            must: [
-                                { term: { user_id: userId } },
-                                { range: { '@timestamp': { gte: 'now-30d' } } }
-                            ]
-                        }
-                    },
-                    sort: [{ '@timestamp': { order: 'desc' } }],
-                    size: 1000
-                }
-            });
-
-            const activities = response.hits.hits.map(hit => hit._source);
-            const total = response.hits.total.value;
-            
-            // Calculate basic analytics manually
-            const activityTypes = {};
-            const projects = new Set();
-            const errors = activities.filter(a => a.activity_type === 'error');
-            
-            activities.forEach(activity => {
-                if (activity.activity_type) {
-                    activityTypes[activity.activity_type] = (activityTypes[activity.activity_type] || 0) + 1;
-                }
-                if (activity.project_id) {
-                    projects.add(activity.project_id);
-                }
-            });
-
-            user.analytics = {
-                total_activities: total,
-                last_activity: activities.length > 0 ? activities[0]['@timestamp'] : null,
-                most_used_features: Object.entries(activityTypes)
-                    .map(([key, count]) => ({ key, doc_count: count }))
-                    .sort((a, b) => b.doc_count - a.doc_count)
-                    .slice(0, 5),
-                projects_accessed: projects.size,
-                errors_count: errors.length,
-                activity_timeline: []
-            };
-        } catch (analyticsError) {
-            logger.error(`Failed to get analytics for user ${userId}:`, analyticsError);
-            user.analytics = {
-                total_activities: 0,
-                last_activity: null,
-                most_used_features: [],
-                projects_accessed: 0,
-                errors_count: 0,
-                activity_timeline: []
-            };
-        }
-        
-        res.json(user);
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to get user details:', error);
-        res.status(500).json({ error: 'Failed to retrieve user details' });
+        logger.error('Error in getUserDetails:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get comprehensive user analytics
+ * Get user analytics
  */
 export async function getUserAnalytics(req, res) {
     try {
         const { userId } = req.params;
         const { timeRange = '30d' } = req.query;
         
-        const analytics = await AnalyticsService.getUserAnalytics(userId, timeRange);
-        const sessions = await AnalyticsService.getUserSessions(userId, timeRange);
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getUserAnalytics(userId, timeRange);
         
-        res.json({
-            user_id: userId,
-            time_range: timeRange,
-            analytics,
-            sessions
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
     } catch (error) {
-        logger.error('Failed to get user analytics:', error);
-        res.status(500).json({ error: 'Failed to retrieve user analytics' });
+        logger.error('Error in getUserAnalytics:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -127,22 +49,19 @@ export async function getUserAnalytics(req, res) {
 export async function updateUser(req, res) {
     try {
         const { userId } = req.params;
-        const { username, email } = req.body;
+        const updateData = req.body;
         
-        // Update user in database
-        const [result] = await pool.execute(
-            'UPDATE users SET username = ?, email = ?, updated_at = NOW() WHERE user_id = ?',
-            [username, email, userId]
-        );
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.updateUser(userId, updateData);
         
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        res.json({ success: true, message: 'User updated successfully' });
+        res.status(result.statusCode).json(result.success ? {
+            message: result.message
+        } : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to update user:', error);
-        res.status(500).json({ error: 'Failed to update user' });
+        logger.error('Error in updateUser:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -153,124 +72,108 @@ export async function revokeUserToken(req, res) {
     try {
         const { userId } = req.params;
         
-        // Clear API token in database
-        const [result] = await pool.execute(
-            'UPDATE users SET api_token = NULL, updated_at = NOW() WHERE user_id = ?',
-            [userId]
-        );
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.revokeUserToken(userId);
         
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        res.json({ success: true, message: 'API token revoked successfully' });
+        res.status(result.statusCode).json(result.success ? {
+            message: result.message
+        } : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to revoke token:', error);
-        res.status(500).json({ error: 'Failed to revoke token' });
+        logger.error('Error in revokeUserToken:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Delete user (soft delete - mark as inactive)
+ * Delete user
  */
 export async function deleteUser(req, res) {
     try {
         const { userId } = req.params;
         
-        // Soft delete - add a deleted_at timestamp
-        const [result] = await pool.execute(
-            'UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE user_id = ?',
-            [userId]
-        );
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.deleteUser(userId);
         
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        res.json({ success: true, message: 'User deleted successfully' });
+        res.status(result.statusCode).json(result.success ? {
+            message: result.message
+        } : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to delete user:', error);
-        res.status(500).json({ error: 'Failed to delete user' });
+        logger.error('Error in deleteUser:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get all users with analytics summary
+ * Get all users with analytics
  */
 export async function getAllUsers(req, res) {
     try {
-        const users = await AnalyticsService.getAllUsersWithAnalytics();
-        res.json(users);
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getAllUsers();
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to get users for admin:', error);
-        res.status(500).json({ error: 'Failed to retrieve users' });
+        logger.error('Error in getAllUsers:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Test elasticsearch connection
+ * Test Elasticsearch connection
  */
 export async function testElasticsearch(req, res) {
     try {
-        const health = await elasticsearchClient.cluster.health();
-        res.json({ 
-            status: 'success', 
-            elasticsearch: health.body,
-            config: {
-                node: elasticsearchConfig.node,
-                indices: elasticsearchConfig.index
-            }
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.testElasticsearch();
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error,
+            details: result.details
         });
     } catch (error) {
-        logger.error('Elasticsearch test failed:', error);
-        res.status(500).json({ error: 'Elasticsearch test failed', details: error.message });
+        logger.error('Error in testElasticsearch:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Test elasticsearch search
+ * Test Elasticsearch search functionality
  */
 export async function testElasticsearchSearch(req, res) {
     try {
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    range: { '@timestamp': { gte: 'now-30d' } }
-                },
-                aggs: {
-                    total_activities: {
-                        value_count: { field: 'user_id' }
-                    }
-                },
-                size: 0
-            }
-        });
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.testElasticsearchSearch();
         
-        res.json({ 
-            status: 'success', 
-            response: response,
-            responseType: typeof response,
-            responseKeys: Object.keys(response),
-            hasBody: !!response.body
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error,
+            details: result.details
         });
     } catch (error) {
-        logger.error('Elasticsearch search test failed:', error);
-        res.status(500).json({ error: 'Elasticsearch search test failed', details: error.message });
+        logger.error('Error in testElasticsearchSearch:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get system overview analytics
+ * Get system overview
  */
 export async function getSystemOverview(req, res) {
     try {
-        const { timeRange = '7d' } = req.query;
-        const overview = await AnalyticsService.getSystemOverview(timeRange);
-        res.json(overview);
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getSystemOverview();
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to get system overview:', error);
-        res.status(500).json({ error: 'Failed to retrieve system overview' });
+        logger.error('Error in getSystemOverview:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -279,28 +182,36 @@ export async function getSystemOverview(req, res) {
  */
 export async function getErrorTracking(req, res) {
     try {
-        const { user_id, error_type, severity, timeRange = '7d' } = req.query;
-        const filters = { user_id, error_type, severity, timeRange };
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getErrorTracking();
         
-        const errors = await AnalyticsService.getErrorTracking(filters);
-        res.json(errors);
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to get error tracking:', error);
-        res.status(500).json({ error: 'Failed to retrieve error tracking' });
+        logger.error('Error in getErrorTracking:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Mark error as resolved
+ * Resolve error
  */
 export async function resolveError(req, res) {
     try {
         const { errorId } = req.params;
-        await AnalyticsService.resolveError(errorId);
-        res.json({ success: true });
+        
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.resolveError(errorId);
+        
+        res.status(result.statusCode).json(result.success ? {
+            message: result.message
+        } : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to resolve error:', error);
-        res.status(500).json({ error: 'Failed to resolve error' });
+        logger.error('Error in resolveError:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -309,31 +220,15 @@ export async function resolveError(req, res) {
  */
 export async function getMostAccessedPages(req, res) {
     try {
-        const { timeRange = '7d' } = req.query;
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getMostAccessedPages();
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { term: { activity_type: 'page_view' } },
-                            { range: { '@timestamp': { gte: `now-${timeRange}` } } }
-                        ]
-                    }
-                },
-                aggs: {
-                    most_accessed_pages: {
-                        terms: { field: 'page_url', size: 20 }
-                    }
-                }
-            }
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        res.json(response.body.aggregations.most_accessed_pages);
     } catch (error) {
-        logger.error('Failed to get most accessed pages:', error);
-        res.status(500).json({ error: 'Failed to retrieve most accessed pages' });
+        logger.error('Error in getMostAccessedPages:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -342,26 +237,15 @@ export async function getMostAccessedPages(req, res) {
  */
 export async function getMostActiveUsers(req, res) {
     try {
-        const { timeRange = '7d' } = req.query;
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getMostActiveUsers();
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    range: { '@timestamp': { gte: `now-${timeRange}` } }
-                },
-                aggs: {
-                    most_active_users: {
-                        terms: { field: 'user_id', size: 20 }
-                    }
-                }
-            }
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        res.json(response.body.aggregations.most_active_users);
     } catch (error) {
-        logger.error('Failed to get most active users:', error);
-        res.status(500).json({ error: 'Failed to retrieve most active users' });
+        logger.error('Error in getMostActiveUsers:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -370,206 +254,88 @@ export async function getMostActiveUsers(req, res) {
  */
 export async function getMostExecutedCommands(req, res) {
     try {
-        const { timeRange = '7d' } = req.query;
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getMostExecutedCommands();
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { term: { activity_type: 'command_execution' } },
-                            { range: { '@timestamp': { gte: `now-${timeRange}` } } }
-                        ]
-                    }
-                },
-                aggs: {
-                    most_executed_commands: {
-                        terms: { field: 'command_type', size: 20 }
-                    }
-                }
-            }
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        res.json(response.body.aggregations.most_executed_commands);
     } catch (error) {
-        logger.error('Failed to get most executed commands:', error);
-        res.status(500).json({ error: 'Failed to retrieve most executed commands' });
+        logger.error('Error in getMostExecutedCommands:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get user activity timeline
+ * Get user timeline
  */
 export async function getUserTimeline(req, res) {
     try {
         const { userId } = req.params;
-        const { timeRange = '7d' } = req.query;
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { term: { user_id: userId } },
-                            { range: { '@timestamp': { gte: `now-${timeRange}` } } }
-                        ]
-                    }
-                },
-                aggs: {
-                    activity_timeline: {
-                        date_histogram: {
-                            field: '@timestamp',
-                            calendar_interval: '1h'
-                        },
-                        aggs: {
-                            activity_types: {
-                                terms: { field: 'activity_type' }
-                            }
-                        }
-                    }
-                }
-            }
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getUserTimeline(userId);
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        res.json(response.body.aggregations.activity_timeline);
     } catch (error) {
-        logger.error('Failed to get user timeline:', error);
-        res.status(500).json({ error: 'Failed to retrieve user timeline' });
+        logger.error('Error in getUserTimeline:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get project usage analytics
+ * Get project usage
  */
 export async function getProjectUsage(req, res) {
     try {
-        const { timeRange = '7d' } = req.query;
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getProjectUsage();
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { exists: { field: 'project_id' } },
-                            { range: { '@timestamp': { gte: `now-${timeRange}` } } }
-                        ]
-                    }
-                },
-                aggs: {
-                    project_usage: {
-                        terms: { field: 'project_id', size: 50 },
-                        aggs: {
-                            environments: {
-                                terms: { field: 'environment' }
-                            },
-                            activity_types: {
-                                terms: { field: 'activity_type' }
-                            },
-                            users: {
-                                cardinality: { field: 'user_id' }
-                            }
-                        }
-                    }
-                }
-            }
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        res.json(response.body.aggregations.project_usage);
     } catch (error) {
-        logger.error('Failed to get project usage:', error);
-        res.status(500).json({ error: 'Failed to retrieve project usage' });
+        logger.error('Error in getProjectUsage:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get real-time system metrics
+ * Get realtime metrics
  */
 export async function getRealtimeMetrics(req, res) {
     try {
-        const now = new Date();
-        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getRealtimeMetrics();
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    range: { '@timestamp': { gte: oneHourAgo.toISOString() } }
-                },
-                aggs: {
-                    active_users_last_hour: {
-                        cardinality: { field: 'user_id' }
-                    },
-                    activities_last_hour: {
-                        value_count: { field: 'user_id' }
-                    },
-                    errors_last_hour: {
-                        filter: { term: { activity_type: 'error' } },
-                        aggs: {
-                            error_count: { value_count: { field: 'user_id' } }
-                        }
-                    }
-                }
-            }
-        });
-
-        res.json({
-            timestamp: now.toISOString(),
-            metrics: response.body.aggregations
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
     } catch (error) {
-        logger.error('Failed to get real-time metrics:', error);
-        res.status(500).json({ error: 'Failed to retrieve real-time metrics' });
+        logger.error('Error in getRealtimeMetrics:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Get user activities with filters
+ * Get user activities
  */
 export async function getUserActivities(req, res) {
     try {
         const { userId } = req.params;
-        const { activityType, dateRange = '30d', projectId, environment } = req.query;
+        const filters = req.query;
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_activities,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { term: { user_id: userId } },
-                            { range: { '@timestamp': { gte: `now-${dateRange}` } } }
-                        ],
-                        filter: []
-                    }
-                },
-                sort: [{ '@timestamp': { order: 'desc' } }],
-                size: 1000
-            }
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getUserActivities(userId, filters);
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        let activities = response.hits.hits.map(hit => ({
-            _id: hit._id,
-            ...hit._source
-        }));
-
-        // Apply additional filters
-        if (activityType) {
-            activities = activities.filter(activity => activity.activity_type === activityType);
-        }
-        if (projectId) {
-            activities = activities.filter(activity => activity.project_id === projectId);
-        }
-        if (environment) {
-            activities = activities.filter(activity => activity.environment === environment);
-        }
-
-        res.json({ activities });
     } catch (error) {
-        logger.error('Failed to get user activities:', error);
-        res.status(500).json({ error: 'Failed to get user activities' });
+        logger.error('Error in getUserActivities:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -579,33 +345,16 @@ export async function getUserActivities(req, res) {
 export async function getUserErrors(req, res) {
     try {
         const { userId } = req.params;
-        const { dateRange = '30d' } = req.query;
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.error_tracking,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { term: { user_id: userId } },
-                            { range: { '@timestamp': { gte: `now-${dateRange}` } } }
-                        ]
-                    }
-                },
-                sort: [{ '@timestamp': { order: 'desc' } }],
-                size: 1000
-            }
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getUserErrors(userId);
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        const errors = response.hits.hits.map(hit => ({
-            _id: hit._id,
-            ...hit._source
-        }));
-
-        res.json({ errors });
     } catch (error) {
-        logger.error('Failed to get user errors:', error);
-        res.status(500).json({ error: 'Failed to get user errors' });
+        logger.error('Error in getUserErrors:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -615,33 +364,16 @@ export async function getUserErrors(req, res) {
 export async function getUserSessions(req, res) {
     try {
         const { userId } = req.params;
-        const { dateRange = '30d' } = req.query;
         
-        const response = await elasticsearchClient.search({
-            index: elasticsearchConfig.index.user_sessions,
-            body: {
-                query: {
-                    bool: {
-                        must: [
-                            { term: { user_id: userId } },
-                            { range: { '@timestamp': { gte: `now-${dateRange}` } } }
-                        ]
-                    }
-                },
-                sort: [{ '@timestamp': { order: 'desc' } }],
-                size: 100
-            }
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.getUserSessions(userId);
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
         });
-
-        const sessions = response.hits.hits.map(hit => ({
-            _id: hit._id,
-            ...hit._source
-        }));
-
-        res.json({ sessions });
     } catch (error) {
-        logger.error('Failed to get user sessions:', error);
-        res.status(500).json({ error: 'Failed to get user sessions' });
+        logger.error('Error in getUserSessions:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -651,55 +383,39 @@ export async function getUserSessions(req, res) {
 export async function deleteUserActivities(req, res) {
     try {
         const { userId } = req.params;
-        const { activityIds } = req.body;
         
-        if (!activityIds || !Array.isArray(activityIds)) {
-            return res.status(400).json({ error: 'Activity IDs array is required' });
-        }
-
-        // Delete activities from Elasticsearch
-        const deletePromises = activityIds.map(activityId =>
-            elasticsearchClient.delete({
-                index: elasticsearchConfig.index.user_activities,
-                id: activityId
-            }).catch(err => {
-                logger.error(`Failed to delete activity ${activityId}:`, err);
-                return null;
-            })
-        );
-
-        await Promise.all(deletePromises);
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.deleteUserActivities(userId);
         
-        res.json({ success: true, message: `Deleted ${activityIds.length} activities` });
+        res.status(result.statusCode).json(result.success ? {
+            message: result.message
+        } : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to delete user activities:', error);
-        res.status(500).json({ error: 'Failed to delete user activities' });
+        logger.error('Error in deleteUserActivities:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
 /**
- * Resolve error
+ * Resolve error by ID
  */
 export async function resolveErrorById(req, res) {
     try {
         const { errorId } = req.params;
         
-        await elasticsearchClient.update({
-            index: elasticsearchConfig.index.error_tracking,
-            id: errorId,
-            body: {
-                doc: {
-                    resolved: true,
-                    resolved_at: new Date().toISOString(),
-                    resolved_by: req.session.user.id
-                }
-            }
-        });
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.resolveErrorById(errorId);
         
-        res.json({ success: true, message: 'Error marked as resolved' });
+        res.status(result.statusCode).json(result.success ? {
+            message: result.message
+        } : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to resolve error:', error);
-        res.status(500).json({ error: 'Failed to resolve error' });
+        logger.error('Error in resolveErrorById:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -709,68 +425,15 @@ export async function resolveErrorById(req, res) {
 export async function exportUserData(req, res) {
     try {
         const { userId } = req.params;
-        const { dateRange = '30d' } = req.query;
         
-        // Get all user data
-        const [activitiesResponse, errorsResponse, sessionsResponse] = await Promise.all([
-            elasticsearchClient.search({
-                index: elasticsearchConfig.index.user_activities,
-                body: {
-                    query: {
-                        bool: {
-                            must: [
-                                { term: { user_id: userId } },
-                                { range: { '@timestamp': { gte: `now-${dateRange}` } } }
-                            ]
-                        }
-                    },
-                    size: 10000
-                }
-            }),
-            elasticsearchClient.search({
-                index: elasticsearchConfig.index.error_tracking,
-                body: {
-                    query: {
-                        bool: {
-                            must: [
-                                { term: { user_id: userId } },
-                                { range: { '@timestamp': { gte: `now-${dateRange}` } } }
-                            ]
-                        }
-                    },
-                    size: 10000
-                }
-            }),
-            elasticsearchClient.search({
-                index: elasticsearchConfig.index.user_sessions,
-                body: {
-                    query: {
-                        bool: {
-                            must: [
-                                { term: { user_id: userId } },
-                                { range: { '@timestamp': { gte: `now-${dateRange}` } } }
-                            ]
-                        }
-                    },
-                    size: 1000
-                }
-            })
-        ]);
-
-        const exportData = {
-            userId,
-            exportDate: new Date().toISOString(),
-            dateRange,
-            activities: activitiesResponse.hits.hits.map(hit => hit._source),
-            errors: errorsResponse.hits.hits.map(hit => hit._source),
-            sessions: sessionsResponse.hits.hits.map(hit => hit._source)
-        };
-
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Disposition', `attachment; filename="analytics-${userId}-${new Date().toISOString().split('T')[0]}.json"`);
-        res.json(exportData);
+        const adminService = new AdminAnalyticsManagementService();
+        const result = await adminService.exportUserData(userId);
+        
+        res.status(result.statusCode).json(result.success ? result.data : {
+            error: result.error
+        });
     } catch (error) {
-        logger.error('Failed to export user data:', error);
-        res.status(500).json({ error: 'Failed to export user data' });
+        logger.error('Error in exportUserData:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }

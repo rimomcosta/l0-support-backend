@@ -1,26 +1,29 @@
 // src/api/app/tunnel.js
-import { tunnelManager } from '../../services/tunnelService.js';
+import { TunnelManagementService } from '../../services/tunnelManagementService.js';
 import { logger } from '../../services/logger.js';
 
 export async function openTunnel(req, res) {
-    const { projectId, environment } = req.params;
-    const apiToken = req.session.decryptedApiToken;
-    const userId = req.session.user.id; // Extract userId from session
-    // Avoid logging sensitive tokens
     try {
-        const tunnelInfo = await tunnelManager.openTunnel(projectId, environment, apiToken, userId);
-
-        // Respond with the tunnel info
-        res.json({
+        const { projectId, environment } = req.params;
+        const apiToken = req.session.decryptedApiToken;
+        const userId = req.session.user.id; // Extract userId from session
+        
+        const tunnelService = new TunnelManagementService();
+        const result = await tunnelService.openTunnel(projectId, environment, apiToken, userId);
+        
+        res.status(result.statusCode).json(result.success ? {
             message: 'Tunnel opened successfully',
-            tunnelInfo: tunnelInfo
+            tunnelInfo: result.tunnelInfo
+        } : {
+            error: result.error,
+            details: result.details
         });
     } catch (error) {
         logger.error('Failed to open tunnel:', {
             error: error.message,
-            projectId,
-            environment,
-            userId
+            projectId: req.params.projectId,
+            environment: req.params.environment,
+            userId: req.session?.user?.id
         });
 
         res.status(500).json({

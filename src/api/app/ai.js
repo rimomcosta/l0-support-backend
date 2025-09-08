@@ -1,22 +1,21 @@
 // src/api/app/ai.js
-import ReactComponentCreator from '../../services/ai/agents/reactComponentCreator.js';
+import { AiManagementService } from '../../services/aiManagementService.js';
+import { logger } from '../../services/logger.js';
 
 export async function generateComponentCode(req, res) {
-    const { command, description, outputExample, aiGuidance } = req.body;
-
-    if (!outputExample || !command) {
-        return res.status(400).json({ error: 'Command, description and output example are required' });
-    }
-
     try {
-        const data = {
-            command,
-            description,
-            outputExample,
-            aiGuidance,
-        };
-        const generatedCode = await ReactComponentCreator.generateComponent(data);
-        res.json({ generatedCode });
+        const { command, description, outputExample, aiGuidance } = req.body;
+
+        const aiService = new AiManagementService();
+        const result = await aiService.generateComponentCode({
+            command, description, outputExample, aiGuidance
+        });
+        
+        res.status(result.statusCode).json(result.success ? {
+            generatedCode: result.generatedCode
+        } : {
+            error: result.error
+        });
     } catch (error) {
         logger.error('AI code generation failed:', error);
         res.status(500).json({ error: 'Failed to generate component code' });

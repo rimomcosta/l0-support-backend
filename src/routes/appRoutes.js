@@ -13,7 +13,7 @@ import * as bashCommands from '../api/app/bashCommands.js';
 import { openTunnel } from '../api/app/tunnel.js';
 import * as ai from '../api/app/ai.js';
 import { getChatMessages } from '../api/app/chatApi.js';
-import chatApiRouter from '../api/app/chatApi.js';
+import chatRoutes from './chatRoutes.js';
 import dashboardLayoutRoutes from './dashboardLayoutRoutes.js';
 import aiSettingsRoutes from './aiSettingsRoutes.js';
 
@@ -52,6 +52,6 @@ router.post('/ai/generate-component-code', requireAuth, ai.generateComponentCode
 router.get('/ai/chat/:chatId', requireAuth, getChatMessages); //Use in IntelligencePage.js
 
 // Chat API routes
-router.use('/chat', requireAuth, chatApiRouter);
+router.use('/chat', requireAuth, chatRoutes);
 
 export default router;
