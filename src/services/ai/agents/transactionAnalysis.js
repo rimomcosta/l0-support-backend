@@ -45,21 +45,24 @@ class TransactionAnalysisAgent {
             const aiCallStartTime = Date.now();
             const response = await adapter.generateCode({
                 prompt: prompt,
-                model: this.model,
+                systemMessage: 'You are an expert performance analyst specializing in New Relic transaction traces.',
                 temperature: this.temperature,
                 maxTokens: this.maxTokens
             });
             const aiCallTime = Date.now() - aiCallStartTime;
             this.logger.info(`[AI AGENT] AI service responded in ${aiCallTime}ms for "${analysisName}"`);
 
+            // Filter out thinking content from the response
+            const filteredAnalysis = this.filterThinkingContent(response);
+
             const totalProcessingTime = Date.now() - startTime;
             this.logger.info(`[AI AGENT] Analysis completed successfully for "${analysisName}" in ${totalProcessingTime}ms total`);
             
             return {
                 success: true,
-                analysis: response,
+                analysis: filteredAnalysis,
                 processingTimeMs: totalProcessingTime,
-                tokenCount: this.estimateTokenCount(response)
+                tokenCount: this.estimateTokenCount(filteredAnalysis)
             };
             
         } catch (error) {
@@ -133,6 +136,63 @@ Perform a comprehensive analysis of this transaction trace and provide detailed 
 Please provide a detailed, actionable analysis that would be valuable for both developers and operations teams. Focus on practical recommendations that can improve the system's performance and reliability.
 
 Format your response in clear, well-structured sections with bullet points and specific recommendations.`;
+    }
+
+    filterThinkingContent(response) {
+        // Remove thinking content from the response
+        let filteredResponse = response;
+        
+        // Remove thinking paragraphs that start with common thinking phrases
+        const thinkingPatterns = [
+            /Alright, here's my take on this[\s\S]*?(?=\n\n|$)/g,
+            /I'm stepping into the role of[\s\S]*?(?=\n\n|$)/g,
+            /My analysis will start with[\s\S]*?(?=\n\n|$)/g,
+            /Deeper into the code, I'll examine[\s\S]*?(?=\n\n|$)/g,
+            /Finally, the report will focus on[\s\S]*?(?=\n\n|$)/g,
+            /I'm now focusing on[\s\S]*?(?=\n\n|$)/g,
+            /I've identified[\s\S]*?(?=\n\n|$)/g,
+            /I'm considering[\s\S]*?(?=\n\n|$)/g,
+            /I'm analyzing[\s\S]*?(?=\n\n|$)/g,
+            /Let me start by[\s\S]*?(?=\n\n|$)/g,
+            /I need to understand[\s\S]*?(?=\n\n|$)/g,
+            /I'll begin by[\s\S]*?(?=\n\n|$)/g,
+            /First impression:[\s\S]*?(?=\n\n|$)/g,
+            /The recommendations section will be about[\s\S]*?(?=\n\n|$)/g,
+            /The risk assessment is where I will[\s\S]*?(?=\n\n|$)/g,
+            /Technically, the trace reveals[\s\S]*?(?=\n\n|$)/g
+        ];
+        
+        thinkingPatterns.forEach(pattern => {
+            filteredResponse = filteredResponse.replace(pattern, '');
+        });
+        
+        // Remove any paragraphs that are mostly about the analysis process
+        const lines = filteredResponse.split('\n');
+        const filteredLines = lines.filter(line => {
+            const lowerLine = line.toLowerCase();
+            // Skip lines that are about the analysis process
+            if (lowerLine.includes('my analysis will') ||
+                lowerLine.includes('i\'m stepping into') ||
+                lowerLine.includes('i\'ll examine') ||
+                lowerLine.includes('i\'ll start') ||
+                lowerLine.includes('let me start') ||
+                lowerLine.includes('i need to understand') ||
+                lowerLine.includes('i\'ll begin') ||
+                lowerLine.includes('here\'s my take')) {
+                return false;
+            }
+            return true;
+        });
+        
+        filteredResponse = filteredLines.join('\n');
+        
+        // Clean up any double newlines that might have been left
+        filteredResponse = filteredResponse.replace(/\n{3,}/g, '\n\n');
+        
+        // Remove any leading/trailing whitespace
+        filteredResponse = filteredResponse.trim();
+        
+        return filteredResponse;
     }
 
     estimateTokenCount(text) {

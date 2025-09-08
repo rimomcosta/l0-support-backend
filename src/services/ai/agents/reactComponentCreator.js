@@ -118,7 +118,7 @@ Generate ONLY the component code without any markdown code block markers or extr
 
 const config = {
     provider: 'google_vertex',
-    model: 'gemini-2.5-pro',
+    model: 'claude-sonnet-4@20250514',
     temperature: 0.7,
     maxTokens: 15000,
     stream: false,

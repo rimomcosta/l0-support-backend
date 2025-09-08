@@ -23,21 +23,21 @@ export class AiSettingsManagementService {
         }
 
         // Additional validation can be added here
-        if (!['gpt-3.5-turbo', 'gpt-4', 'claude-3'].includes(aiModel)) {
+        if (!['fast', 'reasoning'].includes(aiModel)) {
             return {
                 valid: false,
                 error: 'Invalid AI model selected'
             };
         }
 
-        if (!['concise', 'detailed', 'balanced'].includes(responseStyle)) {
+        if (!['objective', 'balanced', 'creative'].includes(responseStyle)) {
             return {
                 valid: false,
                 error: 'Invalid response style selected'
             };
         }
 
-        if (!['short', 'medium', 'long'].includes(responseLength)) {
+        if (!['short', 'default', 'long'].includes(responseLength)) {
             return {
                 valid: false,
                 error: 'Invalid response length selected'
