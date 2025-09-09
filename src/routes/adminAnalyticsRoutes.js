@@ -1,6 +1,5 @@
 import express from 'express';
 import * as adminAnalyticsController from '../api/core/adminAnalytics.js';
-import * as adminAnalyticsTestController from '../api/core/adminAnalyticsTest.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { logger } from '../services/logger.js';
 
@@ -8,16 +7,10 @@ const router = express.Router();
 
 logger.info('=== ADMIN ANALYTICS ROUTES LOADED ===');
 
-// Test route
-router.get('/test', adminAnalyticsTestController.testRoute);
-
-// Test route with parameter
-router.get('/test/:param', adminAnalyticsTestController.testRouteWithParam);
-
 /**
  * Get individual user details
  */
-router.get('/getuser/:userId', adminAnalyticsController.getUserDetails);
+router.get('/getuser/:userId', requireAdmin, adminAnalyticsController.getUserDetails);
 
 /**
  * Get comprehensive user analytics
