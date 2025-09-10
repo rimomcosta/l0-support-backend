@@ -29,7 +29,12 @@ export async function initializeApp() {
 
         // Initialize core services
         await initializeRedis();
-        await initializeOIDCClient();
+        
+        // Only initialize OIDC client if Okta is enabled
+        if (process.env.USE_OKTA !== 'false') {
+            await initializeOIDCClient();
+        }
+        
         await initializeTables();
         await initializeElasticsearch();
 
