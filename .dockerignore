@@ -1,0 +1,13 @@
+.DS_Store
+dist
+build
+.vscode
+.idea
+coverage
+node_modules
+npm-debug.log
+yarn-error.log
+Dockerfile
+docker-compose.yml
+.git
+.gitignore
