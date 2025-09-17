@@ -79,6 +79,40 @@ export async function executeAllCommands(req, res) {
         res.json(finalResults);
 
     } catch (error) {
+        // Handle HIPAA project detection error specifically
+        if (error.message === 'HIPAA_PROJECT_DETECTED') {
+            console.error('=== HIPAA PROJECT DETECTED IN executeAllCommands ===', {
+                projectId: req.params.projectId,
+                environment: req.params.environment,
+                hipaaInfo: error.hipaaInfo
+            });
+            
+            logger.warn('HIPAA project detected, blocking all command execution:', {
+                projectId: req.params.projectId,
+                environment: req.params.environment,
+                userId: req.session?.user?.id,
+                sessionId: req.sessionID,
+                hipaaInfo: error.hipaaInfo,
+                timestamp: new Date().toISOString()
+            });
+
+            const hipaaResponse = {
+                error: 'HIPAA_PROJECT_DETECTED',
+                message: 'This is a HIPAA project and cannot be opened',
+                hipaaInfo: error.hipaaInfo,
+                timestamp: new Date().toISOString()
+            };
+
+            // Send HIPAA error via WebSocket
+            WebSocketService.broadcastToTab({
+                type: 'hipaa_project_detected',
+                timestamp: new Date().toISOString(),
+                hipaaInfo: error.hipaaInfo
+            }, req.query.tabId);
+
+            return res.status(403).json(hipaaResponse);
+        }
+
         console.error('=== ERROR IN executeAllCommands ===', {
             error: error.message,
             stack: error.stack,
@@ -300,6 +334,26 @@ export async function executeSingleCommand(req, res) {
             res.json(result);
 
     } catch (error) {
+        // Handle HIPAA project detection error specifically
+        if (error.message === 'HIPAA_PROJECT_DETECTED') {
+            logger.warn('HIPAA project detected, blocking command execution:', {
+                projectId,
+                environment,
+                commandId,
+                userId,
+                tabId,
+                hipaaInfo: error.hipaaInfo,
+                timestamp: new Date().toISOString()
+            });
+
+            return res.status(403).json({
+                error: 'HIPAA_PROJECT_DETECTED',
+                message: 'This is a HIPAA project and cannot be opened',
+                hipaaInfo: error.hipaaInfo,
+                timestamp: new Date().toISOString()
+            });
+        }
+
         logger.error('Failed to execute single command:', {
             error: error.message,
             stack: error.stack,
