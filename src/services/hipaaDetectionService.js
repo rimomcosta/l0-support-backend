@@ -102,7 +102,8 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('project_title')) {
                 const titleMatch = trimmedLine.match(/project_title\s*\|\s*(.+)/i);
                 if (titleMatch) {
-                    result.projectTitle = titleMatch[1].trim();
+                    // Clean up the extracted value by removing trailing pipes and extra whitespace
+                    result.projectTitle = titleMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -110,7 +111,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('project_id')) {
                 const idMatch = trimmedLine.match(/project_id\s*\|\s*(.+)/i);
                 if (idMatch) {
-                    result.projectId = idMatch[1].trim();
+                    result.projectId = idMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -118,7 +119,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('status')) {
                 const statusMatch = trimmedLine.match(/status\s*\|\s*(.+)/i);
                 if (statusMatch) {
-                    result.status = statusMatch[1].trim();
+                    result.status = statusMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -126,7 +127,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('plan')) {
                 const planMatch = trimmedLine.match(/plan\s*\|\s*(.+)/i);
                 if (planMatch) {
-                    result.plan = planMatch[1].trim();
+                    result.plan = planMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -134,7 +135,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('environments')) {
                 const envMatch = trimmedLine.match(/environments\s*\|\s*(.+)/i);
                 if (envMatch) {
-                    result.environments = envMatch[1].trim();
+                    result.environments = envMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -142,7 +143,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('storage')) {
                 const storageMatch = trimmedLine.match(/storage\s*\|\s*(.+)/i);
                 if (storageMatch) {
-                    result.storage = storageMatch[1].trim();
+                    result.storage = storageMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -150,7 +151,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('user_licenses')) {
                 const licensesMatch = trimmedLine.match(/user_licenses\s*\|\s*(.+)/i);
                 if (licensesMatch) {
-                    result.userLicenses = licensesMatch[1].trim();
+                    result.userLicenses = licensesMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -158,7 +159,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('created_at')) {
                 const createdMatch = trimmedLine.match(/created_at\s*\|\s*(.+)/i);
                 if (createdMatch) {
-                    result.created_at = createdMatch[1].trim();
+                    result.created_at = createdMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -166,7 +167,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('project_region')) {
                 const regionMatch = trimmedLine.match(/project_region\s*\|\s*(.+)/i);
                 if (regionMatch) {
-                    result.project_region = regionMatch[1].trim();
+                    result.project_region = regionMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
 
@@ -174,7 +175,7 @@ export class HipaaDetectionService {
             if (trimmedLine.includes('project_ui')) {
                 const uiMatch = trimmedLine.match(/project_ui\s*\|\s*(.+)/i);
                 if (uiMatch) {
-                    result.project_ui = uiMatch[1].trim();
+                    result.project_ui = uiMatch[1].replace(/\s*\|\s*$/, '').trim();
                 }
             }
         }
