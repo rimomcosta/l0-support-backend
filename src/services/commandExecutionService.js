@@ -13,6 +13,7 @@ import * as openSearchCommands from '../api/app/openSearchCommands.js';
 import * as magentoCloudDirectAccess from '../api/app/magentoCloudDirectAccess.js';
 import * as bashCommands from '../api/app/bashCommands.js';
 import * as rabbitmqCommands from '../api/app/rabbitmqCommands.js';
+import hipaaDetectionService from './hipaaDetectionService.js';
 
 export class CommandExecutionService {
     constructor() {
@@ -249,6 +250,61 @@ export class CommandExecutionService {
         try {
             await handler(request, responseHandler);
             
+            // Check for HIPAA status if command 28 (Project Info) was executed
+            const projectInfoCommand = commands.find(cmd => cmd.id === 28);
+            if (projectInfoCommand && responseHandler.data) {
+                try {
+                    logger.info('Checking HIPAA status from Project Info command result:', {
+                        projectId,
+                        environment,
+                        userId,
+                        commandId: 28
+                    });
+
+                    // Check the result for HIPAA status
+                    if (responseHandler.data.results && responseHandler.data.results.length > 0) {
+                        const commandResult = responseHandler.data.results[0];
+                        if (commandResult.results && commandResult.results.length > 0) {
+                            const output = commandResult.results[0].output;
+                            if (output) {
+                                const hipaaStatus = hipaaDetectionService.parseSubscriptionInfo(output);
+                                
+                                if (hipaaStatus.isHipaa) {
+                                    logger.warn('HIPAA project detected, blocking further execution:', {
+                                        projectId,
+                                        environment,
+                                        userId,
+                                        projectTitle: hipaaStatus.projectTitle
+                                    });
+
+                                    // Return a specific error that the frontend can handle
+                                    const error = new Error('HIPAA_PROJECT_DETECTED');
+                                    error.hipaaInfo = {
+                                        projectTitle: hipaaStatus.projectTitle,
+                                        projectId: hipaaStatus.projectId,
+                                        message: 'This is a HIPAA project and cannot be opened'
+                                    };
+                                    throw error;
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    // If it's our HIPAA error, re-throw it
+                    if (error.message === 'HIPAA_PROJECT_DETECTED') {
+                        throw error;
+                    }
+                    
+                    // For other errors during HIPAA check, log but continue
+                    logger.error('Error during HIPAA check in executeServiceCommands:', {
+                        projectId,
+                        environment,
+                        userId,
+                        error: error.message
+                    });
+                }
+            }
+            
             // Log successful command execution
             const userEmail = 'system'; // We don't have email in this context
             commands.forEach(cmd => {
@@ -282,6 +338,7 @@ export class CommandExecutionService {
             hasApiToken: !!apiToken,
             sessionId
         });
+
 
         // Send initial status to client using tabId, including tunnel setup
         try {
@@ -324,6 +381,125 @@ export class CommandExecutionService {
             commandsToRunCount: commandsToRun.length,
             commandsToRunIds: commandsToRun.map(cmd => cmd.id)
         });
+
+        // Check for HIPAA project before executing ANY commands
+        const hipaaCacheKey = `hipaa_${projectId}`;
+        let isHipaaProject = false;
+        
+        try {
+            // Check if we already cached the HIPAA status for this project
+            if (global.hipaaCache && global.hipaaCache[hipaaCacheKey]) {
+                isHipaaProject = global.hipaaCache[hipaaCacheKey];
+                logger.info('Using cached HIPAA status for batch execution:', { projectId, isHipaaProject });
+            } else {
+                // We need to check HIPAA status by executing command 28
+                logger.info('Checking HIPAA status for batch execution:', { projectId });
+                
+                // Get command 28 to check HIPAA status
+                const projectInfoCommand = await this.commandService.getById(28);
+                if (projectInfoCommand && projectInfoCommand.length > 0) {
+                    const cmd28 = projectInfoCommand[0];
+                    
+                    // Execute command 28 to get project info and check HIPAA
+                    const serviceHandler = this.serviceHandlers[cmd28.service_type];
+                    if (serviceHandler) {
+                        const result = await this.executeServiceCommands(
+                            cmd28.service_type,
+                            [cmd28],
+                            projectId,
+                            environment,
+                            userId,
+                            apiToken
+                        );
+                        
+                        // Check the result for HIPAA status
+                        if (result && result.results && result.results.length > 0) {
+                            const commandResult = result.results[0];
+                            if (commandResult.results && commandResult.results.length > 0) {
+                                const output = commandResult.results[0].output;
+                                if (output) {
+                                    const hipaaStatus = hipaaDetectionService.parseSubscriptionInfo(output);
+                                    isHipaaProject = hipaaStatus.isHipaa;
+                                    
+                                    // Cache the result
+                                    if (!global.hipaaCache) {
+                                        global.hipaaCache = {};
+                                    }
+                                    global.hipaaCache[hipaaCacheKey] = isHipaaProject;
+                                    
+                                    logger.info('HIPAA status determined for batch execution:', { 
+                                        projectId, 
+                                        isHipaaProject, 
+                                        projectTitle: hipaaStatus.projectTitle 
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If this is a HIPAA project, block ALL command execution
+            if (isHipaaProject) {
+                logger.warn('HIPAA project detected, blocking batch command execution:', {
+                    projectId,
+                    environment,
+                    userId,
+                    tabId
+                });
+
+                // Send HIPAA error to client via WebSocket
+                try {
+                    WebSocketService.broadcastToTab({
+                        type: 'hipaa_project_detected',
+                        timestamp: new Date().toISOString(),
+                        hipaaInfo: {
+                            projectTitle: 'HIPAA Project',
+                            projectId: projectId,
+                            message: 'This is a HIPAA project and cannot be opened'
+                        }
+                    }, tabId);
+                } catch (wsError) {
+                    logger.error('Failed to send HIPAA WebSocket message:', {
+                        error: wsError.message,
+                        projectId,
+                        environment,
+                        tabId
+                    });
+                }
+
+                // Return a specific error that the frontend can handle
+                const error = new Error('HIPAA_PROJECT_DETECTED');
+                error.hipaaInfo = {
+                    projectTitle: 'HIPAA Project',
+                    projectId: projectId,
+                    message: 'This is a HIPAA project and cannot be opened'
+                };
+                throw error;
+            }
+            
+            logger.info('HIPAA check passed, proceeding with batch command execution:', {
+                projectId,
+                environment,
+                userId,
+                tabId
+            });
+
+        } catch (error) {
+            // If it's our HIPAA error, re-throw it
+            if (error.message === 'HIPAA_PROJECT_DETECTED') {
+                throw error;
+            }
+            
+            // For other errors during HIPAA check, log but continue execution
+            logger.error('Error during HIPAA check in batch execution, continuing:', {
+                projectId,
+                environment,
+                userId,
+                tabId,
+                error: error.message
+            });
+        }
         
         const commandsByService = commandsToRun.reduce((acc, cmd) => {
             acc[cmd.service_type] = acc[cmd.service_type] || [];
@@ -776,6 +952,121 @@ export class CommandExecutionService {
         // Check if the command is reviewed
         if (!singleCommand.reviewed) {
             throw new Error('This command has not been reviewed and cannot be executed');
+        }
+
+        // Check for HIPAA project before executing ANY command
+        // First, check if we already know this project is HIPAA (cached)
+        const hipaaCacheKey = `hipaa_${projectId}`;
+        let isHipaaProject = false;
+        
+        try {
+            // Check if we already cached the HIPAA status for this project
+            if (global.hipaaCache && global.hipaaCache[hipaaCacheKey]) {
+                isHipaaProject = global.hipaaCache[hipaaCacheKey];
+                logger.info('Using cached HIPAA status:', { projectId, isHipaaProject });
+            } else {
+                // We need to check HIPAA status by executing command 28
+                logger.info('Checking HIPAA status for project:', { projectId, commandId });
+                
+                // Get command 28 to check HIPAA status
+                const projectInfoCommand = await this.commandService.getById(28);
+                if (projectInfoCommand && projectInfoCommand.length > 0) {
+                    const cmd28 = projectInfoCommand[0];
+                    
+                    // Execute command 28 to get project info and check HIPAA
+                    const serviceHandler = this.serviceHandlers[cmd28.service_type];
+                    if (serviceHandler) {
+                        const result = await this.executeServiceCommands(
+                            cmd28.service_type,
+                            [cmd28],
+                            projectId,
+                            environment,
+                            userId,
+                            apiToken
+                        );
+                        
+                        // Check the result for HIPAA status
+                        if (result && result.results && result.results.length > 0) {
+                            const commandResult = result.results[0];
+                            if (commandResult.results && commandResult.results.length > 0) {
+                                const output = commandResult.results[0].output;
+                                if (output) {
+                                    const hipaaStatus = hipaaDetectionService.parseSubscriptionInfo(output);
+                                    isHipaaProject = hipaaStatus.isHipaa;
+                                    
+                                    // Cache the result
+                                    if (!global.hipaaCache) {
+                                        global.hipaaCache = {};
+                                    }
+                                    global.hipaaCache[hipaaCacheKey] = isHipaaProject;
+                                    
+                                    logger.info('HIPAA status determined:', { 
+                                        projectId, 
+                                        isHipaaProject, 
+                                        projectTitle: hipaaStatus.projectTitle 
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If this is a HIPAA project, block ALL command execution
+            if (isHipaaProject) {
+                logger.warn('HIPAA project detected, blocking command execution:', {
+                    commandId,
+                    projectId,
+                    environment,
+                    userId
+                });
+
+                // Return a specific error that the frontend can handle
+                const error = new Error('HIPAA_PROJECT_DETECTED');
+                error.hipaaInfo = {
+                    projectTitle: 'HIPAA Project',
+                    projectId: projectId,
+                    message: 'This is a HIPAA project and cannot be opened'
+                };
+                throw error;
+            }
+            
+            logger.info('HIPAA check passed, proceeding with command execution:', {
+                commandId,
+                projectId,
+                environment,
+                userId
+            });
+
+        } catch (error) {
+            // If it's our HIPAA error, re-throw it
+            if (error.message === 'HIPAA_PROJECT_DETECTED') {
+                throw error;
+            }
+            
+            // For other errors during HIPAA check, log but continue execution
+            logger.error('Error during HIPAA check, continuing with execution:', {
+                commandId,
+                projectId,
+                environment,
+                userId,
+                error: error.message
+            });
+        }
+
+        // If this is command 28, we already executed it above for HIPAA check, so return the cached result
+        if (commandId === 28) {
+            // Return the result from the HIPAA check above
+            // The result should be available in the cache or we need to re-execute
+            logger.info('Returning Project Info result from HIPAA check:', {
+                commandId,
+                projectId,
+                environment,
+                userId
+            });
+            
+            // For now, we'll execute the command normally since we need the actual result
+            // In a more optimized version, we'd cache the result from the HIPAA check
         }
 
         // Ensure service_type is magento_cloud for magento-cloud commands

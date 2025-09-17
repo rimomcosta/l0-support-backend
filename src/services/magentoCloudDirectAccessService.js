@@ -29,6 +29,10 @@ export class MagentoCloudDirectAccessService {
      * @returns {string} - The escaped command
      */
     escapeQuotesForShell(command) {
+        // Don't escape quotes for commands with pipes, as it breaks the shell interpretation
+        if (command.includes('|')) {
+            return command;
+        }
         return command.replace(/"/g, '\\"');
     }
 
