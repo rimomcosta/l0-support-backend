@@ -1,17 +1,18 @@
 import { logger } from '../../logger.js';
 import { aiService } from '../aiService.js';
+import fs from 'fs/promises';
 
 class TransactionAnalysisAgent {
     constructor() {
         this.logger = logger;
         this.provider = 'google_vertex';
-        this.model = 'gemini-2.5-flash';
+        this.model = 'gemini-2.5-pro';
         this.maxTokens = 32000;
-        this.temperature = 0.1;
+        this.temperature = 0.7;
         this.stream = false;
     }
 
-    async analyzeTransaction(yamlContent, analysisName, projectId, environment, extraContext = null) {
+    async analyzeTransaction(yamlContent, analysisName, projectId, environment, extraContext = '') {
         const startTime = Date.now();
         
         try {
@@ -24,7 +25,6 @@ class TransactionAnalysisAgent {
             const promptTime = Date.now() - promptStartTime;
             this.logger.info(`[AI AGENT] Prompt built in ${promptTime}ms for "${analysisName}"`);
 
-            // Estimate token count
             const estimatedTokens = Math.ceil(prompt.length / 4); // Rough estimation
             this.logger.info(`[AI AGENT] Estimated tokens for "${analysisName}": ${estimatedTokens}`);
 
@@ -43,26 +43,25 @@ class TransactionAnalysisAgent {
             // Call the AI service
             this.logger.info(`[AI AGENT] Calling AI service for "${analysisName}"`);
             const aiCallStartTime = Date.now();
+            const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
             const response = await adapter.generateCode({
                 prompt: prompt,
-                systemMessage: 'You are an expert performance analyst specializing in New Relic transaction traces.',
+                systemMessage: instructions + ' Please analyse the Magento 2 transaction below extracted from New Relic on Adobe Commerce Cloud. Read the entire file, add it to your context and perform an analysis. Remember that this is one of many other transactions.',
                 temperature: this.temperature,
                 maxTokens: this.maxTokens
             });
+
             const aiCallTime = Date.now() - aiCallStartTime;
             this.logger.info(`[AI AGENT] AI service responded in ${aiCallTime}ms for "${analysisName}"`);
-
-            // Filter out thinking content from the response
-            const filteredAnalysis = this.filterThinkingContent(response);
 
             const totalProcessingTime = Date.now() - startTime;
             this.logger.info(`[AI AGENT] Analysis completed successfully for "${analysisName}" in ${totalProcessingTime}ms total`);
             
             return {
                 success: true,
-                analysis: filteredAnalysis,
+                analysis: response,
                 processingTimeMs: totalProcessingTime,
-                tokenCount: this.estimateTokenCount(filteredAnalysis)
+                tokenCount: this.estimateTokenCount(response)
             };
             
         } catch (error) {
@@ -77,122 +76,36 @@ class TransactionAnalysisAgent {
         }
     }
 
-    buildAnalysisPrompt(yamlContent, analysisName, projectId, environment, extraContext = null) {
-        const contextSection = extraContext ? `
-
-ADDITIONAL CONTEXT PROVIDED BY USER:
-${extraContext}
-
-INSTRUCTIONS: Please take the additional context provided by the user into account when performing your analysis. This context may include specific concerns, areas of focus, or domain knowledge that should influence your analysis.` : '';
-
-        return `You are an expert performance analyst specializing in New Relic transaction traces. You have been given a transaction trace in YAML format that represents the execution flow of a web request.
-
-PROJECT CONTEXT:
-- Project ID: ${projectId}
-- Environment: ${environment}
-- Analysis Name: ${analysisName}${contextSection}
-
-YAML TRANSACTION TRACE:
+    buildAnalysisPrompt(yamlContent, analysisName, projectId, environment, extraContext = '') {
+        return `- Project ID: ${projectId} - Environment: ${environment} - Analysis Name: ${analysisName} TRANSACTION TRACE:
 \`\`\`yaml
 ${yamlContent}
 \`\`\`
 
+${extraContext}
+
 TASK:
-Perform a comprehensive analysis of this transaction trace and provide detailed insights in the following structured format:
+Perform a comprehensive analysis of this transaction trace and provide detailed insights without necessary mention the exact segments, as nobody else will have access to this payload, in the following structured format:
 
-## EXECUTIVE SUMMARY
-- Overall transaction performance assessment
-- Key performance indicators (total duration, bottlenecks, etc.)
-- Critical issues identified
+HIGH-LEVEL SUMMARY:
 
-## PERFORMANCE ANALYSIS
-- **Response Time Breakdown**: Analyze the total response time and identify where time is spent
-- **Bottleneck Identification**: Identify the slowest operations and their impact
-- **Database Performance**: Analyze SQL queries, connection times, and query optimization opportunities
-- **External Service Calls**: Identify external API calls and their performance impact
-- **Memory Usage**: Analyze memory consumption patterns if available
+PERFORMANCE ANALYSIS:
+(Focus on what is causing the slowness and affecting the performance)
 
-## CODE-LEVEL INSIGHTS
-- **Function Performance**: Identify slow functions and optimization opportunities
-- **File-Level Analysis**: Highlight problematic files and line numbers
-- **Call Stack Analysis**: Understand the execution flow and identify optimization paths
+BEHAVIOURAL ANALYSIS:
+(Focus on the overall behaviour, as slowness could be temporary due to other transactions or other factors)
 
-## RECOMMENDATIONS
-- **Immediate Actions**: Quick wins that can be implemented right away
-- **Short-term Optimizations**: Changes that can be made in the next sprint
-- **Long-term Improvements**: Architectural changes for better performance
-- **Monitoring Suggestions**: What metrics to track going forward
+ISSUES IDENTIFIED:
+(Populate this section only if any issues are identified. Check for N+1 query patterns, DB/cache hit amplification, deep nesting, deep recursion and loops, and other issues)
 
-## RISK ASSESSMENT
-- **Critical Issues**: Problems that could cause outages or severe performance degradation
-- **Performance Debt**: Technical debt related to performance
-- **Scalability Concerns**: Issues that could impact system scaling
+THIRD-PARTY MODULES IDENTIFIED:
+(Just bullet points and only if any are present. Ignore Fastly, Paypal, Braintree and Colinmollenhour as they are part of Magento)
 
-## TECHNICAL DETAILS
-- **Trace Structure**: Analysis of the trace tree structure
-- **Error Patterns**: Any error patterns or exceptions identified
-- **Resource Utilization**: CPU, memory, and I/O patterns
+DETAILED EXPLANATION:
+(Provide as much details as possible as this section will be shared with another AI to cross-check your findings with the server data. This other AI won't have access to the original payload but it will have access to the code implementation so go really deep in this section.)
 
-Please provide a detailed, actionable analysis that would be valuable for both developers and operations teams. Focus on practical recommendations that can improve the system's performance and reliability.
-
-Format your response in clear, well-structured sections with bullet points and specific recommendations.`;
-    }
-
-    filterThinkingContent(response) {
-        // Remove thinking content from the response
-        let filteredResponse = response;
-        
-        // Remove thinking paragraphs that start with common thinking phrases
-        const thinkingPatterns = [
-            /Alright, here's my take on this[\s\S]*?(?=\n\n|$)/g,
-            /I'm stepping into the role of[\s\S]*?(?=\n\n|$)/g,
-            /My analysis will start with[\s\S]*?(?=\n\n|$)/g,
-            /Deeper into the code, I'll examine[\s\S]*?(?=\n\n|$)/g,
-            /Finally, the report will focus on[\s\S]*?(?=\n\n|$)/g,
-            /I'm now focusing on[\s\S]*?(?=\n\n|$)/g,
-            /I've identified[\s\S]*?(?=\n\n|$)/g,
-            /I'm considering[\s\S]*?(?=\n\n|$)/g,
-            /I'm analyzing[\s\S]*?(?=\n\n|$)/g,
-            /Let me start by[\s\S]*?(?=\n\n|$)/g,
-            /I need to understand[\s\S]*?(?=\n\n|$)/g,
-            /I'll begin by[\s\S]*?(?=\n\n|$)/g,
-            /First impression:[\s\S]*?(?=\n\n|$)/g,
-            /The recommendations section will be about[\s\S]*?(?=\n\n|$)/g,
-            /The risk assessment is where I will[\s\S]*?(?=\n\n|$)/g,
-            /Technically, the trace reveals[\s\S]*?(?=\n\n|$)/g
-        ];
-        
-        thinkingPatterns.forEach(pattern => {
-            filteredResponse = filteredResponse.replace(pattern, '');
-        });
-        
-        // Remove any paragraphs that are mostly about the analysis process
-        const lines = filteredResponse.split('\n');
-        const filteredLines = lines.filter(line => {
-            const lowerLine = line.toLowerCase();
-            // Skip lines that are about the analysis process
-            if (lowerLine.includes('my analysis will') ||
-                lowerLine.includes('i\'m stepping into') ||
-                lowerLine.includes('i\'ll examine') ||
-                lowerLine.includes('i\'ll start') ||
-                lowerLine.includes('let me start') ||
-                lowerLine.includes('i need to understand') ||
-                lowerLine.includes('i\'ll begin') ||
-                lowerLine.includes('here\'s my take')) {
-                return false;
-            }
-            return true;
-        });
-        
-        filteredResponse = filteredLines.join('\n');
-        
-        // Clean up any double newlines that might have been left
-        filteredResponse = filteredResponse.replace(/\n{3,}/g, '\n\n');
-        
-        // Remove any leading/trailing whitespace
-        filteredResponse = filteredResponse.trim();
-        
-        return filteredResponse;
+SUGGESTED ANSWER TO THE MERCHANT'S DEVELOPERS:
+(Here you need to act as an Adobe Support Engineer. We don't provide support on third-party modules or customisations, but we can provide some explanation to help guide the merchant's developers. Generate an answer without using any bullet points. Make sure to explain and show the evidence for any issues you may have found. The merchant's developers may try to defend their code, so provide strong evidences. You can finish the explanation with something similar to: "I recommend your development team use a profiling tool such as Mage Profiler (https://experienceleague.adobe.com/en/docs/commerce-operations/configuration-guide/setup/mage-profiler) or Blackfire (https://developer.adobe.com/commerce/cloud-tools/docker/test/blackfire/) to better understand this transaction's performance, looking for bottlenecks and areas for improvement. Leveraging the use of collections can help reduce the number of calls to the DB, and reducing nested caching operations may lower the number of hits to Redis.")`;
     }
 
     estimateTokenCount(text) {
