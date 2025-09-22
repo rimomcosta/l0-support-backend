@@ -38,6 +38,37 @@ const formatServerData = (dashboardData) => {
   return formattedData;
 };
 
+// Extract only the DETAILED EXPLANATION section from transaction analysis
+const extractDetailedExplanation = (analysisResult) => {
+  if (!analysisResult || typeof analysisResult !== 'string') {
+    return '';
+  }
+
+  // Split into lines and find the DETAILED EXPLANATION section
+  const lines = analysisResult.split('\n');
+  let inDetailedSection = false;
+  let detailedContent = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    if (line.includes('DETAILED EXPLANATION:')) {
+      inDetailedSection = true;
+      continue;
+    }
+    
+    if (inDetailedSection) {
+      // Stop at SUGGESTED ANSWER TO THE MERCHANT'S DEVELOPERS: section
+      if (line.includes('SUGGESTED ANSWER TO THE MERCHANT\'S DEVELOPERS:')) {
+        break;
+      }
+      detailedContent.push(line);
+    }
+  }
+
+  return detailedContent.join('\n').trim();
+};
+
 // Format transaction analysis data for AI context
 const formatTransactionAnalysisData = (analyses) => {
   if (!analyses || !Array.isArray(analyses) || analyses.length === 0) {
@@ -48,20 +79,19 @@ const formatTransactionAnalysisData = (analyses) => {
   formattedData += 'The following transaction analyses have been selected for AI context and may be relevant to the current conversation:\n\n';
 
   analyses.forEach((analysis, index) => {
-    formattedData += `--- Analysis ${index + 1}: ${analysis.analysis_name} ---\n`;
-    formattedData += `Created: ${new Date(analysis.created_at).toLocaleString()}\n`;
-    formattedData += `Token Count: ${analysis.token_count || 'N/A'}\n\n`;
+    // Extract only the DETAILED EXPLANATION section
+    const detailedExplanation = extractDetailedExplanation(analysis.analysis_result);
     
-    // Truncate analysis result if too long (keep first 2000 characters)
-    const analysisResult = analysis.analysis_result || '';
-    const truncatedResult = analysisResult.length > 2000 
-      ? analysisResult.substring(0, 2000) + '...\n[Analysis truncated - full content available in transaction analysis page]'
-      : analysisResult;
-    
-    formattedData += `Analysis Result:\n${truncatedResult}\n\n`;
+    // Only include analyses that have a detailed explanation
+    if (detailedExplanation) {
+      formattedData += `--- Analysis ${index + 1}: ${analysis.analysis_name} ---\n`;
+      formattedData += `Created: ${new Date(analysis.created_at).toLocaleString()}\n`;
+      formattedData += `Token Count: ${analysis.token_count || 'N/A'}\n\n`;
+      formattedData += `Detailed Explanation:\n${detailedExplanation}\n\n`;
+    }
   });
 
-  formattedData += 'Note: These analyses provide context about performance issues, bottlenecks, and optimization opportunities that may be relevant to current troubleshooting efforts.\n';
+  formattedData += 'Note: These detailed explanations provide technical context about performance issues, bottlenecks, and optimization opportunities that may be relevant to current troubleshooting efforts.\n';
 
   return formattedData;
 };
