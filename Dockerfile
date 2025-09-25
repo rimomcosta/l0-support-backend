@@ -1,5 +1,7 @@
+ARG hub_registry_mirror=docker-hub-remote.dr.corp.adobe.com # Use "docker.io" for local development env
+
 ### STAGE 1: Serve app with local npm node server
-FROM node:24 AS nodedevelopment
+FROM ${hub_registry_mirror}/node:24 AS nodedevelopment
 
 # Install all OS dependencies for fully functional notebook server
 ## We need PHP for running MAgento Cloud CLI commands
