@@ -53,7 +53,7 @@ const tables = {
         CREATE TABLE IF NOT EXISTS chat_messages (
             id INT PRIMARY KEY AUTO_INCREMENT,
             chat_id VARCHAR(255) NOT NULL,
-            role ENUM('user','assistant','system') NOT NULL,
+            role ENUM('user','assistant','system','thinking') NOT NULL,
             content LONGTEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_chat_id (chat_id),
