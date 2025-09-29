@@ -5,3 +5,4 @@ MODIFY COLUMN role ENUM('user','assistant','system','thinking') NOT NULL;
 
 
 
+
