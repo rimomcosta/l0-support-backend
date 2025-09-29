@@ -191,3 +191,39 @@ export async function deleteFeedback(req, res) {
     res.status(500).json({ error: 'Failed to delete feedback' });
   }
 }
+
+// Update chat title
+export async function updateChatTitle(req, res) {
+  try {
+    const { chatId } = req.params;
+    const { title } = req.body;
+    
+    const chatService = new ChatManagementService();
+    const result = await chatService.updateChatTitle(chatId, title);
+    
+    res.status(result.statusCode).json(result.success ? { success: true } : {
+      error: result.error
+    });
+  } catch (error) {
+    logger.error('Error updating chat title:', error);
+    res.status(500).json({ error: 'Failed to update chat title' });
+  }
+}
+
+// Delete chat
+export async function deleteChat(req, res) {
+  try {
+    const userId = req.session?.user?.id || req.user?.id;
+    const { chatId } = req.params;
+    
+    const chatService = new ChatManagementService();
+    const result = await chatService.deleteChat(userId, chatId);
+    
+    res.status(result.statusCode).json(result.success ? { success: true } : {
+      error: result.error
+    });
+  } catch (error) {
+    logger.error('Error deleting chat:', error);
+    res.status(500).json({ error: 'Failed to delete chat' });
+  }
+}

@@ -113,10 +113,18 @@ export class ChatManagementService {
      */
     async getUserChats(userId, projectId, environment) {
         try {
-            // TODO: Implement get chats from database
+            if (!userId) {
+                return {
+                    success: false,
+                    error: 'User not authenticated',
+                    statusCode: 401
+                };
+            }
+
+            const chats = await ChatDao.getUserChatSessions(userId);
             return {
                 success: true,
-                chats: [],
+                chats,
                 statusCode: 200
             };
         } catch (error) {
@@ -484,6 +492,116 @@ export class ChatManagementService {
             return {
                 success: false,
                 error: 'Failed to delete feedback',
+                statusCode: 500
+            };
+        }
+    }
+
+    /**
+     * Update chat session title
+     * @param {string} chatId - Chat ID
+     * @param {string} title - New title
+     * @returns {Object} - Result with success status or error
+     */
+    async updateChatTitle(chatId, title) {
+        try {
+            if (!chatId || !title) {
+                return {
+                    success: false,
+                    error: 'Chat ID and title are required',
+                    statusCode: 400
+                };
+            }
+
+            const updated = await ChatDao.updateChatTitle(chatId, title);
+            if (updated) {
+                return {
+                    success: true,
+                    statusCode: 200
+                };
+            } else {
+                return {
+                    success: false,
+                    error: 'Chat not found',
+                    statusCode: 404
+                };
+            }
+        } catch (error) {
+            this.logger.error('Error updating chat title:', error);
+            return {
+                success: false,
+                error: 'Failed to update chat title',
+                statusCode: 500
+            };
+        }
+    }
+
+    /**
+     * Delete a chat session and all its messages
+     * @param {string} userId - User ID
+     * @param {string} chatId - Chat ID
+     * @returns {Object} - Result with success status or error
+     */
+    async deleteChat(userId, chatId) {
+        try {
+            if (!userId) {
+                return {
+                    success: false,
+                    error: 'User not authenticated',
+                    statusCode: 401
+                };
+            }
+
+            if (!chatId) {
+                return {
+                    success: false,
+                    error: 'Chat ID is required',
+                    statusCode: 400
+                };
+            }
+
+            // Verify the chat belongs to the user
+            const chatSession = await ChatDao.getChatSession(chatId);
+            if (!chatSession) {
+                return {
+                    success: false,
+                    error: 'Chat not found',
+                    statusCode: 404
+                };
+            }
+
+            if (chatSession.userId !== userId) {
+                return {
+                    success: false,
+                    error: 'Access denied',
+                    statusCode: 403
+                };
+            }
+
+            const deleted = await ChatDao.deleteChatSession(chatId);
+            if (deleted) {
+                this.logger.info('Chat deleted successfully:', {
+                    chatId,
+                    userId,
+                    timestamp: new Date()
+                });
+                
+                return {
+                    success: true,
+                    statusCode: 200
+                };
+            } else {
+                return {
+                    success: false,
+                    error: 'Failed to delete chat',
+                    statusCode: 500
+                };
+            }
+        } catch (error) {
+            this.logger.error('Error deleting chat:', error);
+            return {
+                success: false,
+                error: 'Failed to delete chat',
                 statusCode: 500
             };
         }

@@ -31,4 +31,10 @@ router.get('/feedback/flagged', requireAuth, chatController.getFlaggedMessages);
 // Delete feedback entry (admin-only)
 router.delete('/feedback/:feedbackId', requireAuth, chatController.deleteFeedback);
 
+// Update chat title
+router.put('/chats/:chatId/title', requireAuth, chatController.updateChatTitle);
+
+// Delete chat
+router.delete('/chats/:chatId', requireAuth, chatController.deleteChat);
+
 export default router;

@@ -102,7 +102,7 @@ const chatAgent = {
     return chatId;
   },
 
-  async handleUserMessage({ chatId, content, userId, tabId, abortSignal, dashboardData, projectId, environment, environmentContext }) {
+  async handleUserMessage({ chatId, content, userId, tabId, abortSignal, dashboardData, projectId, environment, environmentContext, title }) {
     try {
       // Get user settings (this will create defaults if none exist)
       let userSettings, aiConfig;
@@ -136,6 +136,13 @@ const chatAgent = {
           stream: true,
           topP: 0.95
         };
+      }
+
+      // Create chat session in DB if it doesn't exist (for new chats)
+      const chatExists = await ChatDao.chatSessionExists(chatId);
+      if (!chatExists) {
+        await ChatDao.createChatSession(userId, chatId, projectId, environment, title || 'New Chat');
+        logger.info(`Created new chat session in DB: ${chatId} for user: ${userId} with title: ${title || 'New Chat'}`);
       }
 
       // Performance optimization for large content
@@ -381,6 +388,31 @@ const chatAgent = {
                 chatId,
                 messageId: assistantMessageId
               }, tabId);
+              
+              // Send background update to ensure IndexedDB is updated regardless of current page
+              try {
+                const messages = await ChatDao.getMessagesByChatId(chatId);
+                const chatSession = await ChatDao.getChatSession(chatId);
+                
+                if (chatSession) {
+                  WebSocketService.broadcastToTab({
+                    type: 'chat_message',
+                    chatId,
+                    messages: messages.map(msg => ({
+                      id: msg.id,
+                      role: msg.role,
+                      content: msg.content,
+                      timestamp: msg.created_at
+                    })),
+                    projectId: chatSession.projectId || '',
+                    environment: chatSession.environment || ''
+                  }, tabId);
+                }
+              } catch (err) {
+                logger.warn(`Failed to send background chat update for chatId: ${chatId}`, {
+                  error: err.message
+                });
+              }
             } catch (err) {
               logger.error(`Failed to save assistant message for chatId: ${chatId}`, {
                 error: err.message,

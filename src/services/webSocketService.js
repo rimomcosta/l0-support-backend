@@ -68,7 +68,8 @@ const handleLargeMessage = async (ws, parsedMessage, abortControllers, logActivi
         dashboardData,
         projectId,
         environment,
-        environmentContext
+        environmentContext,
+        title: parsedMessage.title
     });
 };
 
@@ -174,9 +175,9 @@ export class WebSocketService {
 
                     switch (parsedMessage.type) {
                         case 'new_chat': {
-                            // Create a new session row in DB
-                            const userId = ws.userID || null;
-                            const chatId = await chatAgent.createNewChatSession(userId);
+                            // Generate a new chat ID but don't create DB entry yet
+                            // DB entry will be created when first message is sent
+                            const chatId = uuidv4();
 
                             // Create an AbortController for this chat
                             const abortController = new AbortController();
