@@ -360,6 +360,7 @@ class TunnelManager {
 
             let servicesFound = {};
             let allServicesReady = false;
+            let errorOutput = ''; // Capture error output for better error messages
 
             // Safety timeout
             const timeout = setTimeout(() => {
@@ -382,13 +383,23 @@ class TunnelManager {
                 }
             };
 
+            const errorHandler = (data) => {
+                const errorStr = data.toString();
+                errorOutput += errorStr;
+                logger.debug('Tunnel CLI error output:', { error: errorStr, projectId, environment });
+            };
+
             tunnelProcess.stdout.on('data', dataHandler);
-            tunnelProcess.stderr.on('data', dataHandler);
+            tunnelProcess.stderr.on('data', errorHandler);
 
             tunnelProcess.on('close', async (code) => {
                 clearTimeout(timeout);
 
-                logger.debug(`Tunnel process closed with code: ${code}`, { projectId, environment });
+                logger.debug(`Tunnel process closed with code: ${code}`, { 
+                    projectId, 
+                    environment,
+                    errorOutput: errorOutput.trim()
+                });
 
                 if (allServicesReady && Object.keys(servicesFound).length > 0) {
                     try {
@@ -401,14 +412,34 @@ class TunnelManager {
                         resolve(servicesFound); // Fallback to what we found
                     }
                 } else {
-                    reject(new Error(`Tunnel setup incomplete. Process exited with code ${code}.`));
+                    // Create a more informative error message
+                    let errorMessage = `Tunnel setup incomplete. Process exited with code ${code}.`;
+                    
+                    if (errorOutput.trim()) {
+                        // Forward the actual magento-cloud CLI error message
+                        errorMessage = errorOutput.trim();
+                    }
+                    
+                    reject(new Error(errorMessage));
                 }
             });
 
             tunnelProcess.on('error', (error) => {
                 clearTimeout(timeout);
-                logger.error('Tunnel process encountered an error:', { error: error.message });
-                reject(error);
+                logger.error('Tunnel process encountered an error:', { 
+                    error: error.message,
+                    projectId,
+                    environment,
+                    errorOutput: errorOutput.trim()
+                });
+                
+                // Include CLI error output if available
+                let errorMessage = error.message;
+                if (errorOutput.trim()) {
+                    errorMessage = `${error.message}: ${errorOutput.trim()}`;
+                }
+                
+                reject(new Error(errorMessage));
             });
         });
     }

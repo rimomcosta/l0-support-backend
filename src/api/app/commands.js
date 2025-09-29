@@ -198,9 +198,22 @@ export async function refreshService(req, res) {
             tabId
         });
 
+        // Forward the actual error message from magento-cloud CLI
+        let errorMessage = error.message;
+        let shouldRetry = false;
+        
+        // Check if it's a retryable error
+        if (error.message.includes('tunnel failed health check') || 
+            error.message.includes('Tunnel setup incomplete') ||
+            error.message.includes('timeout') || 
+            error.message.includes('ETIMEDOUT')) {
+            shouldRetry = true;
+        }
+
         res.status(500).json({
-            error: `Failed to refresh ${serviceType} service`,
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            error: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            shouldRetry: shouldRetry
         });
     }
 }
