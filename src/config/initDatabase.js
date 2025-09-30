@@ -5,7 +5,7 @@ import path from 'path';
 import { logger } from '../services/logger.js';
 import { getMockUserInsertSQL } from './mockUser.js';
 
-const dbName = 'l0support';
+const dbName = process.env.DB_NAME || 'l0support';
 
 const tables = {
     commands: `
@@ -46,7 +46,14 @@ const tables = {
             user_id VARCHAR(255) DEFAULT NULL, 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY (chat_id)
+            project_id VARCHAR(255) DEFAULT NULL,
+            environment VARCHAR(255) DEFAULT NULL,
+            title VARCHAR(500) DEFAULT 'Untitled Chat',
+            UNIQUE KEY (chat_id),
+            INDEX idx_project_id (project_id),
+            INDEX idx_environment (environment),
+            INDEX idx_user_project_env (user_id, project_id, environment),
+            INDEX idx_chat_title (title)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `,
     chat_messages: `
@@ -57,14 +64,15 @@ const tables = {
             content LONGTEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_chat_id (chat_id),
-            INDEX idx_created_at (created_at)
+            INDEX idx_created_at (created_at),
+            CONSTRAINT fk_chat_id FOREIGN KEY (chat_id) REFERENCES chat_sessions (chat_id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `,
     dashboard_layouts: `
         CREATE TABLE IF NOT EXISTS dashboard_layouts (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id VARCHAR(255) NOT NULL,
-            layouts JSON NOT NULL, -- Stores layout, pinned, and collapsed states
+            layouts LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(layouts)), -- Stores layout, pinned, and collapsed states
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY unique_layout_user (user_id),
@@ -76,18 +84,18 @@ const tables = {
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id VARCHAR(255) NOT NULL,
             chat_id VARCHAR(255) NOT NULL,
-            message_id INT NOT NULL,
+            message_id VARCHAR(255) NOT NULL,
             feedback_type ENUM('helpful', 'not_helpful') NOT NULL,
-            reasons JSON NULL, -- Array of selected reasons
-            additional_feedback TEXT NULL, -- Free-form feedback text
+            reasons LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(reasons)), -- Array of selected reasons
+            additional_feedback TEXT DEFAULT NULL, -- Free-form feedback text
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_user_message_feedback (user_id, message_id),
             INDEX idx_user_id (user_id),
             INDEX idx_chat_id (chat_id),
             INDEX idx_message_id (message_id),
             INDEX idx_feedback_type (feedback_type),
-            INDEX idx_created_at (created_at),
-            UNIQUE KEY unique_user_message_feedback (user_id, message_id)
+            INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `,
     user_ai_settings: `
@@ -110,22 +118,32 @@ const tables = {
             environment VARCHAR(50) NOT NULL,
             user_id VARCHAR(255) NOT NULL,
             analysis_name VARCHAR(255) NOT NULL,
+            extra_context TEXT DEFAULT NULL,
             original_payload LONGTEXT NOT NULL,
             analysis_result LONGTEXT NOT NULL,
             status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
-            error_message TEXT,
-            extra_context TEXT NULL,
-            use_ai BOOLEAN DEFAULT TRUE COMMENT 'Whether this analysis should be used in AI chat (1=selected/green sparkles, 0=unselected/red sparkles)',
+            error_message TEXT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP NULL,
+            completed_at TIMESTAMP NULL DEFAULT NULL,
             token_count INT DEFAULT 0,
             processing_time_ms INT DEFAULT 0,
+            use_ai TINYINT(1) DEFAULT 1 COMMENT 'Whether this analysis should be used in AI chat (1=selected/green sparkles, 0=unselected/red sparkles)',
             INDEX idx_project_env (project_id, environment),
             INDEX idx_user_id (user_id),
             INDEX idx_status (status),
-            INDEX idx_created_at (created_at),
-            INDEX idx_use_ai (use_ai)
+            INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `,
+    user_dashboard_layouts: `
+        CREATE TABLE IF NOT EXISTS user_dashboard_layouts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            layouts LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(layouts)),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY user_id (user_id),
+            INDEX idx_user_id (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `
 };
@@ -152,54 +170,9 @@ async function createDatabase() {
     }
 }
 
-async function populateDatabase(seedFilePath) {
-    try {
-        let seedFile = await fs.readFile(seedFilePath, 'utf8');
-
-        // Remove comments
-        seedFile = seedFile.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '');
-
-        // Split into individual queries and filter out empty ones
-        const queries = seedFile
-            .split(';')
-            .map(query => query.trim())
-            .filter(query => query.length > 0);
-
-        // Create a connection pool with the database selected
-        const dbPool = mysql.createPool({
-            host: process.env.DB_HOST || 'localhost',
-            user: process.env.DB_USER || 'root',
-            password: process.env.DB_PASSWORD || '',
-            database: dbName,
-            waitForConnections: true,
-            connectionLimit: 10,
-            queueLimit: 0,
-            multipleStatements: true
-        });
-
-        // Execute each query
-        for (const query of queries) {
-            try {
-                await dbPool.query(query);
-                logger.info('Successfully executed query');
-            } catch (err) {
-                logger.error('Error executing query:', { query, error: err });
-                throw err;
-            }
-        }
-
-        logger.info('Database populated successfully from commandsSeed.sql');
-        await dbPool.end();
-    } catch (error) {
-        logger.error('Failed to populate database:', error);
-        throw error;
-    }
-}
 
 export async function initializeTables() {
     try {
-        await createDatabase();
-
         // Create a connection pool with the database selected
         const dbPool = mysql.createPool({
             host: process.env.DB_HOST || 'localhost',
@@ -214,8 +187,12 @@ export async function initializeTables() {
 
         // Initialize tables
         for (const [tableName, query] of Object.entries(tables)) {
-            await dbPool.query(query);
-            logger.info(`Table ${tableName} initialized successfully or already exists`);
+            try {
+                await dbPool.query(query);
+                logger.info(`Table ${tableName} initialized successfully or already exists`);
+            } catch (error) {
+                logger.warn(`Table ${tableName} creation failed (may already exist):`, error.message);
+            }
         }
 
         // Insert mock development user if USE_OKTA=false
@@ -225,7 +202,7 @@ export async function initializeTables() {
                 await dbPool.query(mockUserQuery);
                 logger.info('Mock development user inserted or already exists');
             } catch (error) {
-                logger.warn('Failed to insert mock development user:', error);
+                logger.warn('Failed to insert mock development user:', error.message);
             }
         }
 

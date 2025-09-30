@@ -1,11 +1,11 @@
-import { initDatabase } from './config/initDatabase.js';
+import { initializeTables } from './config/initDatabase.js';
 import { logger } from './services/logger.js';
 import transactionAnalysisDao from './services/dao/transactionAnalysisDao.js';
 import { WebSocketService } from './services/webSocketService.js';
 
 async function startServer() {
     try {
-        await initDatabase();
+        await initializeTables();
         logger.info('Database initialized successfully');
         
         // Automated cleanup of stuck analyses on startup
