@@ -6,6 +6,7 @@ FROM ${hub_registry_mirror}/node:24 AS nodedevelopment
 # Install all OS dependencies for fully functional notebook server
 ## We need PHP for running Magento Cloud CLI commands
 ## We need mysql-client for database setup script (npm run setup:db)
+## We need redis-tools for tunnel health checks and Redis CLI operations
 RUN apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get -yq install --no-install-recommends \
     python3-pip \
@@ -17,6 +18,7 @@ RUN apt-get update -y \
     php \
     openssh-client \
     default-mysql-client \
+    redis-tools \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /tmp/*
