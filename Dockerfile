@@ -4,7 +4,8 @@ ARG hub_registry_mirror=docker-hub-remote.dr.corp.adobe.com # Use "docker.io" fo
 FROM ${hub_registry_mirror}/node:24 AS nodedevelopment
 
 # Install all OS dependencies for fully functional notebook server
-## We need PHP for running MAgento Cloud CLI commands
+## We need PHP for running Magento Cloud CLI commands
+## We need mysql-client for database setup script (npm run setup:db)
 RUN apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get -yq install --no-install-recommends \
     python3-pip \
@@ -15,6 +16,7 @@ RUN apt-get update -y \
     vim \
     php \
     openssh-client \
+    default-mysql-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /tmp/*
@@ -31,11 +33,15 @@ RUN npm ci -f
 # Copy local directories to the current local directory of our docker image (/app)
 COPY . .
 
+# Copy and make entrypoint script executable
+COPY docker-entrypoint.sh /opt/app/docker-entrypoint.sh
+RUN chmod +x /opt/app/docker-entrypoint.sh
+
 # Install node packages, install serve, build the app, and remove dependencies at the end
 ##RUN npm run build
 
 # Expose port for the development env server
 EXPOSE 4000
 
-# Start the app using serve command
-CMD ["npm", "start"]
+# Start the app using entrypoint script (handles DB setup + server start)
+CMD ["/opt/app/docker-entrypoint.sh"]
