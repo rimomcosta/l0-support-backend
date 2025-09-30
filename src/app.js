@@ -12,7 +12,7 @@ import { initializeOIDCClient } from './services/oidcService.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { corsConfig } from './config/cors.js';
 import { sessionConfig } from './config/session.js';
-import { initializeElasticsearch } from './config/elasticsearch.js';
+import { initializeOpenSearch } from './config/opensearch.js';
 import routes from './routes.js';
 import { initializeTables } from './config/initDatabase.js';
 // import path from 'path';
@@ -36,7 +36,7 @@ export async function initializeApp() {
         }
         
         await initializeTables();
-        await initializeElasticsearch();
+        await initializeOpenSearch();
 
         // Middlewares and configurations
         app.set('trust proxy', 1);

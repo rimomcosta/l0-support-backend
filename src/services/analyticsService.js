@@ -1,10 +1,10 @@
 // src/services/analyticsService.js
-import { elasticsearchClient, elasticsearchConfig } from '../config/elasticsearch.js';
+import { opensearchClient, opensearchConfig } from '../config/opensearch.js';
 import { logger } from './logger.js';
 import { pool } from '../config/database.js';
 
 // Export for use in routes
-export { elasticsearchClient, elasticsearchConfig };
+export { opensearchClient, opensearchConfig };
 
 export class AnalyticsService {
   /**
@@ -41,9 +41,9 @@ export class AnalyticsService {
         transaction_analysis: activity.transaction_analysis
       };
 
-      // Store in Elasticsearch
-      await elasticsearchClient.index({
-        index: elasticsearchConfig.index.user_activities,
+      // Store in OpenSearch
+      await opensearchClient.index({
+        index: opensearchConfig.index.user_activities,
         body: activityData
       });
 
@@ -81,8 +81,8 @@ export class AnalyticsService {
         environments_accessed: sessionData.environments_accessed || []
       };
 
-      await elasticsearchClient.index({
-        index: elasticsearchConfig.index.user_sessions,
+      await opensearchClient.index({
+        index: opensearchConfig.index.user_sessions,
         body: sessionRecord
       });
 
@@ -122,8 +122,8 @@ export class AnalyticsService {
         resolved: false
       };
 
-      await elasticsearchClient.index({
-        index: elasticsearchConfig.index.error_tracking,
+      await opensearchClient.index({
+        index: opensearchConfig.index.error_tracking,
         body: errorRecord
       });
 
@@ -142,8 +142,8 @@ export class AnalyticsService {
    */
   static async getUserAnalytics(userId, timeRange = '30d') {
     try {
-      const response = await elasticsearchClient.search({
-        index: elasticsearchConfig.index.user_activities,
+      const response = await opensearchClient.search({
+        index: opensearchConfig.index.user_activities,
         body: {
           query: {
             bool: {
@@ -200,8 +200,8 @@ export class AnalyticsService {
       logger.debug('Getting system overview for timeRange:', timeRange);
       
       // Use the exact same query that works in curl
-      const response = await elasticsearchClient.search({
-        index: elasticsearchConfig.index.user_activities,
+      const response = await opensearchClient.search({
+        index: opensearchConfig.index.user_activities,
         body: {
           query: {
             range: { '@timestamp': { gte: `now-${timeRange}` } }
@@ -247,7 +247,7 @@ export class AnalyticsService {
       return response.aggregations;
     } catch (error) {
       logger.error('Failed to get system overview:', error);
-      // Return fallback data if Elasticsearch fails
+      // Return fallback data if OpenSearch fails
       return {
         active_users: { value: 0 },
         total_activities: { value: 0 },
@@ -325,8 +325,8 @@ export class AnalyticsService {
    */
   static async getUserSessions(userId, timeRange = '30d') {
     try {
-      const response = await elasticsearchClient.search({
-        index: elasticsearchConfig.index.user_sessions,
+      const response = await opensearchClient.search({
+        index: opensearchConfig.index.user_sessions,
         body: {
           query: {
             bool: {
@@ -375,8 +375,8 @@ export class AnalyticsService {
         query.bool.must.push({ range: { '@timestamp': { gte: `now-${filters.timeRange}` } } });
       }
 
-      const response = await elasticsearchClient.search({
-        index: elasticsearchConfig.index.error_tracking,
+      const response = await opensearchClient.search({
+        index: opensearchConfig.index.error_tracking,
         body: {
           query,
           sort: [{ '@timestamp': { order: 'desc' } }],
@@ -396,8 +396,8 @@ export class AnalyticsService {
    */
   static async resolveError(errorId) {
     try {
-      await elasticsearchClient.update({
-        index: elasticsearchConfig.index.error_tracking,
+      await opensearchClient.update({
+        index: opensearchConfig.index.error_tracking,
         id: errorId,
         body: {
           doc: {

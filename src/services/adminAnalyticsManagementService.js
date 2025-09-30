@@ -1,5 +1,5 @@
 // src/services/adminAnalyticsManagementService.js
-import { AnalyticsService, elasticsearchClient, elasticsearchConfig } from './analyticsService.js';
+import { AnalyticsService, opensearchClient, opensearchConfig } from './analyticsService.js';
 import { logger } from './logger.js';
 import { pool } from '../config/database.js';
 
@@ -45,8 +45,8 @@ export class AdminAnalyticsManagementService {
             // Get basic analytics for the user
             try {
                 // Use a simpler query without complex aggregations
-                const response = await elasticsearchClient.search({
-                    index: elasticsearchConfig.index.user_activities,
+                const response = await opensearchClient.search({
+                    index: opensearchConfig.index.user_activities,
                     body: {
                         query: {
                             bool: {
@@ -101,8 +101,8 @@ export class AdminAnalyticsManagementService {
                     },
                     statusCode: 200
                 };
-            } catch (esError) {
-                console.error('=== ELASTICSEARCH ERROR ===', esError);
+            } catch (osError) {
+                console.error('=== OPENSEARCH ERROR ===', osError);
                 return {
                     success: true,
                     data: {
@@ -295,12 +295,12 @@ export class AdminAnalyticsManagementService {
     }
 
     /**
-     * Test Elasticsearch connection
+     * Test OpenSearch connection
      * @returns {Object} - Result with health status or error
      */
     async testElasticsearch() {
         try {
-            const health = await elasticsearchClient.cluster.health();
+            const health = await opensearchClient.cluster.health();
             
             return {
                 success: true,
@@ -313,10 +313,10 @@ export class AdminAnalyticsManagementService {
                 statusCode: 200
             };
         } catch (error) {
-            this.logger.error('Elasticsearch test failed:', error);
+            this.logger.error('OpenSearch test failed:', error);
             return {
                 success: false,
-                error: 'Elasticsearch connection failed',
+                error: 'OpenSearch connection failed',
                 details: error.message,
                 statusCode: 500
             };
@@ -324,13 +324,13 @@ export class AdminAnalyticsManagementService {
     }
 
     /**
-     * Test Elasticsearch search functionality
+     * Test OpenSearch search functionality
      * @returns {Object} - Result with search test or error
      */
     async testElasticsearchSearch() {
         try {
-            const response = await elasticsearchClient.search({
-                index: elasticsearchConfig.index.user_activities,
+            const response = await opensearchClient.search({
+                index: opensearchConfig.index.user_activities,
                 body: {
                     query: { match_all: {} },
                     size: 1
@@ -347,10 +347,10 @@ export class AdminAnalyticsManagementService {
                 statusCode: 200
             };
         } catch (error) {
-            this.logger.error('Elasticsearch search test failed:', error);
+            this.logger.error('OpenSearch search test failed:', error);
             return {
                 success: false,
-                error: 'Elasticsearch search test failed',
+                error: 'OpenSearch search test failed',
                 details: error.message,
                 statusCode: 500
             };
