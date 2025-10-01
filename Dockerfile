@@ -1,7 +1,7 @@
-ARG hub_registry_mirror=docker-hub-remote.dr.corp.adobe.com # Use "docker.io" for local development env
+ARG THE_HUB_REGISTRY_MIRROR=docker-hub-remote.dr.corp.adobe.com # Use "docker.io" for local development env
 
 ### STAGE 1: Serve app with local npm node server
-FROM ${hub_registry_mirror}/node:24 AS nodedevelopment
+FROM ${THE_HUB_REGISTRY_MIRROR}/node:24.9 AS nodedevelopment
 
 # Install all OS dependencies for fully functional notebook server
 ## We need PHP for running Magento Cloud CLI commands
@@ -35,14 +35,13 @@ RUN npm ci -f
 # Copy local directories to the current local directory of our docker image (/app)
 COPY . .
 
-# Copy and make entrypoint script executable
-COPY docker-entrypoint.sh /opt/app/docker-entrypoint.sh
-RUN chmod +x /opt/app/docker-entrypoint.sh
+# Make entrypoint script executable
+RUN chmod +x ./docker-entrypoint.sh
 
 # Install node packages, install serve, build the app, and remove dependencies at the end
 ##RUN npm run build
 
-# Expose port for the development env server
+# Expose port for the development env server (in production we use 8080)
 EXPOSE 4000
 
 # Start the app using entrypoint script (handles DB setup + server start)
