@@ -66,8 +66,10 @@ export async function claimSession(req, res) {
         const result = await authService.claimSession(req);
         
         res.status(result.statusCode).json(result.success ? {
+            success: true,
             user: result.user
         } : {
+            success: false,
             error: result.error
         });
     } catch (error) {
@@ -75,7 +77,7 @@ export async function claimSession(req, res) {
             error: error.message,
             sessionId: req.sessionID
         });
-        res.status(500).json({ error: 'Failed to claim session' });
+        res.status(500).json({ success: false, error: 'Failed to claim session' });
     }
 }
 

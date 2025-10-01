@@ -279,8 +279,11 @@ export class AuthManagementService {
             req.session.user = user;
             req.session.tokens = tokens;
             
-            // Save the session
+            // Save the session and wait for it to complete
             await AuthService.saveSession(req.session);
+            
+            // Add a small delay to ensure session is fully propagated
+            await new Promise(resolve => setTimeout(resolve, 50));
             
             // Clean up the transfer data
             await redis.redisClient.del(stateKey);
