@@ -4,8 +4,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node src/services/server.js",
-    "dev": "nodemon src/services/server.js",
+    "start": "node -r dotenv/config src/services/server.js",
+    "dev": "nodemon -r dotenv/config src/services/server.js",
     "start:high-memory": "node --max-old-space-size=8192 --expose-gc src/services/server.js",
     "dev:high-memory": "nodemon --max-old-space-size=8192 --expose-gc src/services/server.js",
     "setup:db": "node scripts/setup-database.js",
