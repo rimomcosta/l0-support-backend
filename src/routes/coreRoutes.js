@@ -20,6 +20,7 @@ router.post('/auth/extend-session', extendSession);
 
 // Health routes
 router.get('/health', health.checkHealth);
+router.get('/ping', (req, res) => res.status(200).send('pong'));
 
 // API Token routes
 router.post('/auth/api-token', requireAuth, apiToken.encryptAndSaveApiToken);
