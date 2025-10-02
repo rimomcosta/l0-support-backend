@@ -73,6 +73,32 @@ export class AuthManagementService {
      */
     async initializeLogin(req) {
         try {
+            const useOkta = process.env.USE_OKTA !== 'false';
+            const isDevelopment = process.env.NODE_ENV !== 'production';
+            
+            // In development mode with USE_OKTA=false, create a mock session
+            if (isDevelopment && !useOkta) {
+                req.session.user = getMockUserForSession();
+                
+                await AuthService.saveSession(req.session);
+                
+                this.logger.info('Development mode: Created mock session for login', {
+                    userId: req.session.user.id,
+                    email: req.session.user.email,
+                    isAdmin: req.session.user.isAdmin,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Return the client origin as the "authUrl" so the frontend redirects to home
+                const returnTo = req.query.returnTo || process.env.CLIENT_ORIGIN || '/';
+                return {
+                    success: true,
+                    authUrl: returnTo,
+                    statusCode: 200
+                };
+            }
+            
+            // For production or USE_OKTA=true, use real OIDC authentication
             const validation = this.validateOidcClient();
             if (!validation.valid) {
                 throw new Error(validation.error);
