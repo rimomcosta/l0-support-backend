@@ -230,15 +230,18 @@ class TransactionAnalysisDao {
 
     async getRecentAnalyses(limit = 10) {
         try {
+            // Ensure limit is a safe integer to prevent SQL injection
+            const safeLimit = Math.max(1, Math.min(100, parseInt(limit) || 10));
+            
             const query = `
                 SELECT id, project_id, environment, user_id, analysis_name, status, 
                        created_at, updated_at, completed_at, token_count, processing_time_ms, use_ai
                 FROM transaction_analysis 
                 ORDER BY created_at DESC
-                LIMIT ?
+                LIMIT ${safeLimit}
             `;
 
-            const [rows] = await database.execute(query, [limit]);
+            const [rows] = await database.execute(query);
             
             return rows;
 
@@ -250,16 +253,19 @@ class TransactionAnalysisDao {
 
     async getRecentAnalysesByProject(projectId, limit = 10) {
         try {
+            // Ensure limit is a safe integer to prevent SQL injection
+            const safeLimit = Math.max(1, Math.min(100, parseInt(limit) || 10));
+            
             const query = `
                 SELECT id, project_id, environment, user_id, analysis_name, status, 
                        created_at, updated_at, completed_at, token_count, processing_time_ms, use_ai
                 FROM transaction_analysis 
                 WHERE project_id = ?
                 ORDER BY created_at DESC
-                LIMIT ?
+                LIMIT ${safeLimit}
             `;
 
-            const [rows] = await database.execute(query, [projectId, limit]);
+            const [rows] = await database.execute(query, [projectId]);
             
             return rows;
 
