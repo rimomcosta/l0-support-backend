@@ -511,11 +511,14 @@ const chatAgent = {
           errorMessage = 'Error saving message to database.';
           errorStage = 'MESSAGE_SAVE';
         } else if (err.message.includes('stream') || err.message.includes('iterator')) {
-          errorMessage = 'Error in response streaming.';
+          errorMessage = 'Communication error with AI service. This may be due to network connectivity issues. Please try again.';
           errorStage = 'STREAMING';
         } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
-          errorMessage = 'Request timed out. Large messages may require more time.';
+          errorMessage = 'Request timed out. This may be due to network issues or the message being too large. Please try again.';
           errorStage = 'TIMEOUT';
+        } else if (err.message.includes('ECONNRESET') || err.message.includes('ETIMEDOUT') || err.message.includes('network') || err.message.includes('connect')) {
+          errorMessage = 'Network connection error. Please check your internet connection and try again.';
+          errorStage = 'NETWORK';
         }
         
         WebSocketService.broadcastToTab({
