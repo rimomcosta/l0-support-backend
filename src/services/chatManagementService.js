@@ -1,5 +1,5 @@
 // src/services/chatManagementService.js
-import chatAgent from './ai/agents/chat.js';
+import chatAgent from './ai/agents/chat/chat.js';
 import { logger } from './logger.js';
 import { ChatDao } from './dao/chatDao.js';
 import { FeedbackDao } from './dao/feedbackDao.js';

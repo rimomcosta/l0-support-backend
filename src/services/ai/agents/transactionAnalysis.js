@@ -2,6 +2,39 @@ import { logger } from '../../logger.js';
 import { aiService } from '../aiService.js';
 import fs from 'fs/promises';
 
+// Load and combine instruction markdown files
+const loadInstructions = async () => {
+    try {
+        const baseInstruction = await fs.readFile('./src/services/ai/agents/chat/instructions/base_instruction.md', 'utf-8');
+        const knowledgeBase = await fs.readFile('./src/services/ai/agents/chat/instructions/knowledge_base.md', 'utf-8');
+        const notebook = await fs.readFile('./src/services/ai/agents/chat/instructions/notebook.md', 'utf-8');
+
+        // Combine according to specified format (plain text, no parsing)
+        const combinedInstructions = `${baseInstruction}
+
+---
+
+This is your knowledge base:
+
+${knowledgeBase}
+
+---
+
+These are some examples and extra information you should be aware of:
+
+${notebook}
+
+---
+
+All the user's requests should take these information into account.`;
+
+        return combinedInstructions;
+    } catch (err) {
+        logger.error('Failed to load instruction files:', err);
+        throw new Error(`Failed to load instruction files: ${err.message}`);
+    }
+};
+
 class TransactionAnalysisAgent {
     constructor() {
         this.logger = logger;
@@ -43,10 +76,10 @@ class TransactionAnalysisAgent {
             // Call the AI service
             this.logger.info(`[AI AGENT] Calling AI service for "${analysisName}"`);
             const aiCallStartTime = Date.now();
-            const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
+            const instructions = await loadInstructions();
             const response = await adapter.generateCode({
                 prompt: prompt,
-                systemMessage: instructions + ' Please analyse the Magento 2 transaction below extracted from New Relic on Adobe Commerce Cloud. Read the entire file, add it to your context and perform an analysis. Remember that this is one of many other transactions.',
+                systemMessage: instructions + '\n\nPlease analyse the Magento 2 transaction below extracted from New Relic on Adobe Commerce Cloud. Read the entire file, add it to your context and perform an analysis. Remember that this is one of many other transactions.',
                 temperature: this.temperature,
                 maxTokens: this.maxTokens
             });

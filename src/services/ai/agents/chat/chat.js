@@ -1,10 +1,10 @@
-// src/services/ai/agents/chat.js
-import { aiService } from '../aiService.js';
-import { WebSocketService } from '../../webSocketService.js';
-import { logger } from '../../logger.js';
-import { ChatDao } from '../../dao/chatDao.js';
-import { AiSettingsDao } from '../../dao/aiSettingsDao.js';
-import transactionAnalysisService from '../../transactionAnalysisService.js';
+// src/services/ai/agents/chat/chat.js
+import { aiService } from '../../aiService.js';
+import { WebSocketService } from '../../../webSocketService.js';
+import { logger } from '../../../logger.js';
+import { ChatDao } from '../../../dao/chatDao.js';
+import { AiSettingsDao } from '../../../dao/aiSettingsDao.js';
+import transactionAnalysisService from '../../../transactionAnalysisService.js';
 import fs from 'fs/promises';
 
 const defaultConfig = {
@@ -15,6 +15,39 @@ const defaultConfig = {
   topP: 0.95,
   stream: true,
   systemMessage: ' '
+};
+
+// Load and combine instruction markdown files
+const loadInstructions = async () => {
+  try {
+    const baseInstruction = await fs.readFile('./src/services/ai/agents/chat/instructions/base_instruction.md', 'utf-8');
+    const knowledgeBase = await fs.readFile('./src/services/ai/agents/chat/instructions/knowledge_base.md', 'utf-8');
+    const notebook = await fs.readFile('./src/services/ai/agents/chat/instructions/notebook.md', 'utf-8');
+
+    // Combine according to specified format (plain text, no parsing)
+    const combinedInstructions = `${baseInstruction}
+
+---
+
+This is your knowledge base:
+
+${knowledgeBase}
+
+---
+
+These are some examples and extra information you should be aware of:
+
+${notebook}
+
+---
+
+All the user's requests should take these information into account.`;
+
+    return combinedInstructions;
+  } catch (err) {
+    logger.error('Failed to load instruction files:', err);
+    throw new Error(`Failed to load instruction files: ${err.message}`);
+  }
 };
 
 // Format server data into readable format - optimized for simplified structure
@@ -177,13 +210,13 @@ const chatAgent = {
       }
 
       // 3) Create system message with server data
-      const instructions = await fs.readFile('./src/services/ai/agents/chatInstructions.js', 'utf-8');
+      const instructions = await loadInstructions();
 
       // Build base system message (without server data)
       const systemMessageFinal =
         defaultConfig.systemMessage +
         instructions +
-        'Refuse chats not related to your role.';
+        '\n\nRefuse chats not related to your role.';
 
       // Prepare server data text (or fallback note)
       let serverDataText = '';

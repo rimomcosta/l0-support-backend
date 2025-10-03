@@ -4,7 +4,7 @@ import { logger } from './logger.js';
 import { logActivity } from './activityLogger.js';
 import url from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import chatAgent from './ai/agents/chat.js';
+import chatAgent from './ai/agents/chat/chat.js';
 
 // Sanitize user input for safe processing while preserving original content
 const sanitizeUserInput = (content) => {
