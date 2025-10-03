@@ -27,21 +27,14 @@ const loadInstructions = async () => {
     // Combine according to specified format (plain text, no parsing)
     const combinedInstructions = `${baseInstruction}
 
----
-
 This is your knowledge base:
 
 ${knowledgeBase}
 
----
-
 These are some examples and extra information you should be aware of:
 
 ${notebook}
-
----
-
-All the user's requests should take these information into account.`;
+`;
 
     return combinedInstructions;
   } catch (err) {
@@ -213,10 +206,7 @@ const chatAgent = {
       const instructions = await loadInstructions();
 
       // Build base system message (without server data)
-      const systemMessageFinal =
-        defaultConfig.systemMessage +
-        instructions +
-        '\n\nRefuse chats not related to your role.';
+      const systemMessageFinal = defaultConfig.systemMessage + instructions;
 
       // Prepare server data text (or fallback note)
       let serverDataText = '';
@@ -279,7 +269,7 @@ const chatAgent = {
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'user') {
           const contextData = serverDataText + transactionAnalysisText;
-          messages[i].content = 'This is the server data and transaction analysis context just for context: ===CONTEXT DATA START==='+ contextData + '===CONTEXT DATA END=== \n\n Now focus on the user message and only check the context data if the user requests or if it is relevant to answer the user: '+ messages[i].content;
+          messages[i].content = ' ===CONTEXT DATA START==='+ contextData + '===CONTEXT DATA END=== \n\n Now focus on the user message and only check the context data if the user requests or when doing some analysis or if it is relevant to answer the user: '+ messages[i].content;
           break;
         }
       }
