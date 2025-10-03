@@ -293,15 +293,18 @@ class TransactionAnalysisDao {
 
     async getAnalysesForAiContext(projectId, environment, limit = 5) {
         try {
+            // Ensure limit is a safe integer to prevent SQL injection
+            const safeLimit = Math.max(1, Math.min(100, parseInt(limit) || 5));
+            
             const query = `
                 SELECT id, analysis_name, analysis_result, created_at, token_count
                 FROM transaction_analysis 
                 WHERE project_id = ? AND environment = ? AND use_ai = TRUE AND status = 'completed'
                 ORDER BY created_at DESC
-                LIMIT ?
+                LIMIT ${safeLimit}
             `;
 
-            const [rows] = await database.execute(query, [projectId, environment, limit]);
+            const [rows] = await database.execute(query, [projectId, environment]);
             
             return rows;
 
