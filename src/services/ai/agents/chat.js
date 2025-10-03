@@ -38,35 +38,28 @@ const formatServerData = (dashboardData) => {
   return formattedData;
 };
 
-// Extract only the DETAILED EXPLANATION section from transaction analysis
-const extractDetailedExplanation = (analysisResult) => {
+// Extract all sections from transaction analysis except "SUGGESTED ANSWER TO THE MERCHANT'S DEVELOPERS"
+const extractAnalysisForAI = (analysisResult) => {
   if (!analysisResult || typeof analysisResult !== 'string') {
     return '';
   }
 
-  // Split into lines and find the DETAILED EXPLANATION section
+  // Split into lines and extract everything except the suggested answer section
   const lines = analysisResult.split('\n');
-  let inDetailedSection = false;
-  let detailedContent = [];
+  let content = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
-    if (line.includes('DETAILED EXPLANATION:')) {
-      inDetailedSection = true;
-      continue;
+    // Stop at SUGGESTED ANSWER TO THE MERCHANT'S DEVELOPERS: section
+    if (line.includes('SUGGESTED ANSWER TO THE MERCHANT\'S DEVELOPERS:')) {
+      break;
     }
     
-    if (inDetailedSection) {
-      // Stop at SUGGESTED ANSWER TO THE MERCHANT'S DEVELOPERS: section
-      if (line.includes('SUGGESTED ANSWER TO THE MERCHANT\'S DEVELOPERS:')) {
-        break;
-      }
-      detailedContent.push(line);
-    }
+    content.push(line);
   }
 
-  return detailedContent.join('\n').trim();
+  return content.join('\n').trim();
 };
 
 // Format transaction analysis data for AI context
@@ -79,19 +72,19 @@ const formatTransactionAnalysisData = (analyses) => {
   formattedData += 'The following transaction analyses have been selected for AI context and may be relevant to the current conversation:\n\n';
 
   analyses.forEach((analysis, index) => {
-    // Extract only the DETAILED EXPLANATION section
-    const detailedExplanation = extractDetailedExplanation(analysis.analysis_result);
+    // Extract all sections except the suggested answer
+    const analysisContent = extractAnalysisForAI(analysis.analysis_result);
     
-    // Only include analyses that have a detailed explanation
-    if (detailedExplanation) {
+    // Only include analyses that have content
+    if (analysisContent) {
       formattedData += `--- Analysis ${index + 1}: ${analysis.analysis_name} ---\n`;
       formattedData += `Created: ${new Date(analysis.created_at).toLocaleString()}\n`;
       formattedData += `Token Count: ${analysis.token_count || 'N/A'}\n\n`;
-      formattedData += `Detailed Explanation:\n${detailedExplanation}\n\n`;
+      formattedData += `${analysisContent}\n\n`;
     }
   });
 
-  formattedData += 'Note: These detailed explanations provide technical context about performance issues, bottlenecks, and optimization opportunities that may be relevant to current troubleshooting efforts.\n';
+  formattedData += 'Note: These transaction analyses provide technical context about performance issues, bottlenecks, and optimization opportunities that may be relevant to current troubleshooting efforts.\n';
 
   return formattedData;
 };
@@ -210,17 +203,26 @@ const chatAgent = {
 
       // 4) Get transaction analysis context if project and environment are available
       let transactionAnalysisText = '';
+      logger.info(`[TRANSACTION ANALYSIS CONTEXT] Checking for transaction analysis context - projectId: "${projectId}", environment: "${environment}"`);
+      
       if (projectId && environment) {
         try {
+          logger.info(`[TRANSACTION ANALYSIS CONTEXT] Fetching analyses for project ${projectId}/${environment}`);
           const analysisResult = await transactionAnalysisService.getAnalysesForAiContext(projectId, environment, 3);
+          logger.info(`[TRANSACTION ANALYSIS CONTEXT] Query result - success: ${analysisResult.success}, count: ${analysisResult.analyses?.length || 0}`);
+          
           if (analysisResult.success && analysisResult.analyses.length > 0) {
             transactionAnalysisText = formatTransactionAnalysisData(analysisResult.analyses);
-            logger.debug(`Including ${analysisResult.analyses.length} transaction analyses in AI context for project ${projectId}/${environment}`);
+            logger.info(`[TRANSACTION ANALYSIS CONTEXT] Including ${analysisResult.analyses.length} transaction analyses in AI context for project ${projectId}/${environment}`);
+          } else {
+            logger.info(`[TRANSACTION ANALYSIS CONTEXT] No transaction analyses found for project ${projectId}/${environment}`);
           }
         } catch (err) {
-          logger.error(`Failed to retrieve transaction analysis context for project ${projectId}/${environment}:`, err);
+          logger.error(`[TRANSACTION ANALYSIS CONTEXT] Failed to retrieve transaction analysis context for project ${projectId}/${environment}:`, err);
           // Continue without transaction analysis context - don't fail the entire request
         }
+      } else {
+        logger.info(`[TRANSACTION ANALYSIS CONTEXT] Skipping transaction analysis - missing projectId or environment`);
       }
 
       // 5) Format messages for the AI
