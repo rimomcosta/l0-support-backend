@@ -4,7 +4,6 @@ export const corsConfig = {
     origin: function (origin, callback) {
         const allowedOrigins = [
             process.env.CLIENT_ORIGIN,       // Production/staging domain from .env
-            process.env.REACT_APP_API_URL,   // API domain from .env
         ].filter(Boolean);
 
         // Development-only origins
