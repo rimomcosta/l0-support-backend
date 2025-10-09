@@ -4,3 +4,4 @@ node_modules
 logs/
 tmp/
 google-credentials.json
+.DS_Store
