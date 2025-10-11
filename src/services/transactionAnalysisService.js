@@ -28,7 +28,8 @@ class TransactionAnalysisService {
                 analysisName,
                 projectId,
                 environment,
-                extraContext
+                extraContext,
+                userId // Pass userId for quota checking
             );
             const aiTime = Date.now() - aiStartTime;
             this.logger.info(`[AI ANALYSIS COMPLETE] ${analysisName} (ID: ${analysisId}) completed in ${aiTime}ms`);
@@ -64,21 +65,41 @@ class TransactionAnalysisService {
                     totalProcessingTimeMs: totalProcessingTime
                 };
             } else {
+                // Check if it was a quota exceeded error
+                const errorMessage = aiResult.quotaExceeded 
+                    ? aiResult.error 
+                    : `AI analysis failed: ${aiResult.error}`;
+                
                 await this.dao.updateAnalysisStatus(
                     analysisId,
                     'failed',
                     null,
-                    aiResult.error,
+                    errorMessage,
                     aiResult.processingTimeMs
                 );
 
-                // Broadcast the update
-                WebSocketService.broadcastAnalysisUpdate(analysisId, 'failed');
+                // Broadcast the update (with quota info if applicable)
+                if (aiResult.quotaExceeded) {
+                    WebSocketService.broadcast({
+                        type: 'analysis_quota_exceeded',
+                        analysisId,
+                        quotaInfo: aiResult.quotaInfo
+                    });
+                } else {
+                    WebSocketService.broadcastAnalysisUpdate(analysisId, 'failed');
+                }
 
                 const updateTime = Date.now() - updateStartTime;
                 this.logger.error(`[YAML ANALYSIS FAILED] ${analysisName} (ID: ${analysisId}) failed after ${totalProcessingTime}ms: ${aiResult.error}`);
 
-                throw new Error(`AI analysis failed: ${aiResult.error}`);
+                // Return error info instead of throwing (to pass quota info to frontend)
+                return {
+                    success: false,
+                    error: errorMessage,
+                    quotaExceeded: aiResult.quotaExceeded,
+                    quotaInfo: aiResult.quotaInfo,
+                    totalProcessingTimeMs: totalProcessingTime
+                };
             }
 
         } catch (error) {

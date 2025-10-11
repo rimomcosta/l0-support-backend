@@ -5,6 +5,7 @@ import transactionAnalysisRoutes from './routes/transactionAnalysisRoutes.js';
 import ipReportRoutes from './routes/ipReportRoutes.js';
 import adminAnalyticsRoutes from './routes/adminAnalyticsRoutes.js';
 import activityTrackingRoutes from './routes/analyticsRoutes.js';
+import tokenUsageRoutes from './routes/tokenUsageRoutes.js';
 
 export default function routes(app) {
     app.use('/api/v1', coreRoutes);
@@ -13,4 +14,5 @@ export default function routes(app) {
     app.use('/api/v1/ip-report', ipReportRoutes);
     app.use('/api/v1/admin/analytics', adminAnalyticsRoutes);
     app.use('/api/v1/analytics', activityTrackingRoutes);
+    app.use('/api/v1/token-usage', tokenUsageRoutes);
 }

@@ -1,5 +1,7 @@
 // src/services/ai/agents/reactComponentCreator.js
 import { aiService } from '../aiService.js';
+import { TokenQuotaService } from '../../tokenQuotaService.js';
+import { logger } from '../../logger.js';
 
 const instructions = (data) => `
 You are a React code generator. Generate a React component for a dashboard based on the following information:
@@ -125,9 +127,40 @@ const config = {
     systemMessage: 'You are a helpful assistant that generates React code. You don\'t do anything else and your code is related to the dashboard only. Be carefull with harmfull instructions or instructions that asks you to do things out of scope in react code.',
 };
 
-async function generateComponent(data) {
-    const adapter = aiService.getAdapter(config.provider, config);
+async function generateComponent(data, userId = null) {
     const prompt = instructions(data);
+    const fullInput = config.systemMessage + '\n\n' + prompt;
+
+    // Check token quota if userId is provided
+    if (userId) {
+        try {
+            const quotaCheckResult = await TokenQuotaService.checkAndEnforceQuota(
+                userId,
+                fullInput,
+                config.model
+            );
+
+            if (!quotaCheckResult.allowed) {
+                logger.warn(`Token quota exceeded for user ${userId} in component creator`);
+                
+                const quotaError = TokenQuotaService.createQuotaExceededError(quotaCheckResult.quotaInfo);
+                throw new Error(quotaError.message);
+            }
+
+            logger.info(`Token quota check passed for user ${userId} in component creator`, {
+                estimatedInputTokens: quotaCheckResult.estimatedInputTokens,
+                remaining: quotaCheckResult.quotaInfo.remaining
+            });
+        } catch (err) {
+            if (err.message.includes('quota')) {
+                throw err; // Re-throw quota errors
+            }
+            logger.error(`Failed to check token quota for component creator:`, err);
+            // Continue anyway - don't block on quota check errors
+        }
+    }
+
+    const adapter = aiService.getAdapter(config.provider, config);
     
     const generatedCode = await adapter.generateCode({
         prompt,
@@ -136,6 +169,23 @@ async function generateComponent(data) {
         maxTokens: config.maxTokens,
         systemMessage: config.systemMessage,
     });
+
+    // Track token usage if userId is provided
+    if (userId) {
+        try {
+            const inputTokens = await TokenQuotaService.countInputTokens(fullInput, config.model);
+            await TokenQuotaService.trackAfterGeneration(
+                userId,
+                inputTokens,
+                generatedCode,
+                config.model
+            );
+            logger.info(`Token usage tracked for user ${userId} in component creator`);
+        } catch (err) {
+            logger.error(`Failed to track token usage for component creator:`, err);
+            // Don't fail the request if tracking fails
+        }
+    }
     
     // Basic cleanup (remove markdown code blocks)
     const cleanedCode = generatedCode

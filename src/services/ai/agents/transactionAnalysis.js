@@ -1,5 +1,6 @@
 import { logger } from '../../logger.js';
 import { aiService } from '../aiService.js';
+import { TokenQuotaService } from '../../tokenQuotaService.js';
 import fs from 'fs/promises';
 
 // Load and combine instruction markdown files
@@ -45,7 +46,7 @@ class TransactionAnalysisAgent {
         this.stream = false;
     }
 
-    async analyzeTransaction(yamlContent, analysisName, projectId, environment, extraContext = '') {
+    async analyzeTransaction(yamlContent, analysisName, projectId, environment, extraContext = '', userId = null) {
         const startTime = Date.now();
         
         try {
@@ -58,8 +59,46 @@ class TransactionAnalysisAgent {
             const promptTime = Date.now() - promptStartTime;
             this.logger.info(`[AI AGENT] Prompt built in ${promptTime}ms for "${analysisName}"`);
 
-            const estimatedTokens = Math.ceil(prompt.length / 4); // Rough estimation
-            this.logger.info(`[AI AGENT] Estimated tokens for "${analysisName}": ${estimatedTokens}`);
+            const instructions = await loadInstructions();
+            const systemMessage = instructions + '\n\nPlease analyse the Magento 2 transaction below extracted from New Relic on Adobe Commerce Cloud. Read the entire file, add it to your context and perform an analysis. Remember that this is one of many other transactions.';
+            const fullInput = systemMessage + '\n\n' + prompt;
+
+            // Check token quota if userId is provided
+            if (userId) {
+                try {
+                    const quotaCheckResult = await TokenQuotaService.checkAndEnforceQuota(
+                        userId,
+                        fullInput,
+                        this.model
+                    );
+
+                    if (!quotaCheckResult.allowed) {
+                        this.logger.warn(`Token quota exceeded for user ${userId} in transaction analysis`, {
+                            analysisName,
+                            quotaInfo: quotaCheckResult.quotaInfo
+                        });
+
+                        const quotaError = TokenQuotaService.createQuotaExceededError(quotaCheckResult.quotaInfo);
+                        
+                        return {
+                            success: false,
+                            error: quotaError.error,
+                            quotaExceeded: true,
+                            quotaInfo: quotaError.details,
+                            processingTimeMs: Date.now() - startTime
+                        };
+                    }
+
+                    this.logger.info(`Token quota check passed for user ${userId} in transaction analysis`, {
+                        analysisName,
+                        estimatedInputTokens: quotaCheckResult.estimatedInputTokens,
+                        remaining: quotaCheckResult.quotaInfo.remaining
+                    });
+                } catch (err) {
+                    this.logger.error(`Failed to check token quota for transaction analysis:`, err);
+                    // Continue anyway - don't block on quota check errors
+                }
+            }
 
             // Get AI adapter
             this.logger.info(`[AI AGENT] Getting AI adapter for "${analysisName}"`);
@@ -76,16 +115,32 @@ class TransactionAnalysisAgent {
             // Call the AI service
             this.logger.info(`[AI AGENT] Calling AI service for "${analysisName}"`);
             const aiCallStartTime = Date.now();
-            const instructions = await loadInstructions();
             const response = await adapter.generateCode({
                 prompt: prompt,
-                systemMessage: instructions + '\n\nPlease analyse the Magento 2 transaction below extracted from New Relic on Adobe Commerce Cloud. Read the entire file, add it to your context and perform an analysis. Remember that this is one of many other transactions.',
+                systemMessage: systemMessage,
                 temperature: this.temperature,
                 maxTokens: this.maxTokens
             });
 
             const aiCallTime = Date.now() - aiCallStartTime;
             this.logger.info(`[AI AGENT] AI service responded in ${aiCallTime}ms for "${analysisName}"`);
+
+            // Track token usage if userId is provided
+            if (userId) {
+                try {
+                    const inputTokens = await TokenQuotaService.countInputTokens(fullInput, this.model);
+                    await TokenQuotaService.trackAfterGeneration(
+                        userId,
+                        inputTokens,
+                        response,
+                        this.model
+                    );
+                    this.logger.info(`Token usage tracked for user ${userId} in transaction analysis`);
+                } catch (err) {
+                    this.logger.error(`Failed to track token usage for transaction analysis:`, err);
+                    // Don't fail the request if tracking fails
+                }
+            }
 
             const totalProcessingTime = Date.now() - startTime;
             this.logger.info(`[AI AGENT] Analysis completed successfully for "${analysisName}" in ${totalProcessingTime}ms total`);

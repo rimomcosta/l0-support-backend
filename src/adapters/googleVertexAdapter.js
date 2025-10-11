@@ -1,5 +1,6 @@
 import { VertexAI } from '@google-cloud/vertexai';
 import { logger } from '../services/logger.js';
+import { tokenCountingService } from '../services/tokenCountingService.js';
 
 export class GoogleVertexAdapter {
   constructor(config = {}) {
@@ -253,7 +254,14 @@ export class GoogleVertexAdapter {
     // Generate streaming content using Vertex AI SDK
     const result = await generativeModel.generateContentStream(conversationText.trim());
     
-    return { stream: this._createStreamIterator(result, signal) };
+    // Create a wrapper that tracks tokens
+    const streamWrapper = {
+      stream: this._createStreamIterator(result, signal),
+      model,
+      inputText: conversationText.trim()
+    };
+    
+    return streamWrapper;
   }
 
   async _generateStreamWithAnthropic({ model, messages, systemMessage, temperature, maxTokens, signal }) {
@@ -361,8 +369,14 @@ export class GoogleVertexAdapter {
       throw new Error(`Anthropic Claude streaming request failed: ${errorText}`);
     }
 
-    // Return streaming response
-    return { stream: this._createAnthropicStreamIterator(response.body, signal) };
+    // Return streaming response with token tracking
+    const streamWrapper = {
+      stream: this._createAnthropicStreamIterator(response.body, signal),
+      model,
+      inputText: conversationText.trim()
+    };
+    
+    return streamWrapper;
   }
 
   async *_createStreamIterator(streamResult, signal) {
@@ -409,9 +423,8 @@ export class GoogleVertexAdapter {
               break;
             }
             
-            if (process.env.ENABLE_AI_OUTPUT === 'true') {
-              fullResponse += part.text;
-            }
+            // Always accumulate full response for token counting
+            fullResponse += part.text;
             
             // Determine content type based on thinking flag
             const contentType = part.thought ? 'thinking' : 'content';
@@ -442,6 +455,12 @@ export class GoogleVertexAdapter {
         console.log(fullResponse);
         console.log('=== END AI RESPONSE ===\n');
       }
+
+      // Yield final token count information
+      yield {
+        type: 'token_usage',
+        outputText: fullResponse
+      };
     } catch (error) {
       console.log(`🔥 STREAM ITERATOR ERROR: ${error.message}`);
       console.log(`   Chunks processed: ${chunksProcessed}`);
@@ -513,9 +532,8 @@ export class GoogleVertexAdapter {
                   break;
                 }
                 
-                if (process.env.ENABLE_AI_OUTPUT === 'true') {
-                  fullResponse += text;
-                }
+                // Always accumulate full response for token counting
+                fullResponse += text;
                 
                 // Yield content with type information
                 yield {
@@ -562,6 +580,12 @@ export class GoogleVertexAdapter {
         console.log(fullResponse);
         console.log('=== END AI RESPONSE ===\n');
       }
+
+      // Yield final token count information
+      yield {
+        type: 'token_usage',
+        outputText: fullResponse
+      };
       
     } catch (error) {
       console.log(`🔥 ANTHROPIC STREAM ITERATOR ERROR: ${error.message}`);
