@@ -45,8 +45,9 @@ export class TokenQuotaDao {
 
   /**
    * Get current day's token usage for a user
+   * Creates a new record with DB default limit if none exists
    * @param {string} userId 
-   * @returns {Object} Usage object with default values if not found
+   * @returns {Object} Usage object
    */
   static async getCurrentDayUsage(userId) {
     try {
@@ -57,16 +58,27 @@ export class TokenQuotaDao {
         return usage;
       }
 
-      // Return default values if no record exists yet
-      return {
+      // No record exists for today - create one with DB DEFAULT values
+      // The INSERT will use the DEFAULT daily_limit from the table schema
+      await pool.execute(
+        `INSERT INTO user_token_usage (user_id, usage_date, total_input_tokens, total_output_tokens, total_tokens)
+         VALUES (?, ?, 0, 0, 0)`,
+        [userId, today]
+      );
+
+      // Now retrieve the newly created record with DB defaults
+      const newUsage = await this.getUserDailyUsage(userId, today);
+      if (!newUsage) {
+        throw new Error('Failed to create token usage record');
+      }
+
+      logger.debug('Created new token usage record with DB defaults:', {
         userId,
         usageDate: today,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalTokens: 0,
-        dailyLimit: 2000000,
-        lastUpdated: null
-      };
+        dailyLimit: newUsage.dailyLimit
+      });
+
+      return newUsage;
     } catch (error) {
       logger.error('Error getting current day token usage:', {
         error: error.message,
@@ -127,6 +139,7 @@ export class TokenQuotaDao {
    * @param {string} userId 
    * @param {number} estimatedTokens 
    * @returns {Object} { allowed: boolean, remaining: number, limit: number, used: number }
+   * @throws {Error} If unable to check quota (database error, etc.)
    */
   static async checkQuotaAvailable(userId, estimatedTokens) {
     try {
@@ -147,22 +160,17 @@ export class TokenQuotaDao {
         userId,
         estimatedTokens
       });
-      // In case of error, deny the request for safety
-      return {
-        allowed: false,
-        remaining: 0,
-        limit: 2000000,
-        used: 0,
-        percentUsed: 0,
-        error: error.message
-      };
+      // Throw error instead of returning fallback - let calling code decide how to handle
+      throw error;
     }
   }
 
   /**
    * Get daily limit for a user
+   * Creates a record with DB default if none exists
    * @param {string} userId 
-   * @returns {number} Daily limit
+   * @returns {number} Daily limit from database
+   * @throws {Error} If unable to get limit (database error, etc.)
    */
   static async getDailyLimit(userId) {
     try {
@@ -173,7 +181,8 @@ export class TokenQuotaDao {
         error: error.message,
         userId
       });
-      return 2000000; // Default limit
+      // Throw error instead of returning hardcoded fallback
+      throw error;
     }
   }
 
