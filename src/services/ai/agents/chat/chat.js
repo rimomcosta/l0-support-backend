@@ -277,7 +277,6 @@ const chatAgent = {
       }
 
       // 5.5) Check and truncate context window if needed
-      let contextWindowMetadata = null;
       try {
         const preparedConversation = await ContextWindowService.prepareConversation(
           systemMessageFinal,
@@ -291,37 +290,61 @@ const chatAgent = {
             chatId,
             userId,
             model: aiConfig.model,
-            ...preparedConversation.metadata
+            originalMessages: preparedConversation.metadata.originalMessages,
+            finalMessages: preparedConversation.metadata.finalMessages,
+            messagesRemoved: preparedConversation.metadata.messagesRemoved,
+            originalTokens: preparedConversation.metadata.originalTokens,
+            finalTokens: preparedConversation.metadata.finalTokens,
+            tokensRemoved: preparedConversation.metadata.tokensRemoved,
+            safeLimit: preparedConversation.metadata.safeLimit
           });
 
           // Replace messages with truncated version
           messages.length = 0; // Clear array
           messages.push(...preparedConversation.messages); // Add truncated messages
 
-          // Notify via WebSocket (optional, user won't see this but good for debugging)
+          // Notify via WebSocket (optional, for debugging/monitoring)
           WebSocketService.broadcastToTab({
             type: 'context_truncated',
             chatId,
             metadata: {
               messagesRemoved: preparedConversation.metadata.messagesRemoved,
-              tokensRemoved: preparedConversation.metadata.tokensRemoved
+              tokensRemoved: preparedConversation.metadata.tokensRemoved,
+              finalTokens: preparedConversation.metadata.finalTokens
             }
           }, tabId);
         } else {
           logger.debug('Context window within limits, no truncation needed:', {
             chatId,
             model: aiConfig.model,
-            tokens: preparedConversation.metadata.originalTokens
+            tokens: preparedConversation.metadata.originalTokens,
+            safeLimit: ContextWindowService.getSafeLimit(aiConfig.model)
           });
         }
-
-        contextWindowMetadata = preparedConversation.metadata;
       } catch (err) {
         logger.error('Context window preparation failed, continuing without truncation:', {
           chatId,
-          error: err.message
+          userId,
+          model: aiConfig.model,
+          error: err.message,
+          stack: err.stack
         });
-        // Continue without truncation - fail-safe approach
+        
+        // Check if messages are extremely large even without truncation
+        const estimatedSize = messages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
+        if (estimatedSize > 3000000) { // ~750k tokens estimated (4 chars/token)
+          logger.error('Conversation may exceed context limit, but truncation failed:', {
+            chatId,
+            estimatedChars: estimatedSize,
+            messageCount: messages.length
+          });
+          // Send warning via WebSocket
+          WebSocketService.broadcastToTab({
+            type: 'warning',
+            chatId,
+            message: 'Conversation is very long and may hit context limits'
+          }, tabId);
+        }
       }
 
       // 6) Get adapter with user config

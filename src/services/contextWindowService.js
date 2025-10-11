@@ -128,6 +128,7 @@ export class ContextWindowService {
   static async truncateConversation(systemMessage, messages, modelName) {
     const safeLimit = this.getSafeLimit(modelName);
     const startTime = Date.now();
+    const MAX_ITERATIONS = 100; // Safety limit to prevent infinite loops
     
     // Count initial tokens
     const initialTokens = await this.countConversationTokens(systemMessage, messages, modelName);
@@ -160,10 +161,13 @@ export class ContextWindowService {
     let truncatedMessages = [...messages];
     let currentTokens = initialTokens;
     let messagesRemoved = 0;
+    let iterations = 0;
 
     // Remove oldest message pairs until under safe limit
     // We remove in pairs (user + assistant) to maintain conversation coherence
-    while (currentTokens > safeLimit && truncatedMessages.length > 1) {
+    while (currentTokens > safeLimit && truncatedMessages.length > 1 && iterations < MAX_ITERATIONS) {
+      iterations++;
+
       // Always keep the most recent message (the current user message)
       if (truncatedMessages.length <= 1) {
         break;
@@ -173,19 +177,48 @@ export class ContextWindowService {
       const removedMessage = truncatedMessages.shift();
       messagesRemoved++;
 
-      // If we removed a user message and there's an assistant response, remove that too
-      // This keeps user-assistant pairs together
-      if (removedMessage.role === 'user' && truncatedMessages.length > 0 && truncatedMessages[0].role === 'assistant') {
-        truncatedMessages.shift();
-        messagesRemoved++;
+      // Try to remove the next message if it forms a pair with the removed message
+      // This handles both user+assistant and assistant+user patterns
+      if (truncatedMessages.length > 0) {
+        const nextMessage = truncatedMessages[0];
+        const formsCompletePair = 
+          (removedMessage.role === 'user' && nextMessage.role === 'assistant') ||
+          (removedMessage.role === 'assistant' && nextMessage.role === 'user') ||
+          (removedMessage.role === 'thinking' && nextMessage.role === 'assistant');
+        
+        if (formsCompletePair) {
+          truncatedMessages.shift();
+          messagesRemoved++;
+        }
       }
 
-      // Recount tokens
-      currentTokens = await this.countConversationTokens(systemMessage, truncatedMessages, modelName);
+      // Recount tokens every few iterations to reduce API calls
+      // For first 5 iterations, check every time; after that, check every 3 iterations
+      const shouldRecount = iterations <= 5 || iterations % 3 === 0 || truncatedMessages.length <= 5;
+      
+      if (shouldRecount) {
+        currentTokens = await this.countConversationTokens(systemMessage, truncatedMessages, modelName);
+        
+        logger.debug('Truncation iteration:', {
+          iteration: iterations,
+          messagesRemaining: truncatedMessages.length,
+          currentTokens,
+          messagesRemoved
+        });
+      }
+    }
 
-      logger.debug('Truncation iteration:', {
-        messagesRemaining: truncatedMessages.length,
-        currentTokens,
+    // Final recount if we didn't just do one
+    if (iterations % 3 !== 0 && iterations > 5) {
+      currentTokens = await this.countConversationTokens(systemMessage, truncatedMessages, modelName);
+    }
+
+    // Check if we hit max iterations
+    if (iterations >= MAX_ITERATIONS) {
+      logger.warn('Truncation hit maximum iterations limit:', {
+        modelName,
+        maxIterations: MAX_ITERATIONS,
+        finalMessages: truncatedMessages.length,
         messagesRemoved
       });
     }
