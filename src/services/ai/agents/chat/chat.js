@@ -5,6 +5,7 @@ import { logger } from '../../../logger.js';
 import { ChatDao } from '../../../dao/chatDao.js';
 import { AiSettingsDao } from '../../../dao/aiSettingsDao.js';
 import { TokenQuotaService } from '../../../tokenQuotaService.js';
+import { ContextWindowService } from '../../../contextWindowService.js';
 import transactionAnalysisService from '../../../transactionAnalysisService.js';
 import fs from 'fs/promises';
 
@@ -272,6 +273,77 @@ const chatAgent = {
           const contextData = serverDataText + transactionAnalysisText;
           messages[i].content = ' ===CONTEXT DATA START==='+ contextData + '===CONTEXT DATA END=== \n\n Now focus on the user message and only check the context data if the user requests or when doing some analysis or if it is relevant to answer the user: '+ messages[i].content;
           break;
+        }
+      }
+
+      // 5.5) Check and truncate context window if needed
+      try {
+        const preparedConversation = await ContextWindowService.prepareConversation(
+          systemMessageFinal,
+          messages,
+          aiConfig.model
+        );
+
+        // If truncation occurred, update messages array
+        if (preparedConversation.metadata.truncated) {
+          logger.warn('Context window truncation performed:', {
+            chatId,
+            userId,
+            model: aiConfig.model,
+            originalMessages: preparedConversation.metadata.originalMessages,
+            finalMessages: preparedConversation.metadata.finalMessages,
+            messagesRemoved: preparedConversation.metadata.messagesRemoved,
+            originalTokens: preparedConversation.metadata.originalTokens,
+            finalTokens: preparedConversation.metadata.finalTokens,
+            tokensRemoved: preparedConversation.metadata.tokensRemoved,
+            safeLimit: preparedConversation.metadata.safeLimit
+          });
+
+          // Replace messages with truncated version
+          messages.length = 0; // Clear array
+          messages.push(...preparedConversation.messages); // Add truncated messages
+
+          // Notify via WebSocket (optional, for debugging/monitoring)
+          WebSocketService.broadcastToTab({
+            type: 'context_truncated',
+            chatId,
+            metadata: {
+              messagesRemoved: preparedConversation.metadata.messagesRemoved,
+              tokensRemoved: preparedConversation.metadata.tokensRemoved,
+              finalTokens: preparedConversation.metadata.finalTokens
+            }
+          }, tabId);
+        } else {
+          logger.debug('Context window within limits, no truncation needed:', {
+            chatId,
+            model: aiConfig.model,
+            tokens: preparedConversation.metadata.originalTokens,
+            safeLimit: ContextWindowService.getSafeLimit(aiConfig.model)
+          });
+        }
+      } catch (err) {
+        logger.error('Context window preparation failed, continuing without truncation:', {
+          chatId,
+          userId,
+          model: aiConfig.model,
+          error: err.message,
+          stack: err.stack
+        });
+        
+        // Check if messages are extremely large even without truncation
+        const estimatedSize = messages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
+        if (estimatedSize > 3000000) { // ~750k tokens estimated (4 chars/token)
+          logger.error('Conversation may exceed context limit, but truncation failed:', {
+            chatId,
+            estimatedChars: estimatedSize,
+            messageCount: messages.length
+          });
+          // Send warning via WebSocket
+          WebSocketService.broadcastToTab({
+            type: 'warning',
+            chatId,
+            message: 'Conversation is very long and may hit context limits'
+          }, tabId);
         }
       }
 
