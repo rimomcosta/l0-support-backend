@@ -5,6 +5,7 @@ import { logger } from '../../../logger.js';
 import { ChatDao } from '../../../dao/chatDao.js';
 import { AiSettingsDao } from '../../../dao/aiSettingsDao.js';
 import { TokenQuotaService } from '../../../tokenQuotaService.js';
+import { ContextWindowService } from '../../../contextWindowService.js';
 import transactionAnalysisService from '../../../transactionAnalysisService.js';
 import fs from 'fs/promises';
 
@@ -273,6 +274,54 @@ const chatAgent = {
           messages[i].content = ' ===CONTEXT DATA START==='+ contextData + '===CONTEXT DATA END=== \n\n Now focus on the user message and only check the context data if the user requests or when doing some analysis or if it is relevant to answer the user: '+ messages[i].content;
           break;
         }
+      }
+
+      // 5.5) Check and truncate context window if needed
+      let contextWindowMetadata = null;
+      try {
+        const preparedConversation = await ContextWindowService.prepareConversation(
+          systemMessageFinal,
+          messages,
+          aiConfig.model
+        );
+
+        // If truncation occurred, update messages array
+        if (preparedConversation.metadata.truncated) {
+          logger.warn('Context window truncation performed:', {
+            chatId,
+            userId,
+            model: aiConfig.model,
+            ...preparedConversation.metadata
+          });
+
+          // Replace messages with truncated version
+          messages.length = 0; // Clear array
+          messages.push(...preparedConversation.messages); // Add truncated messages
+
+          // Notify via WebSocket (optional, user won't see this but good for debugging)
+          WebSocketService.broadcastToTab({
+            type: 'context_truncated',
+            chatId,
+            metadata: {
+              messagesRemoved: preparedConversation.metadata.messagesRemoved,
+              tokensRemoved: preparedConversation.metadata.tokensRemoved
+            }
+          }, tabId);
+        } else {
+          logger.debug('Context window within limits, no truncation needed:', {
+            chatId,
+            model: aiConfig.model,
+            tokens: preparedConversation.metadata.originalTokens
+          });
+        }
+
+        contextWindowMetadata = preparedConversation.metadata;
+      } catch (err) {
+        logger.error('Context window preparation failed, continuing without truncation:', {
+          chatId,
+          error: err.message
+        });
+        // Continue without truncation - fail-safe approach
       }
 
       // 6) Get adapter with user config
