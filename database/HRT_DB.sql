@@ -266,7 +266,7 @@ CREATE TABLE `user_token_usage` (
   `total_input_tokens` bigint(20) NOT NULL DEFAULT 0,
   `total_output_tokens` bigint(20) NOT NULL DEFAULT 0,
   `total_tokens` bigint(20) NOT NULL DEFAULT 0,
-  `daily_limit` bigint(20) NOT NULL DEFAULT 2000000,
+  `daily_limit` bigint(20) NOT NULL DEFAULT 1000000,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `last_updated` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),

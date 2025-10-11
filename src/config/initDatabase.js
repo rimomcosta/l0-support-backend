@@ -119,7 +119,7 @@ const tables = {
             total_input_tokens BIGINT NOT NULL DEFAULT 0,
             total_output_tokens BIGINT NOT NULL DEFAULT 0,
             total_tokens BIGINT NOT NULL DEFAULT 0,
-            daily_limit BIGINT NOT NULL DEFAULT 2000000,
+            daily_limit BIGINT NOT NULL DEFAULT 1000000,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY unique_user_date (user_id, usage_date),
