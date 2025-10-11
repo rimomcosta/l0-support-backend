@@ -254,6 +254,35 @@ INSERT INTO `user_ai_settings` VALUES (1,'94daa8cf-fd26-4a67-ae32-f9b8c877d53b',
 UNLOCK TABLES;
 
 --
+-- Table structure for table `user_token_usage`
+--
+
+DROP TABLE IF EXISTS `user_token_usage`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+CREATE TABLE `user_token_usage` (
+  `user_id` varchar(255) NOT NULL,
+  `usage_date` date NOT NULL,
+  `total_input_tokens` bigint(20) NOT NULL DEFAULT 0,
+  `total_output_tokens` bigint(20) NOT NULL DEFAULT 0,
+  `total_tokens` bigint(20) NOT NULL DEFAULT 0,
+  `daily_limit` bigint(20) NOT NULL DEFAULT 2000000,
+  `last_updated` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`user_id`,`usage_date`),
+  KEY `idx_usage_date` (`usage_date`),
+  KEY `idx_user_date` (`user_id`,`usage_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `user_token_usage`
+--
+
+LOCK TABLES `user_token_usage` WRITE;
+/*!40000 ALTER TABLE `user_token_usage` DISABLE KEYS */;
+/*!40000 ALTER TABLE `user_token_usage` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `user_dashboard_layouts`
 --
 

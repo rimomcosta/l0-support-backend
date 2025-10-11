@@ -4,6 +4,7 @@ import { WebSocketService } from '../../../webSocketService.js';
 import { logger } from '../../../logger.js';
 import { ChatDao } from '../../../dao/chatDao.js';
 import { AiSettingsDao } from '../../../dao/aiSettingsDao.js';
+import { TokenQuotaService } from '../../../tokenQuotaService.js';
 import transactionAnalysisService from '../../../transactionAnalysisService.js';
 import fs from 'fs/promises';
 
@@ -291,6 +292,51 @@ const chatAgent = {
         throw new Error(`AI adapter initialization error: ${err.message}`);
       }
 
+      // 6.5) Check token quota before generating
+      let quotaCheckResult;
+      try {
+        // Combine system message and messages for token counting
+        const inputForCounting = systemMessageFinal + '\n\n' + messages.map(m => `${m.role}: ${m.content}`).join('\n');
+        
+        quotaCheckResult = await TokenQuotaService.checkAndEnforceQuota(
+          userId,
+          inputForCounting,
+          aiConfig.model
+        );
+
+        if (!quotaCheckResult.allowed) {
+          logger.warn(`Token quota exceeded for user ${userId}`, {
+            chatId,
+            quotaInfo: quotaCheckResult.quotaInfo
+          });
+
+          // Send quota exceeded error via WebSocket
+          const quotaError = TokenQuotaService.createQuotaExceededError(quotaCheckResult.quotaInfo);
+          
+          WebSocketService.broadcastToTab({
+            type: 'quota_exceeded',
+            chatId,
+            ...quotaError
+          }, tabId);
+
+          // Don't throw error, just return gracefully
+          return;
+        }
+
+        logger.info(`Token quota check passed for user ${userId}`, {
+          chatId,
+          estimatedInputTokens: quotaCheckResult.estimatedInputTokens,
+          remaining: quotaCheckResult.quotaInfo.remaining,
+          percentUsed: quotaCheckResult.quotaInfo.percentUsed
+        });
+      } catch (err) {
+        logger.error(`Failed to check token quota for chatId: ${chatId}`, {
+          error: err.message,
+          userId
+        });
+        // Continue anyway - don't block on quota check errors
+      }
+
       // 7) Generate stream  
       let stream;
       try {
@@ -327,6 +373,7 @@ const chatAgent = {
       let fullAssistantReply = '';
       let fullThinkingContent = '';
       let hasStartedContent = false;
+      let outputTextForTokenCounting = '';
 
       for await (const chunk of stream) {
         if (abortSignal?.aborted) {
@@ -373,6 +420,29 @@ const chatAgent = {
             chatId,
             content: chunk.text
           }, tabId);
+        } else if (chunk.type === 'token_usage') {
+          // Token usage information from adapter
+          outputTextForTokenCounting = chunk.outputText;
+          logger.debug(`Received token usage info from adapter for chatId: ${chatId}`);
+        }
+      }
+
+      // Track token usage after streaming completes
+      if (quotaCheckResult && outputTextForTokenCounting) {
+        try {
+          await TokenQuotaService.trackAfterGeneration(
+            userId,
+            quotaCheckResult.estimatedInputTokens,
+            outputTextForTokenCounting,
+            aiConfig.model
+          );
+          logger.info(`Token usage tracked for user ${userId} in chat ${chatId}`);
+        } catch (err) {
+          logger.error(`Failed to track token usage for chatId: ${chatId}`, {
+            error: err.message,
+            userId
+          });
+          // Don't fail the request if tracking fails
         }
       }
 

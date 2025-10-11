@@ -28,9 +28,10 @@ export class AiManagementService {
     /**
      * Generate component code using AI
      * @param {Object} inputData - Input data for component generation
+     * @param {string} userId - User ID for quota tracking
      * @returns {Object} - Result with generated code or error
      */
-    async generateComponentCode(inputData) {
+    async generateComponentCode(inputData, userId = null) {
         try {
             const { command, description, outputExample, aiGuidance } = inputData;
 
@@ -50,7 +51,7 @@ export class AiManagementService {
                 aiGuidance,
             };
 
-            const generatedCode = await ReactComponentCreator.generateComponent(data);
+            const generatedCode = await ReactComponentCreator.generateComponent(data, userId);
             
             return {
                 success: true,
@@ -59,10 +60,15 @@ export class AiManagementService {
             };
         } catch (error) {
             this.logger.error('AI code generation failed:', error);
+            
+            // Check if it's a quota exceeded error
+            const isQuotaError = error.message && error.message.includes('quota');
+            
             return {
                 success: false,
-                error: 'Failed to generate component code',
-                statusCode: 500
+                error: isQuotaError ? error.message : 'Failed to generate component code',
+                quotaExceeded: isQuotaError,
+                statusCode: isQuotaError ? 429 : 500
             };
         }
     }
