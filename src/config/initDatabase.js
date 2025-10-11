@@ -116,15 +116,16 @@ const tables = {
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id VARCHAR(255) NOT NULL,
             usage_date DATE NOT NULL,
-            total_input_tokens INT NOT NULL DEFAULT 0,
-            total_output_tokens INT NOT NULL DEFAULT 0,
-            total_tokens INT NOT NULL DEFAULT 0,
-            daily_limit INT NOT NULL DEFAULT 2000000,
+            total_input_tokens BIGINT NOT NULL DEFAULT 0,
+            total_output_tokens BIGINT NOT NULL DEFAULT 0,
+            total_tokens BIGINT NOT NULL DEFAULT 0,
+            daily_limit BIGINT NOT NULL DEFAULT 2000000,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY unique_user_date (user_id, usage_date),
             INDEX idx_user_date (user_id, usage_date),
-            INDEX idx_usage_date (usage_date)
+            INDEX idx_usage_date (usage_date),
+            CONSTRAINT fk_user_token_usage FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `,
     transaction_analysis: `

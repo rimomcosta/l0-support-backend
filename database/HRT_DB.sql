@@ -260,16 +260,20 @@ UNLOCK TABLES;
 DROP TABLE IF EXISTS `user_token_usage`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 CREATE TABLE `user_token_usage` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `user_id` varchar(255) NOT NULL,
   `usage_date` date NOT NULL,
   `total_input_tokens` bigint(20) NOT NULL DEFAULT 0,
   `total_output_tokens` bigint(20) NOT NULL DEFAULT 0,
   `total_tokens` bigint(20) NOT NULL DEFAULT 0,
   `daily_limit` bigint(20) NOT NULL DEFAULT 2000000,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `last_updated` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  PRIMARY KEY (`user_id`,`usage_date`),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_user_date` (`user_id`,`usage_date`),
+  KEY `idx_user_date` (`user_id`,`usage_date`),
   KEY `idx_usage_date` (`usage_date`),
-  KEY `idx_user_date` (`user_id`,`usage_date`)
+  CONSTRAINT `fk_user_token_usage` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
